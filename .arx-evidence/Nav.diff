@@ -1,0 +1,38 @@
+# TASK-056 — Nav.diff
+# Guard pattern: {#if leading} — NO CHANGES REQUIRED
+
+## SCOPE
+Nav.svelte lines 43-46 (leading guard) and line 72 (item.icon render)
+
+## ANALYSIS
+
+### Line 43-46: {#if leading} guard
+```svelte
+{#if leading}
+    <span class="nav-leading">
+        {@render leading()}
+    </span>
+{/if}
+```
+
+**Verdict: CORRECT — no changes needed.**
+
+After TopAppBar.svelte fix:
+- When showBack=true: Nav receives `leading={backBtn}` → snippet reference is valid → renders ✓
+- When showBack=false: Nav instance has NO `leading` prop → defaults to `undefined` → `{#if undefined}` = falsy → does NOT render ✓
+- HMR scenario: Nav instances are never toggled in-place (the `{#if showBack}` in TopAppBar mounts/unmounts entire Nav). No stale snippet references reach this guard.
+
+### Line 72: {#snippet item.icon()} render
+```svelte
+{@render item.icon()}
+```
+
+**Verdict: SAFE — no changes needed.**
+
+- New BottomNav always provides valid snippet references (walletIcon, historyIcon)
+- These snippet references are defined as {#snippet} blocks and never become undefined
+- The {#each} loop only iterates over pre-defined items with guaranteed icon properties
+
+### POTENTIAL EDGE CASE (not triggered in current architecture)
+If items were externally sourced with potentially missing `icon`, a guard like `{#if item.icon}{@render item.icon()}{/if}` would be needed.
+But since BottomNav is the sole consumer and always provides icon snippets, this is not required.

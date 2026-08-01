@@ -1,0 +1,255 @@
+/* ============================================================
+ * LnwCash Design Tokens — D-003, D-006
+ * CSS Custom Properties for theming and consistency
+ * Brand: Cyan/Teal (LnwCash)
+ * ============================================================ */
+
+/* ─── Smooth Theme Transition ──────────────────────────── */
+html {
+	transition: background-color 200ms ease;
+}
+
+/* ─── Light Theme (default) ─────────────────────────────── */
+:root,
+[data-theme='light'] {
+	/* Colors — Primary Palette */
+	--color-primary: #00bcd4;
+	--color-primary-hover: #0097a7;
+	--color-primary-light: #4dd0e1;
+	--color-primary-dark: #00838f;
+	--color-primary-contrast: #ffffff;
+
+	/* Colors — Secondary */
+	--color-secondary: #00695c;
+	--color-secondary-hover: #004d40;
+	--color-secondary-light: #26a69a;
+	--color-secondary-contrast: #ffffff;
+
+	/* Colors — Accent */
+	--color-accent: #ff6f00;
+	--color-accent-hover: #e65100;
+	--color-accent-light: #ffa726;
+	--color-accent-contrast: #ffffff;
+
+	/* Colors — Surface & Background */
+	--color-surface: #ffffff;
+	--color-surface-variant: #f5f5f5;
+	--color-surface-raised: #ffffff;
+	--color-background: #fafafa;
+	--color-overlay: rgba(0, 0, 0, 0.5);
+
+	/* Colors — Text */
+	--color-text: #212121;
+	--color-text-secondary: #616161;
+	--color-text-disabled: #9e9e9e;
+	--color-text-inverse: #ffffff;
+
+	/* Colors — Semantic */
+	--color-error: #d32f2f;
+	--color-error-light: #ffcdd2;
+	--color-success: #2e7d32;
+	--color-success-light: #c8e6c9;
+	--color-warning: #f57f17;
+	--color-warning-light: #fff9c4;
+	--color-info: #0288d1;
+	--color-info-light: #b3e5fc;
+
+	/* Colors — Border & Divider */
+	--color-border: #e0e0e0;
+	--color-border-focus: var(--color-primary);
+	--color-divider: #eeeeee;
+
+	/* Typography */
+	--font-family: 'Sarabun', 'Noto Sans Thai', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	--font-family-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+
+	--font-size-xs: 0.6875rem;   /* 11px */
+	--font-size-sm: 0.8125rem;   /* 13px */
+	--font-size-md: 0.9375rem;   /* 15px */
+	--font-size-lg: 1.0625rem;   /* 17px */
+	--font-size-xl: 1.25rem;     /* 20px */
+	--font-size-2xl: 1.5rem;     /* 24px */
+	--font-size-3xl: 2rem;       /* 32px */
+
+	--font-weight-normal: 400;
+	--font-weight-medium: 500;
+	--font-weight-semibold: 600;
+	--font-weight-bold: 700;
+
+	--line-height-tight: 1.25;
+	--line-height-normal: 1.5;
+	--line-height-relaxed: 1.75;
+
+	/* Spacing */
+	--space-xs: 0.25rem;  /* 4px */
+	--space-sm: 0.5rem;   /* 8px */
+	--space-md: 1rem;     /* 16px */
+	--space-lg: 1.5rem;   /* 24px */
+	--space-xl: 2rem;     /* 32px */
+	--space-2xl: 3rem;    /* 48px */
+
+	/* Border Radius */
+	--radius-sm: 0.375rem;  /* 6px */
+	--radius-md: 0.625rem;  /* 10px */
+	--radius-lg: 1rem;      /* 16px */
+	--radius-full: 9999px;
+
+	/* Shadow */
+	--shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 1px rgba(0, 0, 0, 0.04);
+	--shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1), 0 2px 4px rgba(0, 0, 0, 0.06);
+	--shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12), 0 4px 8px rgba(0, 0, 0, 0.08);
+
+	/* Transitions */
+	--transition-fast: 150ms ease;
+	--transition-normal: 250ms ease;
+	--transition-slow: 350ms ease;
+
+	/* Z-Index */
+	--z-dropdown: 100;
+	--z-sticky: 200;
+	--z-modal-backdrop: 300;
+	--z-modal: 400;
+	--z-toast: 500;
+	--z-tooltip: 600;
+}
+
+/* ─── Dark Theme ────────────────────────────────────────── */
+[data-theme='dark'] {
+	--color-primary: #26c6da;
+	--color-primary-hover: #00bcd4;
+	--color-primary-light: #4dd0e1;
+	--color-primary-dark: #00acc1;
+	--color-primary-contrast: #121212;
+
+	--color-secondary: #80cbc4;
+	--color-secondary-hover: #4db6ac;
+	--color-secondary-light: #b2dfdb;
+	--color-secondary-contrast: #121212;
+
+	--color-accent: #ffa726;
+	--color-accent-hover: #ff9800;
+	--color-accent-light: #ffcc80;
+	--color-accent-contrast: #121212;
+
+	--color-surface: #1e1e2e;
+	--color-surface-variant: #2a2a3c;
+	--color-surface-raised: #282840;
+	--color-background: #12121a;
+	--color-overlay: rgba(0, 0, 0, 0.7);
+
+	--color-text: #f5f5f5;
+	--color-text-secondary: #a0a0b0;
+	--color-text-disabled: #606070;
+	--color-text-inverse: #121212;
+
+	--color-error: #ef5350;
+	--color-error-light: #4a2020;
+	--color-success: #66bb6a;
+	--color-success-light: #1b3a1b;
+	--color-warning: #ffb74d;
+	--color-warning-light: #3d3520;
+	--color-info: #42a5f5;
+	--color-info-light: #1a2d3d;
+
+	--color-border: #333348;
+	--color-border-focus: var(--color-primary);
+	--color-divider: #2a2a3c;
+
+	--shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 1px rgba(0, 0, 0, 0.2);
+	--shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4), 0 2px 4px rgba(0, 0, 0, 0.3);
+	--shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5), 0 4px 8px rgba(0, 0, 0, 0.4);
+}
+
+/* ─── High-Contrast (prefers-contrast: more) ──────────── */
+@media (prefers-contrast: more) {
+	:root:not([data-theme='dark']) {
+		--color-text: #000000;
+		--color-text-secondary: #333333;
+		--color-border: #000000;
+		--color-surface: #ffffff;
+		--color-background: #f0f0f0;
+	}
+
+	[data-theme='dark'] {
+		--color-text: #ffffff;
+		--color-text-secondary: #cccccc;
+		--color-border: #ffffff;
+		--color-surface: #000000;
+		--color-background: #111111;
+	}
+}
+
+/* ─── Responsive Breakpoints ───────────────────────────── */
+/* Note: CSS custom properties cannot be used inside @media queries.
+   These tokens serve as documentation. Use the pixel values directly.
+   Mobile-first approach — base styles target smallest (320px). */
+/*
+   --bp-mobile:  320px - 428px    (default, single column, bottom nav visible)
+   --bp-tablet:  768px - 1024px   (wider adjustments)
+   --bp-desktop: > 1024px          (max-width 480px container centered)
+*/
+
+/* ─── Touch Target Minimum Sizes ────────────────────────── */
+/* All interactive elements should meet ≥ 44×44px (WCAG 2.5.5) */
+/*
+   Use min-width/min-height on buttons, links, form controls.
+   Prefer --min-touch-target: 44px as a consistent baseline.
+   For small inline items (e.g. icon-only buttons),
+   ensure they have sufficient padding to meet touch target.
+*/
+
+/* ─── Desktop Container ─────────────────────────────────── */
+@media (min-width: 1024px) {
+	.desktop-container {
+		max-width: 480px;
+		margin-left: auto;
+		margin-right: auto;
+	}
+
+	/* Hide bottom nav on desktop (optional, if top sidebar preferred) */
+	.nav-bottom-desktop-hide {
+		display: none;
+	}
+}
+
+/* ─── Tablet Adjustments ────────────────────────────────── */
+@media (min-width: 768px) and (max-width: 1023px) {
+	.tablet-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: var(--space-md);
+	}
+
+	.tablet-full {
+		grid-column: 1 / -1;
+	}
+}
+
+/* ─── Touch Target Enforcement ──────────────────────────── */
+/* Ensure all interactive elements meet 44x44px minimum */
+@media (pointer: coarse) {
+	.btn,
+	.nav-item,
+	.action-btn,
+	.option-btn,
+	input[type="button"],
+	input[type="submit"],
+	button {
+		min-height: 44px;
+	}
+
+	.btn-icon,
+	.back-btn {
+		min-width: 44px;
+		min-height: 44px;
+	}
+}
+
+/* ─── Reduced Motion ────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+	:root {
+		--transition-fast: 0ms;
+		--transition-normal: 0ms;
+		--transition-slow: 0ms;
+	}
+}

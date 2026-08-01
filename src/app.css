@@ -1,0 +1,19 @@
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	font-family: var(--font-family, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif);
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+	background: var(--color-background, #fafafa);
+	color: var(--color-text, #1a1a2e);
+	transition: background-color 200ms ease, color 200ms ease;
+}
+
+#app {
+	min-height: 100dvh;
+}

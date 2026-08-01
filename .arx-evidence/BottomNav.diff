@@ -1,0 +1,54 @@
+# TASK-056 — BottomNav.diff
+# Fix: 5 tabs → 2 tabs + FAB + remove $derived snippet creation
+
+## PROBLEM (old, lines 51-59)
+let navItems = $derived(navScreens.map(item => {
+    const Icon = iconForKey(item.key);
+    return {
+        label: $_(item.labelKey),
+        active: active === item.key,
+        onclick: () => onNavigate(item.key),
+        icon: () => Icon    // ← SNIPPET CREATED INSIDE $derived
+    };
+}));
+
+Two issues:
+1. `icon: () => Icon` creates a new function (snippet wrapper) on EVERY $derived recomputation
+   - Each recomputation = new snippet reference = HMR Symbol(hmr anchor) crash
+2. 5 tabs (Home, Receive, Send, History, Settings) → reduced to 2 (Wallet, History)
+
+## FIX
+Rewrite with stable {#snippet} blocks for icons + separate FAB component:
+
+--- OLD: 5 tabs, icon functions inside $derived
+navScreens = [home, receive, send, history, settings] (5 items)
+icon: () => Icon  ← recreated in $derived on every change
+
+--- NEW: 2 tabs, stable {#snippet} references
+{#snippet walletIcon()}
+    <Wallet size={24} />
+{/snippet}
+{#snippet historyIcon()}
+    <History size={24} />
+{/snippet}
+
+let navItems = $derived([
+    { label: $_('nav.home'), active: active === 'home', onclick: () => onNavigate('home'), icon: walletIcon },
+    { label: $_('nav.history'), active: active === 'history', onclick: () => onNavigate('history'), icon: historyIcon }
+]);
+
+## KEY CHANGES
+1. 5 tabs → 2 tabs: Wallet (home), History (history)
+2. Icons defined as {#snippet} blocks → stable references across re-renders
+3. $derived only wraps reactive parts (label from i18n, active comparison) — NEVER snippet creation
+4. FAB QR Scan imported and rendered (conditionally on onQRScan prop)
+5. New optional prop: onQRScan for wiring the FAB
+
+## ARCHITECTURE
+```
+┌──────────────────────────────────────┐
+│            [FAB QR Scan]             │  ← center-docked above nav
+│         ┌──────┴──────┐             │
+│  Wallet │              │  History    │  ← Nav (2 tabs)
+└─────────┴──────────────┴─────────────┘
+```

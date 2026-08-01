@@ -1,0 +1,245 @@
+/**
+ * Melt flow tests (with mocked mint API)
+ */
+import 'fake-indexeddb/auto';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { createWallet, unlockWallet } from '../state';
+import { clearAllWalletData } from '../storage';
+import { deleteProofDB, resetProofDB, addProofs } from '../proofsDb';
+import type { TokenProof } from '../../types';
+
+const TEST_PIN = '123456';
+const TEST_NAME = 'Test Wallet';
+const MINT_URL = 'https://mint.example.com';
+const KEYSET_ID = 'keyset-abc123';
+
+function makeProof(id: string, amount: number): TokenProof {
+	return { id: KEYSET_ID, amount, secret: `secret-${id}`, C: `sig-${id}` };
+}
+
+// Mock the client module
+vi.mock('../../cashu/client', () => ({
+	getMintInfo: vi.fn(),
+	getKeysets: vi.fn().mockResolvedValue([
+		{ id: 'keyset-abc123', unit: 'sat', active: true, input_fee_ppk: 5 }
+	]),
+	getKeys: vi.fn(),
+	requestMintQuote: vi.fn().mockResolvedValue({
+		quote: 'melt-quote-xyz',
+		amount: 50,
+		fee_reserve: 1,
+		paid: false,
+		expiry: 9999999999
+	}),
+	requestMeltQuote: vi.fn().mockResolvedValue({
+		quote: 'melt-quote-xyz',
+		amount: 50,
+		fee_reserve: 1,
+		paid: false,
+		expiry: 9999999999
+	}),
+	meltTokens: vi.fn().mockResolvedValue({
+		paid: true,
+		preimage: 'preimage-abc'
+	}),
+	mintTokens: vi.fn(),
+	checkState: vi.fn().mockResolvedValue({
+		states: []
+	}),
+	CashuError: class extends Error {},
+	MintUnreachableError: class extends Error {},
+	NetworkError: class extends Error {},
+	InvalidResponseError: class extends Error {}
+}));
+
+import * as client from '../../cashu/client';
+import { meltFlow } from '../melt';
+
+describe('Melt flow', () => {
+	beforeEach(async () => {
+		await clearAllWalletData();
+		await deleteProofDB();
+		resetProofDB();
+		vi.clearAllMocks();
+
+		// Reset all client mocks to their default implementations
+		(client.getKeysets as ReturnType<typeof vi.fn>).mockResolvedValue([
+			{ id: 'keyset-abc123', unit: 'sat', active: true, input_fee_ppk: 5 }
+		]);
+		(client.requestMeltQuote as ReturnType<typeof vi.fn>).mockResolvedValue({
+			quote: 'melt-quote-xyz',
+			amount: 50,
+			fee_reserve: 1,
+			paid: false,
+			expiry: 9999999999
+		});
+		(client.meltTokens as ReturnType<typeof vi.fn>).mockResolvedValue({
+			paid: true,
+			preimage: 'preimage-abc'
+		});
+		(client.checkState as ReturnType<typeof vi.fn>).mockResolvedValue({
+			states: []
+		});
+
+		await createWallet(TEST_PIN, TEST_NAME);
+		await unlockWallet(TEST_PIN);
+
+		await addProofs(
+			[makeProof('p1', 32), makeProof('p2', 16), makeProof('p3', 8)],
+			MINT_URL,
+			KEYSET_ID
+		);
+	});
+
+	afterEach(async () => {
+		await clearAllWalletData();
+		await deleteProofDB();
+		resetProofDB();
+	});
+
+	describe('meltFlow', () => {
+		it('should successfully melt ecash with mocked API', async () => {
+			const result = await meltFlow(MINT_URL, 'lnbc...', 50);
+
+			expect(result.success).toBe(true);
+			expect(result.preimage).toBe('preimage-abc');
+		});
+
+		it('should handle error when mint unreachable', async () => {
+			(client.requestMeltQuote as ReturnType<typeof vi.fn>).mockRejectedValue(
+				new TypeError('fetch failed')
+			);
+
+			const result = await meltFlow('https://dead-mint.example.com', 'lnbc...', 10);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toBeTruthy();
+		});
+
+		it('should handle network errors', async () => {
+			(client.requestMeltQuote as ReturnType<typeof vi.fn>).mockRejectedValue(
+				new Error('Network down')
+			);
+
+			const result = await meltFlow(MINT_URL, 'lnbc...', 10);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toBeTruthy();
+		});
+
+		it('should return error when wallet is locked', async () => {
+			await clearAllWalletData();
+			await deleteProofDB();
+			resetProofDB();
+			await createWallet(TEST_PIN, TEST_NAME);
+
+			const result = await meltFlow(MINT_URL, 'lnbc...', 10);
+			expect(result.success).toBe(false);
+			expect(result.error).toBeTruthy();
+		});
+
+		// ─── C05-05: input_fee_ppk fee calculation ─────────────
+
+		it('C05-05: should calculate fee = 1 × ppk for 1 input', async () => {
+			// Mock checkState to return UNSPENT
+			(client.checkState as ReturnType<typeof vi.fn>).mockResolvedValue({
+				states: [
+					{ secret: 'secret-p1', state: 'UNSPENT', witness: null }
+				]
+			});
+
+			const result = await meltFlow(MINT_URL, 'lnbc...', 30);
+
+			expect(result.success).toBe(true);
+			expect(result.inputFeePpk).toBe(5);
+			expect(result.calculatedFee).toBe(5); // 1 input × ppk=5
+		});
+
+		it('C05-05: should calculate fee = 3 × ppk for 3 inputs', async () => {
+			await clearAllWalletData();
+			await deleteProofDB();
+			resetProofDB();
+			await createWallet(TEST_PIN, TEST_NAME);
+			await unlockWallet(TEST_PIN);
+
+			// 3 proofs: 32+16+8=56 sats total, need 10 → greedy picks [32,16,8]? 
+			// Actually selectProofs tries largest-first with reduction. 
+			// For amount=10, greedy: 32≥10 → uses 32 only (1 input).
+			// To get 3 inputs we need amount that requires all 3.
+			await addProofs(
+				[makeProof('p1', 32), makeProof('p2', 16), makeProof('p3', 8)],
+				MINT_URL,
+				KEYSET_ID
+			);
+
+			// Need 55 sats — greedy starting from 32, then 16 (48<55), then 8 (56≥55) = 3 inputs
+			(client.checkState as ReturnType<typeof vi.fn>).mockResolvedValue({
+				states: [
+					{ secret: 'secret-p1', state: 'UNSPENT', witness: null },
+					{ secret: 'secret-p2', state: 'UNSPENT', witness: null },
+					{ secret: 'secret-p3', state: 'UNSPENT', witness: null }
+				]
+			});
+
+			const result = await meltFlow(MINT_URL, 'lnbc...', 55);
+
+			expect(result.success).toBe(true);
+			expect(result.inputFeePpk).toBe(5);
+			expect(result.calculatedFee).toBe(15); // 3 inputs × ppk=5
+		});
+
+		// ─── C07-02: checkState before melt ────────────────────
+
+		it('C07-02: should reject melt when proof is SPENT (double-spend prevention)', async () => {
+			await clearAllWalletData();
+			await deleteProofDB();
+			resetProofDB();
+			await createWallet(TEST_PIN, TEST_NAME);
+			await unlockWallet(TEST_PIN);
+
+			await addProofs(
+				[makeProof('p1', 64)],
+				MINT_URL,
+				KEYSET_ID
+			);
+
+			// Mock checkState to return SPENT
+			(client.checkState as ReturnType<typeof vi.fn>).mockResolvedValue({
+				states: [
+					{ secret: 'secret-p1', state: 'SPENT', witness: null }
+				]
+			});
+
+			const result = await meltFlow(MINT_URL, 'lnbc...', 50);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('already spent');
+		});
+
+		it('C07-02: should proceed with melt when all proofs are UNSPENT', async () => {
+			await clearAllWalletData();
+			await deleteProofDB();
+			resetProofDB();
+			await createWallet(TEST_PIN, TEST_NAME);
+			await unlockWallet(TEST_PIN);
+
+			await addProofs(
+				[makeProof('p1', 64)],
+				MINT_URL,
+				KEYSET_ID
+			);
+
+			// Mock checkState to return UNSPENT
+			(client.checkState as ReturnType<typeof vi.fn>).mockResolvedValue({
+				states: [
+					{ secret: 'secret-p1', state: 'UNSPENT', witness: null }
+				]
+			});
+
+			const result = await meltFlow(MINT_URL, 'lnbc...', 50);
+
+			expect(result.success).toBe(true);
+			expect(result.preimage).toBe('preimage-abc');
+		});
+	});
+});

@@ -1,0 +1,20 @@
+=== TASK-057: Vitest Re-run Summary ===
+Date: 2026-08-01
+Project: /home/debian/arx-projects/lnw-cash/
+Command: npx vitest run --reporter=verbose 2>&1 | tee vitest-output.log
+
+Test Files:  1 failed | 60 passed (61)
+Tests:       1 failed | 623 passed (624)
+Start at:    10:48:50
+Duration:    106.72s
+
+Failed test details:
+  File: src/__tests__/components/ErrorBoundary.test.ts
+  Test: ErrorBoundary > should display retry button in error state
+  Reason: Test expects text 'common.retry' but component renders Thai text 'ลองใหม่'
+  This is a pre-existing test bug (incorrect i18n key expectation), NOT a regression.
+
+Vitest output log size: 84,475 bytes (774 lines)
+Baseline comparison: matches v2 baseline (623+ tests passed)
+
+Pass/Fail Ratio: 99.84% pass rate

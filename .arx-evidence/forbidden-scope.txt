@@ -1,0 +1,30 @@
+# TASK-056 — Forbidden Scope Verification
+
+## FILES TOUCHED (allowed only)
+1. src/components/TopAppBar.svelte    — MODIFIED  (line 55-68: conditional snippet → {#if} wrap)
+2. src/components/BottomNav.svelte    — REWRITTEN (5 tabs → 2 tabs + FAB + stable snippets)
+3. src/lib/components/ui/Nav.svelte   — UNCHANGED (guard verified, no modifications)
+4. src/components/Fab.svelte          — CREATED   (new FAB QR Scan component)
+
+## FILES NOT TOUCHED (as per forbidden list)
+- wallet core:      NOT TOUCHED (state management, crypto, PIN)
+- PWA config:       NOT TOUCHED (service worker)
+- vite.config.ts:   NOT TOUCHED
+- npm packages:     NO NEW INSTALLS
+- i18n keys:        NOT TOUCHED (th.json, en.json)
+- ErrorBoundary:    NOT TOUCHED (ErrorBoundary.svelte)
+- App.svelte:       NOT TOUCHED (even though it wires BottomNav — onQRScan prop is optional)
+- router.ts:        NOT TOUCHED
+- theme.ts:         NOT TOUCHED
+- tokens.css:       NOT TOUCHED
+- Other screens:    NOT TOUCHED (Home, Send, Receive, History, Settings, Setup, etc.)
+
+## VERIFICATION
+- svelte-check: 0 errors, 5 warnings (warnings are pre-existing tsconfig issues)
+- All 3 existing allowed files verified
+- 1 new file created (Fab.svelte)
+- No file outside the allowed set was modified
+
+## Signed-off
+Saber-Frontend Sub-Agent
+TASK-056 — HMR Compatibility Fix + Fab.svelte

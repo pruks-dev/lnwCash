@@ -1,0 +1,229 @@
+/* ============================================================
+ * LnwCash Animations — TASK-052 (B)
+ * CSS-only animations (GPU accelerated)
+ * Screen transitions, micro-interactions, skeleton, spinner
+ * ============================================================ */
+
+/* ─── Screen Transitions (slide-left / slide-right) ────── */
+/* Usage: apply .screen-enter or .screen-exit to route containers */
+
+@keyframes slide-in-from-right {
+	from {
+		transform: translateX(30px);
+		opacity: 0;
+	}
+	to {
+		transform: translateX(0);
+		opacity: 1;
+	}
+}
+
+@keyframes slide-out-to-left {
+	from {
+		transform: translateX(0);
+		opacity: 1;
+	}
+	to {
+		transform: translateX(-30px);
+		opacity: 0;
+	}
+}
+
+@keyframes slide-in-from-left {
+	from {
+		transform: translateX(-30px);
+		opacity: 0;
+	}
+	to {
+		transform: translateX(0);
+		opacity: 1;
+	}
+}
+
+@keyframes slide-out-to-right {
+	from {
+		transform: translateX(0);
+		opacity: 1;
+	}
+	to {
+		transform: translateX(30px);
+		opacity: 0;
+	}
+}
+
+.screen-enter {
+	animation: slide-in-from-right 250ms ease-out forwards;
+}
+
+.screen-exit {
+	animation: slide-out-to-left 200ms ease-in forwards;
+}
+
+.screen-enter-back {
+	animation: slide-in-from-left 250ms ease-out forwards;
+}
+
+.screen-exit-back {
+	animation: slide-out-to-right 200ms ease-in forwards;
+}
+
+/* ─── Fade Transition ──────────────────────────────────── */
+
+@keyframes fade-in {
+	from { opacity: 0; }
+	to { opacity: 1; }
+}
+
+@keyframes fade-out {
+	from { opacity: 1; }
+	to { opacity: 0; }
+}
+
+.fade-in {
+	animation: fade-in 200ms ease-out forwards;
+}
+
+.fade-out {
+	animation: fade-out 150ms ease-in forwards;
+}
+
+/* ─── Micro-Interactions ───────────────────────────────── */
+/* Button active press scale */
+
+.btn-press:active:not(:disabled) {
+	transform: scale(0.97);
+	transition: transform 100ms ease;
+}
+
+/* Card hover shadow lift */
+
+.card-hover {
+	transition: box-shadow 200ms ease, transform 200ms ease;
+}
+
+.card-hover:hover {
+	box-shadow: var(--shadow-md);
+	transform: translateY(-2px);
+}
+
+.card-hover:active {
+	box-shadow: var(--shadow-sm);
+	transform: translateY(0);
+}
+
+/* List item hover background */
+
+.list-item-hover {
+	transition: background-color 150ms ease;
+}
+
+.list-item-hover:hover {
+	background-color: var(--color-surface-variant);
+}
+
+/* ─── Loading Skeleton (pulse animation) ───────────────── */
+
+@keyframes skeleton-pulse {
+	0% {
+		opacity: 0.6;
+	}
+	50% {
+		opacity: 1;
+	}
+	100% {
+		opacity: 0.6;
+	}
+}
+
+.skeleton {
+	display: block;
+	background: var(--color-border);
+	border-radius: var(--radius-md);
+	animation: skeleton-pulse 1.5s ease-in-out infinite;
+	color: transparent;
+	user-select: none;
+	pointer-events: none;
+}
+
+.skeleton-text {
+	height: 1em;
+	margin-bottom: 0.5em;
+	border-radius: var(--radius-sm);
+}
+
+.skeleton-text:last-child {
+	width: 60%;
+}
+
+.skeleton-heading {
+	height: 1.5em;
+	margin-bottom: 0.75em;
+	width: 40%;
+}
+
+.skeleton-avatar {
+	width: 36px;
+	height: 36px;
+	border-radius: var(--radius-full);
+}
+
+.skeleton-card {
+	height: 80px;
+	border-radius: var(--radius-lg);
+}
+
+.skeleton-button {
+	height: 44px;
+	width: 120px;
+	border-radius: var(--radius-md);
+}
+
+/* ─── CSS Spinner ──────────────────────────────────────── */
+
+@keyframes spinner-rotate {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+.spinner {
+	display: inline-block;
+	width: 20px;
+	height: 20px;
+	border: 2.5px solid var(--color-border);
+	border-top-color: var(--color-primary);
+	border-radius: 50%;
+	animation: spinner-rotate 0.7s linear infinite;
+}
+
+.spinner-sm {
+	width: 14px;
+	height: 14px;
+	border-width: 2px;
+}
+
+.spinner-lg {
+	width: 32px;
+	height: 32px;
+	border-width: 3px;
+}
+
+.spinner-centered {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: var(--space-xl);
+}
+
+/* ─── Reduced Motion — respect user preference ─────────── */
+/* (also defined in tokens.css; duplicated here for isolated import) */
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+	}
+}

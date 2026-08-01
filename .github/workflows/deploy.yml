@@ -1,0 +1,264 @@
+# =============================================================================
+# GitHub Actions CI/CD — LnwCash Wallet
+# =============================================================================
+# Pipeline:
+#   push to main → checkout → lint → test → build → deploy (dry-run)
+#
+# Secrets required (set in GitHub → Settings → Secrets → Actions):
+#   SSH_HOST          - VPS IP address
+#   SSH_USER          - VPS SSH user (e.g. "deployer")
+#   SSH_PRIVATE_KEY   - Private SSH key for authentication
+#   VPS_DEPLOY_PATH   - Path on VPS (e.g. "/var/www/lnw.cash")
+#
+#   Optional:
+#   CLOUDFLARE_API_TOKEN - For cache purge after deploy
+#   CLOUDFLARE_ZONE_ID   - Cloudflare zone ID for lnw.cash
+# =============================================================================
+
+name: Deploy — LnwCash Wallet
+
+on:
+  push:
+    branches:
+      - main
+  # อนุญาตให้ trigger manual จาก GitHub UI (สำหรับ test deploy)
+  workflow_dispatch:
+
+# ให้ deploy ได้ครั้งเดียวต่อ branch (หลีกเลี่ยง concurrent deploy ทับซ้อน)
+concurrency:
+  group: "deploy-${{ github.ref }}"
+  cancel-in-progress: false
+
+jobs:
+  # ==========================================================================
+  # Job 1: CI — Lint, Test, Build
+  # ==========================================================================
+  ci:
+    name: CI — Lint, Test & Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ⬇️ Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'package-lock.json'
+
+      - name: 📦 Install dependencies
+        run: npm ci
+
+      - name: 🔍 Lint
+        run: npm run lint
+
+      - name: 🧪 Run tests
+        run: npm run test
+
+      - name: 🏗️ Build production
+        run: npm run build
+
+      - name: ✅ Verify build output
+        run: |
+          echo "=== Checking dist/ output ==="
+          if [ ! -f "dist/index.html" ]; then
+            echo "❌ ERROR: dist/index.html not found — build failed!"
+            exit 1
+          fi
+          if [ ! -d "dist/assets" ]; then
+            echo "⚠️  WARNING: dist/assets/ not found — may not have hashed assets"
+          fi
+          echo "=== Build output size ==="
+          du -sh dist/
+          echo "=== Files in dist/ ==="
+          find dist/ -type f | sort
+          echo "✅ Build verification passed"
+
+      - name: 🏥 Create health check file
+        run: |
+          echo '{"status":"healthy","version":"'"${GITHUB_SHA:0:7}"'","timestamp":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"}' > dist/health
+          echo "Health file created: $(cat dist/health)"
+
+      - name: 📤 Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lnw-cash-build-${{ github.sha }}
+          path: dist/
+          retention-days: 7
+
+  # ==========================================================================
+  # Job 2: Deploy — Upload to VPS (dry-run จนกว่า VPS จะพร้อม)
+  # ==========================================================================
+  deploy:
+    name: 🚀 Deploy to VPS
+    needs: ci
+    runs-on: ubuntu-latest
+    # ณ ตอนนี้: ยังไม่ deploy จริง — เปลี่ยนเป็น deploy จริงเมื่อ VPS พร้อม
+    # โดย: เปลี่ยน condition if เป็น true หรือลบบรรทัด if ออก
+    if: ${{ github.event_name == 'workflow_dispatch' && vars.ENABLE_DEPLOY == 'true' }}
+    # ↑ deploy ได้เฉพาะเมื่อ trigger manual และตั้งค่า ENABLE_DEPLOY=true เท่านั้น
+    #   เมื่อ VPS พร้อม → ลบบรรทัด if ทิ้ง หรือเปลี่ยนเป็น true
+    environment:
+      name: production
+      url: https://lnw.cash
+
+    steps:
+      - name: ⬇️ Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: lnw-cash-build-${{ github.sha }}
+          path: dist/
+
+      - name: ✅ Verify downloaded artifact
+        run: |
+          if [ ! -f "dist/index.html" ]; then
+            echo "❌ ERROR: Artifact missing index.html"
+            exit 1
+          fi
+          echo "✅ Artifact verified"
+          ls -la dist/
+
+      - name: 🏷️ Generate rollback tag
+        run: |
+          TAG="rollback-$(date +%Y%m%d-%H%M%S)-${GITHUB_SHA:0:7}"
+          echo "ROLLBACK_TAG=$TAG" >> $GITHUB_ENV
+          echo "Rollback tag: $TAG"
+
+      - name: 📋 Save deploy log (local)
+        run: |
+          mkdir -p .arx/evidence/brick/TASK-006/deploy
+          echo "=== Deploy Log ===" > .arx/evidence/brick/TASK-006/deploy/deploy.log
+          echo "Timestamp: $(date -u)" >> .arx/evidence/brick/TASK-006/deploy/deploy.log
+          echo "Commit: $GITHUB_SHA" >> .arx/evidence/brick/TASK-006/deploy/deploy.log
+          echo "Rollback Tag: $ROLLBACK_TAG" >> .arx/evidence/brick/TASK-006/deploy/deploy.log
+          echo "Branch: $GITHUB_REF" >> .arx/evidence/brick/TASK-006/deploy/deploy.log
+          echo "" >> .arx/evidence/brick/TASK-006/deploy/deploy.log
+          echo "Build Artifact Files:" >> .arx/evidence/brick/TASK-006/deploy/deploy.log
+          find dist/ -type f >> .arx/evidence/brick/TASK-006/deploy/deploy.log
+
+      # ------------------------------------------------------------------
+      # 🚀 ACTUAL DEPLOY — เปิดใช้งานเมื่อ VPS พร้อม
+      # ------------------------------------------------------------------
+      # ขั้นตอน: เอา comment block นี้ออก และลบ condition if: false เมื่อพร้อม
+      # ------------------------------------------------------------------
+      - name: 🚀 Deploy to VPS via rsync
+        if: false  # ← เปลี่ยนเป็น true หรือ comment บรรทัดนี้ออกเมื่อ VPS พร้อม
+        uses: easingthemes/ssh-deploy@v5.1.0
+        with:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          ARGS: "-avz --delete --exclude='.git'"
+          SOURCE: "dist/"
+          REMOTE_HOST: ${{ secrets.SSH_HOST }}
+          REMOTE_USER: ${{ secrets.SSH_USER }}
+          TARGET: ${{ secrets.VPS_DEPLOY_PATH }}
+          SCRIPT_BEFORE: |
+            echo "=== Backup current deployment ==="
+            mkdir -p ${{ secrets.VPS_DEPLOY_PATH }}.backup
+            cp -r ${{ secrets.VPS_DEPLOY_PATH }}/* ${{ secrets.VPS_DEPLOY_PATH }}.backup/ 2>/dev/null || true
+            echo "Backup completed"
+          SCRIPT_AFTER: |
+            echo "=== Set correct permissions ==="
+            sudo chown -R www-data:www-data ${{ secrets.VPS_DEPLOY_PATH }}
+            sudo chmod -R 755 ${{ secrets.VPS_DEPLOY_PATH }}
+            echo "=== Reloading Nginx ==="
+            sudo systemctl reload nginx
+            echo "=== Deployment completed ==="
+
+      - name: 🏥 Health Check (VPS)
+        if: false  # ← เปลี่ยนเป็น true เมื่อ deploy จริง
+        run: |
+          echo "=== Running health check ==="
+          RETRY=0
+          MAX_RETRY=10
+          SLEEP_SEC=3
+          HEALTH_URL="https://lnw.cash/health"
+
+          while [ $RETRY -lt $MAX_RETRY ]; do
+            HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$HEALTH_URL" 2>/dev/null || echo "000")
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "✅ Health check passed (HTTP $HTTP_CODE) after $((RETRY * SLEEP_SEC))s"
+              echo "=== Health Response ===" > .arx/evidence/brick/TASK-006/deploy/health.log
+              curl -s "$HEALTH_URL" >> .arx/evidence/brick/TASK-006/deploy/health.log
+              echo "" >> .arx/evidence/brick/TASK-006/deploy/health.log
+              exit 0
+            fi
+            echo "⏳ Waiting... (attempt $((RETRY + 1))/$MAX_RETRY, HTTP $HTTP_CODE)"
+            sleep $SLEEP_SEC
+            RETRY=$((RETRY + 1))
+          done
+
+          echo "❌ Health check FAILED after $((MAX_RETRY * SLEEP_SEC))s"
+          echo "=== AUTO-ROLLBACK ==="
+          echo "Restoring backup at ${{ secrets.VPS_DEPLOY_PATH }}.backup"
+          # Rollback logic here (when SSH deploy is enabled)
+          exit 1
+
+      # ------------------------------------------------------------------
+      # ☁️ Cloudflare Cache Purge (เปิดใช้งานเมื่อ deploy จริง)
+      # ------------------------------------------------------------------
+      - name: ☁️ Purge Cloudflare Cache
+        if: false  # ← เปลี่ยนเป็น true เมื่อ VPS พร้อม และมี CLOUDFLARE_API_TOKEN
+        run: |
+          echo "Purging Cloudflare cache..."
+          curl -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/purge_cache" \
+            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            --data '{"files":["https://lnw.cash/index.html","https://lnw.cash/health","https://lnw.cash/sw.js","https://lnw.cash/registerSW.js"]}'
+          echo "✅ Cloudflare cache purged"
+
+      # ------------------------------------------------------------------
+      # 📝 สร้าง rollback tag file (artifact)
+      # ------------------------------------------------------------------
+      - name: 📝 Save rollback tag
+        run: |
+          TAG_FILE=".arx/evidence/brick/TASK-006/deploy/rollback.tag"
+          echo "rollback_tag=$ROLLBACK_TAG" > "$TAG_FILE"
+          echo "commit=$GITHUB_SHA" >> "$TAG_FILE"
+          echo "timestamp=$(date -u)" >> "$TAG_FILE"
+          echo "Rollback tag saved to $TAG_FILE"
+          cat "$TAG_FILE"
+
+      - name: 📤 Upload evidence artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-evidence-${{ github.sha }}
+          path: .arx/evidence/brick/TASK-006/
+          retention-days: 30
+
+  # ==========================================================================
+  # Job 3: Deploy Summary Comment (optional)
+  # ==========================================================================
+  summary:
+    name: 📊 Deploy Summary
+    needs: [ci, deploy]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📊 Print summary
+        run: |
+          echo "=========================================="
+          echo "  LnwCash Wallet — Deploy Pipeline Summary"
+          echo "=========================================="
+          echo "Commit:      $GITHUB_SHA"
+          echo "Branch:      $GITHUB_REF"
+          echo "Trigger:     $GITHUB_EVENT_NAME"
+          echo "CI Status:   ${{ needs.ci.result }}"
+          echo "Deploy:      ${{ needs.deploy.result }}"
+          echo "=========================================="
+          if [ "${{ needs.ci.result }}" = "success" ]; then
+            echo "✅ Build, lint & tests passed"
+          else
+            echo "❌ CI failed — check logs above"
+          fi
+          if [ "${{ needs.deploy.result }}" = "success" ]; then
+            echo "✅ Deploy completed"
+          elif [ "${{ needs.deploy.result }}" = "skipped" ]; then
+            echo "⚠️  Deploy SKIPPED (dry-run mode — VPS not ready)"
+          else
+            echo "❌ Deploy failed"
+          fi
+          echo "=========================================="

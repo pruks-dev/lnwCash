@@ -1,0 +1,10 @@
+# Cert file existence
+-rw-r--r-- 1 debian debian 1119 Jul 31 05:24 cert/cert.pem
+-rw------- 1 debian debian 1704 Jul 31 05:24 cert/key.pem
+
+# Cert CN
+Issuer: CN=100.86.66.4
+Subject: CN=100.86.66.4
+
+# RSA key check
+RSA key ok

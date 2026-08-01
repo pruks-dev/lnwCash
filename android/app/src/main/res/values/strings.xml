@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">LnwCash</string>
+    <string name="title_activity_main">LnwCash</string>
+    <string name="package_name">cash.lnw.wallet</string>
+    <string name="custom_url_scheme">cash.lnw.wallet</string>
+</resources>

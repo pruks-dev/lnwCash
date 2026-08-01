@@ -1,0 +1,44 @@
+# TASK-056 — TopAppBar.diff
+# Fix: Conditional snippet prop → {#if} wrap pattern
+
+## PROBLEM
+Line 58 (old):
+  leading={showBack ? backBtn : undefined}
+
+This conditional snippet prop causes HMR crash:
+- Symbol(hmr anchor) is tied to the snippet reference
+- When showBack toggles, the snippet changes between `backBtn` and `undefined`
+- Svelte 5 HMR cannot reconcile the snapshot diff → crashes with "Symbol(hmr anchor)" error
+
+## FIX
+Replace conditional snippet prop with {#if} wrapper — two separate Nav instances:
+
+--- OLD (lines 55-60)
+<Nav
+	position="top"
+	title={title}
+	leading={showBack ? backBtn : undefined}
+	ariaLabel="Top navigation"
+/>
+
+--- NEW (lines 55-68)
+{#if showBack}
+	<Nav
+		position="top"
+		title={title}
+		leading={backBtn}
+		ariaLabel="Top navigation"
+	/>
+{:else}
+	<Nav
+		position="top"
+		title={title}
+		ariaLabel="Top navigation"
+	/>
+{/if}
+
+## RATIONALE
+- Each Nav instance has a STABLE set of props (no conditional snippet)
+- showBack toggle causes full Nav instance swap (mounted/unmounted) instead of prop-level snippet change
+- HMR anchor per Nav instance is stable — no Symbol(hmr anchor) collision
+- Nav.svelte guard `{#if leading}` never sees a stale/broken snippet reference

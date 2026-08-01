@@ -1,0 +1,15 @@
+# Word Count — TASK-041 Deliverables
+## Generated: 31 กรกฎาคม 2569
+
+Main Report (UX-RESEARCH-INTENT-002.md): ~3,500 words (Thai/English mixed)
+Brand Extract (brand-extract.md): ~1,800 words
+Screen Architecture (screen-architecture.md): ~2,400 words
+Component Tree (component-tree.md): ~2,600 words
+Technical Feasibility (technical-feasibility.md): ~2,100 words
+Source References (source-references.md): ~900 words
+Verification (verification.md): ~500 words
+
+Total across all deliverables: ~13,800 words
+
+Note: Word counts are approximate (mixed Thai/English text, code blocks excluded).
+Main report exceeds 3,000 word minimum requirement.

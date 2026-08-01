@@ -1,0 +1,31 @@
+vite v8.1.5 building client environment for production...
+transforming...✓ 210 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/registerSW.js                          0.13 kB
+dist/manifest.webmanifest                   0.42 kB
+dist/index.html                             1.16 kB │ gzip:  0.56 kB
+dist/assets/index-D51RvjnA.css             23.48 kB │ gzip:  4.05 kB
+dist/assets/esm-CSuQkwXN.js                 0.38 kB │ gzip:  0.25 kB
+dist/assets/esm-BOlHbHM7.js                 0.41 kB │ gzip:  0.27 kB
+dist/assets/rolldown-runtime-Bh1tDfsg.js    0.56 kB │ gzip:  0.36 kB
+dist/assets/web-Dg3l2GBd.js                 0.99 kB │ gzip:  0.42 kB
+dist/assets/preload-helper-Czpn1I53.js      1.19 kB │ gzip:  0.67 kB
+dist/assets/en-DPIStMkV.js                  4.94 kB │ gzip:  1.61 kB
+dist/assets/th-CfQkdf2Q.js                  7.14 kB │ gzip:  2.05 kB
+dist/assets/dist-Do0m8ifp.js                7.74 kB │ gzip:  3.08 kB
+dist/assets/web-DsTV7MsT.js               131.14 kB │ gzip: 48.20 kB
+dist/assets/index-teXozQWn.js             188.09 kB │ gzip: 60.70 kB
+
+[INEFFECTIVE_DYNAMIC_IMPORT] node_modules/idb/build/index.js is dynamically imported by src/lib/wallet/proofsDb.ts but also statically imported by src/lib/storage/db.ts, src/lib/wallet/proofsDb.ts, dynamic import will not move module into another chunk.
+
+[INEFFECTIVE_DYNAMIC_IMPORT] src/lib/wallet/proofsDb.ts is dynamically imported by src/lib/wallet/storage.ts but also statically imported by src/lib/wallet/balance.ts, src/lib/wallet/melt.ts, src/lib/wallet/mint.ts, src/lib/wallet/offline.ts, src/lib/wallet/state.ts, ..., dynamic import will not move module into another chunk.
+
+✓ built in 892ms
+
+PWA v1.3.0
+mode      generateSW
+precache  21 entries (375.74 KiB)
+files generated
+  dist/sw.js
+  dist/workbox-8d71a25b.js
