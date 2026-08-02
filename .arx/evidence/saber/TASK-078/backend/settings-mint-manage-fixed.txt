@@ -1,0 +1,27 @@
+F-042 — Settings → Manage Mint Routing Fix
+=============================================
+
+Root Cause:
+  Settings.svelte line 79: onclick={() => navigateTo('home')}
+  User clicks 'Manage Mint' → always redirects to Home screen
+  NOT a store issue, NOT localStorage mismatch — pure routing bug
+
+Fix Applied:
+  1. Imported MintSettings component from ../routes/settings/mint/+page.svelte
+  2. Added showMintManage = $state(false) state variable
+  3. Changed onclick to set showMintManage = true
+  4. Added conditional rendering: {#if showMintManage} show <MintSettings/> with back button
+  5. Added .mint-manage-header CSS for sub-view header bar
+
+Verification:
+  ✓ Settings → 'Manage Mint' → mint list visible (MintSettings component renders)
+  ✓ No redirect to Home screen
+  ✓ Back button returns to Settings main view
+  ✓ Settings other sections (Language, Theme, About) hidden during mint manage
+  ✓ Setup → Mint Manage still works (via Setup → create-wallet step — separate code path)
+  ✓ No changes to mint/+page.svelte (607 lines untouched)
+  ✓ No changes to mint store, localStorage, mint config
+
+Proof:
+  - F-042-routing-fix.diff: import + state + onclick + conditional render
+  - Settings.test.ts: PASS (regression check)

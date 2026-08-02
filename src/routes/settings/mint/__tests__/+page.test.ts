@@ -23,7 +23,7 @@ const DEFAULT_URL = 'https://mint.lnw.cash';
 
 const DEFAULT_MINT: MintConfig = {
 	url: DEFAULT_URL,
-	name: 'LnwCash mint',
+	name: 'LNWCASH mint',
 	pubkey: '03d0e4cda0f937bde65b9d160b58febe04bd229243ea45e390ce80252504e1176e',
 	version: 'Nutshell/0.20.1',
 	supported_nuts: ['04', '05', '07', '08'],
@@ -122,6 +122,18 @@ vi.mock('$lib/wallet/store', () => ({
 		const placeholder = { ...PLACEHOLDER_MINT, url };
 		mockMints.push(placeholder);
 		return placeholder;
+	}),
+	// TASK-076: Active mint URL tracking
+	getActiveMintUrl: vi.fn(() => {
+		const stored = localStorage.getItem('lnwcash_active_mint');
+		if (stored) {
+			const mint = mockMints.find(m => m.url === stored);
+			if (mint) return stored;
+		}
+		return DEFAULT_URL;
+	}),
+	setActiveMintUrl: vi.fn((url: string) => {
+		localStorage.setItem('lnwcash_active_mint', url);
 	})
 }));
 
@@ -147,7 +159,7 @@ describe('MintSettings (+page.svelte)', () => {
 		const { container } = render(MintSettings);
 
 		// Default mint should appear as active
-		expect(container.textContent).toContain('LnwCash mint');
+		expect(container.textContent).toContain('LNWCASH mint');
 		expect(container.textContent).toContain(DEFAULT_URL);
 		expect(container.textContent).toContain('Nutshell/0.20.1');
 

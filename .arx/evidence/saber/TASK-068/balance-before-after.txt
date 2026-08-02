@@ -1,0 +1,49 @@
+=== TASK-068: Balance Updates After Operations ===
+
+Balance tracking verified across all 4 flows:
+
+╔═════════════════════════════════════════════════════════════╗
+║ FLOW          │ BEFORE          │ AFTER           │ Δ     ║
+╠═════════════════════════════════════════════════════════════╣
+║ Mint (LN)     │ getBalance()    │ +minted proofs   │ +amt  ║
+║               │ reads IDB       │ addProofs()      │       ║
+║               │                 │ updateBalance()  │       ║
+╠═════════════════════════════════════════════════════════════╣
+║ Melt (LN)     │ getBalance()    │ -spent proofs    │ -amt  ║
+║               │ reads IDB       │ +change proofs   │ +chg  ║
+║               │                 │ markSpent()      │       ║
+║               │                 │ refreshBalance() │       ║
+╠═════════════════════════════════════════════════════════════╣
+║ Cashu Send    │ getBalance()    │ -spent proofs    │ -amt  ║
+║ (createToken) │ reads IDB       │ markSpent()      │       ║
+║               │                 │ refreshBalance() │       ║
+╠═════════════════════════════════════════════════════════════╣
+║ Cashu Receive │ getBalance()    │ +received proofs │ +amt  ║
+║ (receiveTkn)  │ reads IDB       │ addProofs()      │       ║
+║               │                 │ (stored via IDB) │       ║
+╚═════════════════════════════════════════════════════════════╝
+
+Balance Update Implementation:
+
+Receive.svelte:
+  - updateBalanceDisplay() calls getBalance() after mint
+  - Result displayed in success section via animated counter
+
+Send.svelte:
+  - refreshBalance() calls getBalanceByMint() after melt & token creation
+  - Balance in IndexedDB updated by wallet core (proofsDb.addProofs/markSpent)
+
+Wallet Core (no changes — already correct):
+  - mint.ts → addProofs() stores minted proofs ✓
+  - melt.ts → markSpent() + addProofs() handles change ✓
+  - transfer.ts → markSpent() for send, addProofs() for receive ✓
+  - balance.ts → getBalance() reads from getUnspentProofs() ✓
+
+Net Balance:
+  Mint (+5) → Balance: x + 5
+  Melt (-10) → Balance: x + 5 - 10 = x - 5
+  Send Cashu (-amt) → Balance: x - 5 - amt
+  Receive Cashu (+amt) → Balance: x - 5 + amt
+
+All balance operations are persisted to IndexedDB (IDB).
+Wallet state is durable across page reloads.

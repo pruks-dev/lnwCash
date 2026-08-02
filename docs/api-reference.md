@@ -1,10 +1,10 @@
 # Cashu API Reference
 
-Endpoints used by LnwCash Wallet to communicate with Cashu mints. All endpoints follow the [Cashu NUT (Notation, Usage, and Terminology) specification](https://github.com/cashubtc/nuts).
+Endpoints used by LNWCASH Wallet to communicate with Cashu mints. All endpoints follow the [Cashu NUT (Notation, Usage, and Terminology) specification](https://github.com/cashubtc/nuts).
 
 **Base URL**: `{MINT_URL}` — replace with your mint URL (e.g., `https://mint-dev.inw.cash`).
 
-> **Multi-mint note**: LnwCash supports multiple mints simultaneously. The mint URL is passed as a parameter on every call — no URL is hardcoded. See `src/lib/cashu/client.ts` for the implementation.
+> **Multi-mint note**: LNWCASH supports multiple mints simultaneously. The mint URL is passed as a parameter on every call — no URL is hardcoded. See `src/lib/cashu/client.ts` for the implementation.
 
 ---
 
@@ -409,7 +409,7 @@ HTTP status codes:
 
 ## Notes
 
-- **Timeout**: The LnwCash client uses a 15-second timeout on all mint requests (`AbortController`).
+- **Timeout**: The LNWCASH client uses a 15-second timeout on all mint requests (`AbortController`).
 - **Rate limiting**: Mints may impose rate limits. The client does not retry automatically — the user must trigger a retry.
-- **Mint discovery**: LnwCash does not ship with a default mint URL. Users must provide their own mint URLs.
+- **Mint discovery**: LNWCASH does not ship with a default mint URL. Users must provide their own mint URLs.
 - **All amounts are in satoshis (sats)** — no other units are currently supported in MVP.

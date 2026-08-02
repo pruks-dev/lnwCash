@@ -1,0 +1,65 @@
+# i18n Check — TASK-066 Verification
+
+## Languages: Thai (th) + English (en)
+
+## New Keys Added
+
+### Receive Screen (20 keys)
+| Key | Thai | English |
+|-----|------|---------|
+| screen.receive.tab_lightning | Lightning | Lightning |
+| screen.receive.tab_cashu | Cashu | Cashu |
+| screen.receive.amount_label | จำนวนเงิน | Amount |
+| screen.receive.amount_required | กรุณาระบุจำนวนเงิน | Please enter an amount |
+| screen.receive.creating_invoice | กำลังสร้างใบแจ้งหนี้... | Creating invoice... |
+| screen.receive.waiting_payment | รอการชำระเงิน... | Waiting for payment... |
+| screen.receive.success_received | ได้รับเงินแล้ว | Payment received |
+| screen.receive.amount_received_sat | ได้รับ {amount} sat แล้ว | Received {amount} sats |
+| screen.receive.paste_token | วาง Cashu token | Paste Cashu token |
+| screen.receive.token_placeholder | วาง cashuA... token ที่นี่ | Paste cashuA... token here |
+| screen.receive.token_required | กรุณาวาง token | Please paste a token |
+| screen.receive.validate_token | ตรวจสอบ | Validate |
+| screen.receive.error_invalid_token | token ไม่ถูกต้อง — ต้องขึ้นต้นด้วย cashuA | Invalid token — must start with cashuA |
+| screen.receive.token_preview | ตัวอย่าง token | Token preview |
+| screen.receive.token_amount | จำนวน | Amount |
+| screen.receive.receive_token | รับ token | Receive token |
+| screen.receive.receiving_token | กำลังรับ token... | Receiving token... |
+| screen.receive.token_received | ได้รับ token แล้ว | Token received |
+| screen.receive.token_received_success | รับ token สำเร็จ | Token received successfully |
+| screen.receive.error_receive_token | ไม่สามารถรับ token ได้ | Could not receive token |
+
+### Send Screen (24 keys)
+| Key | Thai | English |
+|-----|------|---------|
+| screen.send.tab_lightning | Lightning | Lightning |
+| screen.send.tab_cashu | Cashu | Cashu |
+| screen.send.enter_invoice | ป้อน Lightning invoice | Enter Lightning invoice |
+| screen.send.invoice_placeholder | วาง lnbc... invoice | Paste lnbc... invoice |
+| screen.send.description | รายละเอียด | Description |
+| screen.send.total | รวมทั้งสิ้น | Total |
+| screen.send.check_fee | ตรวจสอบค่าธรรมเนียม | Check fee |
+| screen.send.confirm_send | ยืนยันการส่ง | Confirm send |
+| screen.send.irreversible_warning | ธุรกรรมนี้ไม่สามารถยกเลิกได้ | This transaction cannot be undone |
+| screen.send.confirm_send_irreversible | ยืนยันการส่ง — ไม่สามารถยกเลิกได้ | Confirm — irreversible |
+| screen.send.sending | กำลังส่ง... | Sending... |
+| screen.send.do_not_close | กรุณารอ อย่าปิดแอป | Please wait, do not close the app |
+| screen.send.success_payment | ส่งเงินสำเร็จ | Payment sent |
+| screen.send.amount_sent | ส่ง {amount} sat แล้ว | Sent {amount} sats |
+| screen.send.error_invalid_invoice | Invoice ไม่ถูกต้อง | Invalid invoice |
+| screen.send.mint_unreachable | ไม่สามารถเชื่อมต่อ mint ได้ | Mint unreachable |
+| screen.send.mint_url_label | Mint URL | Mint URL |
+| screen.send.amount_required | กรุณาระบุจำนวนเงิน | Please enter an amount |
+| screen.send.preview_token | ดูตัวอย่าง token | Preview token |
+| screen.send.preview_token_msg | จะสร้าง token มูลค่า {amount} sat | Will create a token worth {amount} sats |
+| screen.send.create_token | สร้าง token | Create token |
+| screen.send.creating_token | กำลังสร้าง token... | Creating token... |
+| screen.send.token_created | สร้าง token สำเร็จ | Token created |
+| screen.send.share_token | ส่ง token นี้ให้ผู้รับ | Share this token with the recipient |
+| screen.send.error_create_token | ไม่สามารถสร้าง token ได้ | Could not create token |
+
+## Verification
+- ✅ All keys exist in both th.json and en.json
+- ✅ JSON syntax valid (verified with JSON.parse)
+- ✅ Keys used in Svelte templates via $_('key')
+- ✅ Parameterized strings use `{ values: { amount: ... } }` format
+- ✅ Build succeeds with i18n chunk splitting (th-CJjCTSim.js + en-DaZezb6t.js)

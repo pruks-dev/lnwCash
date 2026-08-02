@@ -10,6 +10,7 @@
 	import { WalletNotInitializedError, InvalidPinError } from '$lib/wallet/errors';
 	import { getSettings, setSettings } from '$lib/storage/local';
 	import { fetchAndCacheKeysets } from '$lib/cashu/keyset';
+	import { DEFAULT_MINT_CONFIG } from '$lib/wallet/config';
 
 	// TASK-050 Design System Components
 	import Card from '$lib/components/ui/Card.svelte';
@@ -35,7 +36,7 @@
 
 	// Wallet creation fields
 	let walletName: string = $state('');
-	let mintUrls: string[] = $state([]);
+	let mintUrls: string[] = $state([DEFAULT_MINT_CONFIG.url]);
 	let newMintUrl: string = $state('');
 	let mintInfoMap: Record<string, { name: string; keysets: string[] }> = $state({});
 
@@ -158,10 +159,8 @@
 
 	async function handleCreateWallet() {
 		error = '';
-		if (!walletName.trim()) {
-			error = $_('screen.wallet.error_name_required');
-			return;
-		}
+		// F-045: walletName optional — default to 'LNWCASH Wallet'
+		const effectiveName = walletName.trim() || 'LNWCASH Wallet';
 		if (mintUrls.length < 2) {
 			error = $_('screen.wallet.error_no_mint');
 			return;
@@ -173,7 +172,7 @@
 
 		loading = true;
 		try {
-			await createWallet(pin, walletName.trim());
+			await createWallet(pin, effectiveName);
 			// After creating, unlock immediately
 			await unlockWallet(pin);
 			onWalletReady?.(getWalletStatus());
@@ -280,7 +279,7 @@
 					<Input
 						type="text"
 						label={$_('screen.wallet.name_label')}
-						placeholder={$_('screen.wallet.name_placeholder')}
+						placeholder="LNWCASH Wallet (default)"
 						disabled={loading}
 						oninput={(e) => walletName = (e.target as HTMLInputElement).value}
 					/>
@@ -333,7 +332,7 @@
 						size="lg"
 						loading={loading}
 						onclick={handleCreateWallet}
-						disabled={loading || mintUrls.length < 2 || !walletName.trim()}
+						disabled={loading || mintUrls.length < 2}
 					>
 						{#snippet children()}{$_('screen.wallet.create_button')}{/snippet}
 					</Button>

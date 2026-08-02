@@ -1,0 +1,24 @@
+TASK-070 — i18n Keys Integrity Check
+=====================================
+Date: 2026-08-02
+
+New keys added (th.json):
+  + "screen.history.type_receive": "รับ"
+  + "screen.history.type_send": "ส่ง"
+  + "screen.history.filter_receive": "รับ"
+  + "screen.history.filter_send": "ส่ง"
+
+New keys added (en.json):
+  + "screen.history.type_receive": "Receive"
+  + "screen.history.type_send": "Send"
+  + "screen.history.filter_receive": "Receive"
+  + "screen.history.filter_send": "Send"
+
+Old keys still intact (NOT deleted):
+  ✓ "screen.history.type_mint" — "รับ ecash" (th) / "Ecash mint" (en)
+  ✓ "screen.history.type_melt" — "จ่าย ecash" (th) / "Ecash melt" (en)
+  ✓ "screen.history.filter_mint" — "Mint" (th) / "Mint" (en)
+  ✓ "screen.history.filter_melt" — "Melt" (th) / "Melt" (en)
+
+All pre-existing i18n keys remain unchanged.
+No keys were deleted. Rule: DO NOT delete i18n keys — COMPLIANT.

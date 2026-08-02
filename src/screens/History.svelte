@@ -1,6 +1,7 @@
 <script lang="ts">
 	/**
-	 * History Screen — full tx list with date grouping
+	 * History Screen — TASK-060 (C) / D-015
+	 * Full tx list with date grouping, pull-to-refresh, skeleton cards, empty state.
 	 * Uses TASK-050: Card, Chip, Heading, Body, Divider, Icons
 	 */
 	import { _ } from 'svelte-i18n';
@@ -24,11 +25,19 @@
 
 	let { maxItems }: Props = $props();
 
+	// ─── State ─────────────────────────────────────────────
 	let transactions: Transaction[] = $state([]);
 	let loading: boolean = $state(true);
 	let error: string = $state('');
 	let activeFilter: TransactionType | 'all' = $state('all');
 
+	// Pull-to-refresh state
+	let pullDistance: number = $state(0);
+	let isPulling: boolean = $state(false);
+	let refreshing: boolean = $state(false);
+	let touchStartY: number = $state(0);
+
+	// ─── Load transactions on mount & filter change ───────
 	$effect(() => {
 		loadTransactions();
 	});
@@ -50,6 +59,7 @@
 		}
 	}
 
+	// ─── Formatting helpers ──────────────────────────────
 	function formatSat(amount: number): string {
 		return new Intl.NumberFormat().format(amount);
 	}
@@ -65,8 +75,8 @@
 
 	function typeLabel(type: TransactionType): string {
 		switch (type) {
-			case 'mint': return $_('screen.history.type_mint');
-			case 'melt': return $_('screen.history.type_melt');
+			case 'mint': return $_('screen.history.type_receive');
+			case 'melt': return $_('screen.history.type_send');
 			case 'transfer': return $_('screen.history.type_transfer');
 			default: return type;
 		}
@@ -113,7 +123,7 @@
 		loadTransactions();
 	}
 
-	// Group transactions by date
+	// ─── Date grouping (TASK-060: "Today", "Yesterday", or date) ──
 	function groupByDate(txs: Transaction[]): Record<string, Transaction[]> {
 		const groups: Record<string, Transaction[]> = {};
 		const now = new Date();
@@ -133,7 +143,12 @@
 			} else if (txDay >= weekAgo) {
 				key = $_('screen.history.this_week');
 			} else {
-				key = $_('screen.history.older');
+				// Show actual date for older entries
+				key = txDate.toLocaleDateString(undefined, {
+					month: 'short',
+					day: 'numeric',
+					year: 'numeric'
+				});
 			}
 
 			if (!groups[key]) groups[key] = [];
@@ -148,22 +163,78 @@
 	});
 
 	let groupKeys = $derived.by(() => Object.keys(groupedTxs));
+
+	// ─── Pull-to-refresh ────────────────────────────────
+	function handleTouchStart(e: TouchEvent) {
+		touchStartY = e.touches[0].clientY;
+	}
+
+	function handleTouchMove(e: TouchEvent) {
+		const dy = e.touches[0].clientY - touchStartY;
+		if (dy > 0 && pullDistance < 120) {
+			pullDistance = Math.min(dy, 120);
+			isPulling = true;
+		}
+	}
+
+	async function handleTouchEnd() {
+		if (pullDistance >= 60) {
+			refreshing = true;
+			await loadTransactions();
+			refreshing = false;
+		}
+		pullDistance = 0;
+		isPulling = false;
+	}
+
+	/**
+	 * Empty state hint text — no i18n key modification (per TASK-060 rules).
+	 * Fallback: Thai text when lang is 'th', English otherwise.
+	 */
+	function emptyStateHint(): string {
+		if (typeof document !== 'undefined') {
+			return document.documentElement.lang?.startsWith('th')
+				? 'ทำธุรกรรมแรกของคุณวันนี้'
+				: 'Make your first transaction today';
+		}
+		return '';
+	}
 </script>
 
-<div class="history-screen" role="main" aria-label={$_('screen.history.title')}>
+<div
+	class="history-screen"
+	ontouchstart={handleTouchStart}
+	ontouchmove={handleTouchMove}
+	ontouchend={handleTouchEnd}
+	role="main"
+	aria-label={$_('screen.history.title')}
+>
+
+	<!-- ─── Pull indicator ─────────────────────────────── -->
+	{#if isPulling}
+		<div class="pull-indicator" style="height: {pullDistance}px" aria-hidden="true">
+			<Body size="sm" color="secondary">
+				{#if refreshing}
+					{$_('common.loading')}
+				{:else}
+					{pullDistance >= 60 ? $_('common.loading') : $_('screen.home.refresh')}
+				{/if}
+			</Body>
+		</div>
+	{/if}
 
 	<Heading level="h2" align="center">{$_('screen.history.title')}</Heading>
 
-	<!-- ─── Filter Chips ─────────────────────────────── -->
+	<!-- ─── Filter Chips ───────────────────────────────── -->
 	<div class="filters">
 		<Chip variant={activeFilter === 'all' ? 'active' : 'default'} onclick={() => setFilter('all')}>
 			{$_('screen.history.filter_all')}
 		</Chip>
 		<Chip variant={activeFilter === 'mint' ? 'active' : 'default'} onclick={() => setFilter('mint')}>
-			{$_('screen.history.filter_mint')}
+			{$_('screen.history.filter_receive')}
 		</Chip>
 		<Chip variant={activeFilter === 'melt' ? 'active' : 'default'} onclick={() => setFilter('melt')}>
-			{$_('screen.history.filter_melt')}
+			{$_('screen.history.filter_send')}
 		</Chip>
 		<Chip variant={activeFilter === 'transfer' ? 'active' : 'default'} onclick={() => setFilter('transfer')}>
 			{$_('screen.history.filter_transfer')}
@@ -172,11 +243,21 @@
 
 	<Divider />
 
-	<!-- ─── Transactions ─────────────────────────────── -->
-	{#if loading}
-		<Card variant="basic" padding="lg">
-			<Body size="md" color="disabled" align="center">{$_('common.loading')}</Body>
-		</Card>
+	<!-- ─── Transactions / States ──────────────────────── -->
+	{#if loading && !refreshing}
+		<!-- Skeleton cards (TASK-060 loading state) -->
+		<div class="skeleton-list" aria-busy="true" aria-label={$_('common.loading')}>
+			{#each Array(3) as _}
+				<div class="skeleton-card">
+					<div class="skeleton-icon pulse"></div>
+					<div class="skeleton-info">
+						<div class="skeleton-line pulse skeleton-line-lg"></div>
+						<div class="skeleton-line pulse skeleton-line-sm"></div>
+					</div>
+					<div class="skeleton-badge pulse"></div>
+				</div>
+			{/each}
+		</div>
 	{:else if error}
 		<Card variant="basic" padding="md">
 			<div class="error-card">
@@ -187,15 +268,20 @@
 			</div>
 		</Card>
 	{:else if transactions.length === 0}
+		<!-- Empty state (TASK-060: "ยังไม่มีธุรกรรม") -->
 		<Card variant="basic" padding="lg">
 			<div class="empty-state">
 				<span class="empty-icon" aria-hidden="true">
 					<HistoryIcon size={48} />
 				</span>
 				<Body size="md" color="disabled" align="center">{$_('screen.history.empty')}</Body>
+				<Body size="sm" color="disabled" align="center">
+					{emptyStateHint()}
+				</Body>
 			</div>
 		</Card>
 	{:else}
+		<!-- Transaction groups by date -->
 		<div class="tx-grouped-list">
 			{#each groupKeys as groupKey (groupKey)}
 				<div class="tx-group">
@@ -214,7 +300,7 @@
 									<div class="tx-info">
 										<div class="tx-header">
 											<Body size="sm" weight="semibold">{typeLabel(tx.type)}</Body>
-											<Body size="sm" weight="semibold" color={tx.type === 'mint' ? 'text' : 'text'}>
+											<Body size="sm" weight="semibold">
 												{tx.type === 'mint' ? '+' : '-'}{formatSat(tx.amount)} {$_('screen.balance.sats')}
 											</Body>
 										</div>
@@ -250,6 +336,16 @@
 		gap: var(--space-md);
 	}
 
+	/* Pull indicator */
+	.pull-indicator {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		overflow: hidden;
+		transition: height 0.15s ease;
+	}
+
+	/* Filters */
 	.filters {
 		display: flex;
 		gap: var(--space-xs);
@@ -258,7 +354,71 @@
 		flex-wrap: wrap;
 	}
 
-	/* Empty State */
+	/* ─── Skeleton Cards (TASK-060 loading state) ─────── */
+	.skeleton-list {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+	}
+
+	.skeleton-card {
+		display: flex;
+		align-items: center;
+		gap: var(--space-md);
+		padding: var(--space-md);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-lg);
+		box-shadow: var(--shadow-sm);
+	}
+
+	.skeleton-icon {
+		width: 36px;
+		height: 36px;
+		border-radius: var(--radius-full);
+		background: var(--color-surface-variant);
+		flex-shrink: 0;
+	}
+
+	.skeleton-info {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+	}
+
+	.skeleton-line {
+		height: 14px;
+		border-radius: var(--radius-sm);
+		background: var(--color-surface-variant);
+	}
+
+	.skeleton-line-lg {
+		width: 60%;
+	}
+
+	.skeleton-line-sm {
+		width: 40%;
+	}
+
+	.skeleton-badge {
+		width: 60px;
+		height: 20px;
+		border-radius: var(--radius-sm);
+		background: var(--color-surface-variant);
+		flex-shrink: 0;
+	}
+
+	@keyframes pulse {
+		0%, 100% { opacity: 0.4; }
+		50% { opacity: 0.8; }
+	}
+
+	.pulse {
+		animation: pulse 1.5s ease-in-out infinite;
+	}
+
+	/* ─── Empty State ──────────────────────────────────── */
 	.empty-state {
 		display: flex;
 		flex-direction: column;
@@ -271,7 +431,7 @@
 		color: var(--color-text-disabled);
 	}
 
-	/* Error */
+	/* ─── Error ────────────────────────────────────────── */
 	.error-card {
 		display: flex;
 		flex-direction: column;
@@ -279,7 +439,7 @@
 		gap: var(--space-sm);
 	}
 
-	/* Transaction Groups */
+	/* ─── Transaction Groups ──────────────────────────── */
 	.tx-grouped-list {
 		display: flex;
 		flex-direction: column;
@@ -298,7 +458,7 @@
 		gap: var(--space-xs);
 	}
 
-	/* Transaction Item */
+	/* ─── Transaction Item ──────────────────────────────── */
 	.tx-item {
 		display: flex;
 		align-items: center;

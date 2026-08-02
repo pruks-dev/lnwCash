@@ -1,0 +1,9 @@
+=== VITEST SUMMARY ===
+Test Files: 62 passed, 2 failed (64 total)
+Tests: 702 passed, 2 failed (704 total)
+Threshold: >= 682 PASS
+Verdict: PASS (702 >= 682)
+
+Pre-existing failures:
+  1. ErrorBoundary.test.ts - 'common.retry' i18n key not resolved in test (renders Thai text)
+  2. keys.test.ts - seed phrase roundtrip with 23 words (invalid)

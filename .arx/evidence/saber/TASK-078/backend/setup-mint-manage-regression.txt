@@ -1,0 +1,22 @@
+F-042 — Setup → Mint Manage Regression Check
+===============================================
+
+Setup → Mint Manage is a different code path (Setup.svelte → create-wallet step).
+The mint URL management in Setup.svelte uses its own local state (mintUrls, addMint, removeMint)
+and does NOT use the Settings → Manage Mint routing.
+
+Setup Mint Flow:
+  1. User completes PIN registration → 'create-wallet' step
+  2. Sees mint URL section with pre-filled DEFAULT_MINT_CONFIG.url (F-043)
+  3. Can add/remove mints via addMint() / removeMint() functions
+  4. This flow was NOT modified by F-042 (Settings routing fix)
+
+Regression Verification:
+  ✓ Setup.svelte: mintUrls still managed locally (independent from Settings)
+  ✓ addMint() function unchanged (line 119-134)
+  ✓ removeMint() function unchanged (line 136-141)
+  ✓ fetchMintInfo() function unchanged (line 143-157)
+  ✓ handleCreateWallet() unchanged (line 159-185)
+  ✓ create-wallet step UI unchanged
+  ✓ Setup.test.ts: PASS
+  ✓ F-042 only affected Settings.svelte (click handler + sub-view)

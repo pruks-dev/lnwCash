@@ -6,15 +6,20 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
+const pkg = JSON.parse(fs.readFileSync(resolve(__dirname, 'package.json'), 'utf-8'));
+
 export default defineConfig({
+	define: {
+		'import.meta.env.APP_VERSION': JSON.stringify(pkg.version)
+	},
 	plugins: [
 		svelte(),
 		VitePWA({
 			registerType: 'autoUpdate',
 			includeAssets: ['favicon.svg'],
 			manifest: {
-				name: 'LnwCash Wallet',
-				short_name: 'LnwCash',
+				name: 'LNWCASH Wallet',
+				short_name: 'LNWCASH',
 				description: 'Lightning Network Wallet',
 				theme_color: '#f7931a',
 				background_color: '#1a1a2e',
@@ -44,9 +49,23 @@ export default defineConfig({
 				globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
 				runtimeCaching: [
 					{
-						// Cache-first for static assets (JS, CSS, fonts, images)
-						urlPattern: /\.(?:js|css|woff2?|svg|png|jpg|ico)$/,
-						handler: 'CacheFirst',
+						// F-036 FIX: NetworkFirst for CSS/JS — prevent cache staleness on deploy
+						// Network first (5s timeout) → fallback to cache if offline/slow
+						urlPattern: /\.(?:js|css)$/,
+						handler: 'NetworkFirst',
+						options: {
+							cacheName: 'static-assets',
+							networkTimeoutSeconds: 5,
+							expiration: {
+								maxEntries: 100,
+								maxAgeSeconds: 24 * 60 * 60 // 1 day max (short TTL for fresh deploys)
+							}
+						}
+					},
+					{
+						// StaleWhileRevalidate for fonts/images — non-critical, safe to serve stale
+						urlPattern: /\.(?:woff2?|svg|png|jpg|ico)$/,
+						handler: 'StaleWhileRevalidate',
 						options: {
 							cacheName: 'static-assets',
 							expiration: {

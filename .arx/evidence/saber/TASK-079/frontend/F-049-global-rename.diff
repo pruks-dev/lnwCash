@@ -1,0 +1,1558 @@
+diff --git a/capacitor.config.json b/capacitor.config.json
+index e963735..8a81dbb 100644
+--- a/capacitor.config.json
++++ b/capacitor.config.json
+@@ -1,6 +1,6 @@
+ {
+ 	"appId": "cash.lnw.wallet",
+-	"appName": "LnwCash",
++	"appName": "LNWCASH",
+ 	"webDir": "dist",
+ 	"server": {
+ 		"androidScheme": "https"
+diff --git a/capacitor.config.ts b/capacitor.config.ts
+index 59f83f1..0e5927e 100644
+--- a/capacitor.config.ts
++++ b/capacitor.config.ts
+@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
+ 
+ const config: CapacitorConfig = {
+ 	appId: 'cash.lnw.wallet',
+-	appName: 'LnwCash',
++	appName: 'LNWCASH',
+ 	webDir: 'dist',
+ 	server: {
+ 		androidScheme: 'https'
+diff --git a/docs/CHANGELOG.md b/docs/CHANGELOG.md
+index 2dbb78a..4c901f7 100644
+--- a/docs/CHANGELOG.md
++++ b/docs/CHANGELOG.md
+@@ -1,6 +1,6 @@
+ # CHANGELOG
+ 
+-All notable changes to LnwCash Wallet are documented here.
++All notable changes to LNWCASH Wallet are documented here.
+ 
+ Versioning follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH`.
+ 
+@@ -38,7 +38,7 @@ Versioning follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATC
+ 
+ ### Initial MVP Release
+ 
+-First public release of LnwCash Wallet — a client-side Lightning Network wallet powered by the Cashu ecash protocol.
++First public release of LNWCASH Wallet — a client-side Lightning Network wallet powered by the Cashu ecash protocol.
+ 
+ ### Included Features
+ 
+diff --git a/docs/api-reference.md b/docs/api-reference.md
+index e8d36e1..d0638b7 100644
+--- a/docs/api-reference.md
++++ b/docs/api-reference.md
+@@ -1,10 +1,10 @@
+ # Cashu API Reference
+ 
+-Endpoints used by LnwCash Wallet to communicate with Cashu mints. All endpoints follow the [Cashu NUT (Notation, Usage, and Terminology) specification](https://github.com/cashubtc/nuts).
++Endpoints used by LNWCASH Wallet to communicate with Cashu mints. All endpoints follow the [Cashu NUT (Notation, Usage, and Terminology) specification](https://github.com/cashubtc/nuts).
+ 
+ **Base URL**: `{MINT_URL}` — replace with your mint URL (e.g., `https://mint-dev.inw.cash`).
+ 
+-> **Multi-mint note**: LnwCash supports multiple mints simultaneously. The mint URL is passed as a parameter on every call — no URL is hardcoded. See `src/lib/cashu/client.ts` for the implementation.
++> **Multi-mint note**: LNWCASH supports multiple mints simultaneously. The mint URL is passed as a parameter on every call — no URL is hardcoded. See `src/lib/cashu/client.ts` for the implementation.
+ 
+ ---
+ 
+@@ -409,7 +409,7 @@ HTTP status codes:
+ 
+ ## Notes
+ 
+-- **Timeout**: The LnwCash client uses a 15-second timeout on all mint requests (`AbortController`).
++- **Timeout**: The LNWCASH client uses a 15-second timeout on all mint requests (`AbortController`).
+ - **Rate limiting**: Mints may impose rate limits. The client does not retry automatically — the user must trigger a retry.
+-- **Mint discovery**: LnwCash does not ship with a default mint URL. Users must provide their own mint URLs.
++- **Mint discovery**: LNWCASH does not ship with a default mint URL. Users must provide their own mint URLs.
+ - **All amounts are in satoshis (sats)** — no other units are currently supported in MVP.
+diff --git a/docs/developer.md b/docs/developer.md
+index a775967..1dd03c5 100644
+--- a/docs/developer.md
++++ b/docs/developer.md
+@@ -1,8 +1,8 @@
+-# LnwCash Wallet — Developer Documentation
++# LNWCASH Wallet — Developer Documentation
+ 
+ ## Overview
+ 
+-LnwCash is a client-side Lightning Network wallet using the [Cashu protocol](https://cashu.space) (ecash). No backend, no server — all wallet operations happen in the browser or Android WebView. Built with Svelte 5 + TypeScript + Vite + Capacitor.
++LNWCASH is a client-side Lightning Network wallet using the [Cashu protocol](https://cashu.space) (ecash). No backend, no server — all wallet operations happen in the browser or Android WebView. Built with Svelte 5 + TypeScript + Vite + Capacitor.
+ 
+ **Architecture highlight**: PIN-encrypted private key → localStorage. Plaintext key exists only in memory when the wallet is unlocked. Multi-mint by design.
+ 
+diff --git a/docs/user-guide-en.md b/docs/user-guide-en.md
+index ed019ce..c18a32d 100644
+--- a/docs/user-guide-en.md
++++ b/docs/user-guide-en.md
+@@ -1,6 +1,6 @@
+-# LnwCash Wallet — User Guide
++# LNWCASH Wallet — User Guide
+ 
+-LnwCash Wallet is a Lightning Network wallet built on the Cashu protocol. It lets you receive, pay, and transfer ecash — no Lightning node required. Entirely client-side, no central server. Works on web and mobile.
++LNWCASH Wallet is a Lightning Network wallet built on the Cashu protocol. It lets you receive, pay, and transfer ecash — no Lightning node required. Entirely client-side, no central server. Works on web and mobile.
+ 
+ ---
+ 
+@@ -71,7 +71,7 @@ The seed phrase is your recovery key. **Guard it with your life.** If you lose y
+ 
+ ### ⚠️ Warnings
+ - Seed phrase = full access to all funds. Whoever holds it can spend everything.
+-- LnwCash does not store your seed. It is entirely your responsibility.
++- LNWCASH does not store your seed. It is entirely your responsibility.
+ - Clearing browser data without your seed → permanent and irreversible loss of funds.
+ 
+ ---
+@@ -109,11 +109,11 @@ Different mints have different fee structures, liquidity, and uptime. Having mul
+ ---
+ 
+ ## Installing as PWA
+-LnwCash supports Progressive Web App installation:
++LNWCASH supports Progressive Web App installation:
+ 1. Open in your browser
+ 2. Tap **Install** on the banner that appears
+ 3. Tap **Add to Home Screen**
+ 
+ ---
+ 
+-*LnwCash Wallet · Lightning Network Wallet — Fast, Easy, Secure*
++*LNWCASH Wallet · Lightning Network Wallet — Fast, Easy, Secure*
+diff --git a/docs/user-guide-th.md b/docs/user-guide-th.md
+index eaaed6a..7095b7e 100644
+--- a/docs/user-guide-th.md
++++ b/docs/user-guide-th.md
+@@ -1,6 +1,6 @@
+-# LnwCash Wallet — คู่มือการใช้งาน
++# LNWCASH Wallet — คู่มือการใช้งาน
+ 
+-LnwCash Wallet คือกระเป๋าเงินดิจิทัลบน Lightning Network ที่ใช้โปรโตคอล Cashu — ให้คุณรับ-จ่าย-โอน ecash ได้โดยไม่ต้องเปิด Lightning node เอง ทำงานบนเว็บและมือถือ ฝั่งผู้ใช้ล้วน ๆ ไม่มีเซิร์ฟเวอร์กลาง
++LNWCASH Wallet คือกระเป๋าเงินดิจิทัลบน Lightning Network ที่ใช้โปรโตคอล Cashu — ให้คุณรับ-จ่าย-โอน ecash ได้โดยไม่ต้องเปิด Lightning node เอง ทำงานบนเว็บและมือถือ ฝั่งผู้ใช้ล้วน ๆ ไม่มีเซิร์ฟเวอร์กลาง
+ 
+ ---
+ 
+@@ -71,7 +71,7 @@ Seed phrase คือกุญแจสำรองเข้ากระเป
+ 
+ ### ⚠️ คำเตือน
+ - Seed phrase = สิทธิ์เข้าถึงเงินทั้งหมด — ใครได้ seed ไป = ได้เงินไป
+-- LnwCash ไม่เก็บ seed ให้ — เป็นความรับผิดชอบของคุณทั้งหมด
++- LNWCASH ไม่เก็บ seed ให้ — เป็นความรับผิดชอบของคุณทั้งหมด
+ - ล้างข้อมูลเบราว์เซอร์โดยไม่มี seed → เงินหายถาวร ไม่สามารถกู้คืนได้
+ 
+ ---
+@@ -109,11 +109,11 @@ Mint แต่ละเจ้าอาจมีข้อจำกัดต่า
+ ---
+ 
+ ## การติดตั้ง PWA
+-LnwCash รองรับ PWA — เพิ่มลงหน้าจอหลักเพื่อเปิดเร็วขึ้น:
++LNWCASH รองรับ PWA — เพิ่มลงหน้าจอหลักเพื่อเปิดเร็วขึ้น:
+ 1. เปิดผ่านเบราว์เซอร์
+ 2. แตะ "ติดตั้ง" ในแบนเนอร์ที่โผล่มา
+ 3. แตะ "เพิ่มลงหน้าจอหลัก"
+ 
+ ---
+ 
+-*LnwCash Wallet · Lightning Network Wallet — เร็ว ง่าย ปลอดภัย*
++*LNWCASH Wallet · Lightning Network Wallet — เร็ว ง่าย ปลอดภัย*
+diff --git a/index.html b/index.html
+index a9be7b7..596285c 100644
+--- a/index.html
++++ b/index.html
+@@ -4,14 +4,14 @@
+ 		<meta charset="UTF-8" />
+ 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+ 		<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+-		<meta name="description" content="LnwCash Wallet — Lightning Network Wallet" />
++		<meta name="description" content="LNWCASH Wallet — Lightning Network Wallet" />
+ 		<meta name="theme-color" content="#f7931a" />
+ 		<!-- iOS PWA -->
+ 		<meta name="apple-mobile-web-app-capable" content="yes" />
+ 		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+-		<meta name="apple-mobile-web-app-title" content="LnwCash" />
++		<meta name="apple-mobile-web-app-title" content="LNWCASH" />
+ 		<link rel="apple-touch-icon" href="/icon-192.png" />
+-		<title>LnwCash Wallet</title>
++		<title>LNWCASH Wallet</title>
+ 	</head>
+ 	<body>
+ 		<div id="app"></div>
+diff --git a/infra/DEPLOY-v4-local.md b/infra/DEPLOY-v4-local.md
+index 64c48ca..ef302b4 100644
+--- a/infra/DEPLOY-v4-local.md
++++ b/infra/DEPLOY-v4-local.md
+@@ -1,4 +1,4 @@
+-# คู่มือ Deploy — LnwCash Wallet (v4 Local)
++# คู่มือ Deploy — LNWCASH Wallet (v4 Local)
+ 
+ > สำหรับ deploy บนเครื่อง local ด้วย Nginx  
+ > Port 8080 | IP access only | ไม่ใช้ domain
+@@ -129,7 +129,7 @@ http://100.86.66.4:8080
+ ```
+ 
+ **สิ่งที่ควรเห็น:**
+-- หน้าเว็บ LnwCash Wallet แสดงผลถูกต้อง
++- หน้าเว็บ LNWCASH Wallet แสดงผลถูกต้อง
+ - ไม่มี error ใน console (F12 → Console)
+ - Service Worker ลงทะเบียนสำเร็จ (F12 → Application → Service Workers)
+ - Icon และ assets โหลดครบ
+diff --git a/infra/DEPLOY.md b/infra/DEPLOY.md
+index 65cc67b..ff0adbc 100644
+--- a/infra/DEPLOY.md
++++ b/infra/DEPLOY.md
+@@ -1,6 +1,6 @@
+-# 🚀 คู่มือ Deploy — LnwCash Wallet
++# 🚀 คู่มือ Deploy — LNWCASH Wallet
+ 
+-คู่มือนี้ครอบคลุมการ deploy โปรเจกต์ LnwCash ขึ้น VPS ตั้งแต่ zero จนขึ้น production
++คู่มือนี้ครอบคลุมการ deploy โปรเจกต์ LNWCASH ขึ้น VPS ตั้งแต่ zero จนขึ้น production
+ 
+ ---
+ 
+@@ -12,7 +12,7 @@ User → Cloudflare (DNS + SSL) → VPS (Nginx) → Static Files (dist/)
+                               GitHub Actions (CI/CD)
+ ```
+ 
+-LnwCash เป็น SPA (Single Page Application) ที่ build ออกมาเป็น static files เต็มรูปแบบ — ไม่มี backend, ไม่มี server-side rendering ไฟล์ที่ได้จาก `npm run build` จะอยู่ใน `dist/` ทั้งหมด
++LNWCASH เป็น SPA (Single Page Application) ที่ build ออกมาเป็น static files เต็มรูปแบบ — ไม่มี backend, ไม่มี server-side rendering ไฟล์ที่ได้จาก `npm run build` จะอยู่ใน `dist/` ทั้งหมด
+ 
+ ---
+ 
+diff --git a/infra/cloudflare/cloudflare-setup.md b/infra/cloudflare/cloudflare-setup.md
+index b41a7ed..0866ce1 100644
+--- a/infra/cloudflare/cloudflare-setup.md
++++ b/infra/cloudflare/cloudflare-setup.md
+@@ -1,4 +1,4 @@
+-# ☁️ Cloudflare Setup Guide — LnwCash Wallet
++# ☁️ Cloudflare Setup Guide — LNWCASH Wallet
+ 
+ คู่มือนี้สำหรับ Commander ใช้ตั้งค่า Cloudflare ด้วยตนเอง — Brick (Deploy Agent) ไม่ดำเนินการตั้งค่า Cloudflare
+ 
+@@ -76,7 +76,7 @@
+ - **Full (strict)** ตรวจสอบว่า certificate บน VPS เป็น certificate ที่ valid (ออกให้ domain จริง, ไม่ expired, signed by trusted CA)
+ - ป้องกัน MITM attack ระหว่าง Cloudflare ↔ VPS
+ - ถ้า certificate บน VPS ไม่ valid — Cloudflare จะปฏิเสธการเชื่อมต่อ (fail closed)
+-- สำหรับ LnwCash ซึ่งเป็น wallet app — ความปลอดภัยสำคัญที่สุด
++- สำหรับ LNWCASH ซึ่งเป็น wallet app — ความปลอดภัยสำคัญที่สุด
+ 
+ ### วิธีทำ Certificate บน VPS
+ 
+@@ -213,7 +213,7 @@ CI/CD workflow อาจต้องการ purge cache หลัง deploy 
+ 
+ | Field | Value |
+ |---|---|
+-| **Token name** | `LnwCash Deploy Token` |
++| **Token name** | `LNWCASH Deploy Token` |
+ 
+ **Permissions:**
+ 
+diff --git a/infra/vps/vps-spec.md b/infra/vps/vps-spec.md
+index b47ba4a..5bc69e7 100644
+--- a/infra/vps/vps-spec.md
++++ b/infra/vps/vps-spec.md
+@@ -1,12 +1,12 @@
+-# 🖥️ VPS Specification — LnwCash Wallet
++# 🖥️ VPS Specification — LNWCASH Wallet
+ 
+-เอกสารนี้เสนอสเปก VPS สำหรับ host LnwCash Wallet (Static SPA + Nginx)
++เอกสารนี้เสนอสเปก VPS สำหรับ host LNWCASH Wallet (Static SPA + Nginx)
+ 
+ ---
+ 
+ ## 📊 Load Analysis
+ 
+-### LnwCash คืออะไร?
++### LNWCASH คืออะไร?
+ 
+ - **Single Page Application** — client-side rendering, static files only
+ - **ไม่มี backend** — ไม่มี database, ไม่มี API server, ไม่มี server-side compute
+diff --git a/src/__tests__/lib/i18n-init.test.ts b/src/__tests__/lib/i18n-init.test.ts
+index 0304665..d5bdbfa 100644
+--- a/src/__tests__/lib/i18n-init.test.ts
++++ b/src/__tests__/lib/i18n-init.test.ts
+@@ -55,8 +55,8 @@ async function getTranslator(): Promise<(key: string) => string> {
+ }
+ 
+ // Known translations for validation
+-const TH_APP_NAME = 'LnwCash Wallet';
+-const EN_APP_NAME = 'LnwCash Wallet'; // same for both locales
++const TH_APP_NAME = 'LNWCASH Wallet';
++const EN_APP_NAME = 'LNWCASH Wallet'; // same for both locales
+ const TH_TAGLINE = 'Lightning Network Wallet — เร็ว ง่าย ปลอดภัย';
+ const EN_TAGLINE = 'Lightning Network Wallet — Fast, Easy, Secure';
+ 
+diff --git a/src/lib/cashu/__tests__/endpoint-resolution.test.ts b/src/lib/cashu/__tests__/endpoint-resolution.test.ts
+index d7205ad..6f54c10 100644
+--- a/src/lib/cashu/__tests__/endpoint-resolution.test.ts
++++ b/src/lib/cashu/__tests__/endpoint-resolution.test.ts
+@@ -23,7 +23,7 @@ const standardMint: MintInfo = {
+ 
+ /** Config 2: mint.lnw.cash — real NUT-19 structure */
+ const lnwCashMint: MintInfo = {
+-	name: 'LnwCash',
++	name: 'LNWCASH',
+ 	pubkey: '03d0e4cda0f937bde65b9d160b58febe04bd229243ea45e390ce80252504e1176e',
+ 	version: 'Nutshell/0.20.1',
+ 	time: 1785554043,
+diff --git a/src/lib/components/__tests__/design-system.test.ts b/src/lib/components/__tests__/design-system.test.ts
+index 3faf701..d5d3f62 100644
+--- a/src/lib/components/__tests__/design-system.test.ts
++++ b/src/lib/components/__tests__/design-system.test.ts
+@@ -240,8 +240,8 @@ describe('Nav', () => {
+ 	});
+ 
+ 	it('renders top app bar with title', () => {
+-		render(Nav, { position: 'top', title: 'LnwCash' });
+-		expect(screen.queryByText('LnwCash')).toBeTruthy();
++		render(Nav, { position: 'top', title: 'LNWCASH' });
++		expect(screen.queryByText('LNWCASH')).toBeTruthy();
+ 	});
+ });
+ 
+diff --git a/src/lib/design/animations.css b/src/lib/design/animations.css
+index 075be59..3deae22 100644
+--- a/src/lib/design/animations.css
++++ b/src/lib/design/animations.css
+@@ -1,5 +1,5 @@
+ /* ============================================================
+- * LnwCash Animations — TASK-052 (B)
++ * LNWCASH Animations — TASK-052 (B)
+  * CSS-only animations (GPU accelerated)
+  * Screen transitions, micro-interactions, skeleton, spinner
+  * ============================================================ */
+diff --git a/src/lib/design/theme.ts b/src/lib/design/theme.ts
+index 3531c63..8568465 100644
+--- a/src/lib/design/theme.ts
++++ b/src/lib/design/theme.ts
+@@ -25,12 +25,12 @@ function loadInitialMode(): ThemeMode {
+ 	}
+ }
+ 
+-function resolveTheme(mode: ThemeMode): ResolvedTheme {
++export function resolveTheme(mode: ThemeMode): ResolvedTheme {
+ 	if (mode === 'system') return getSystemPreference();
+ 	return mode;
+ }
+ 
+-function applyThemeDom(theme: ResolvedTheme) {
++export function applyThemeDom(theme: ResolvedTheme) {
+ 	if (typeof document !== 'undefined') {
+ 		document.documentElement.setAttribute('data-theme', theme);
+ 	}
+diff --git a/src/lib/design/tokens.css b/src/lib/design/tokens.css
+index 9d8e991..8287301 100644
+--- a/src/lib/design/tokens.css
++++ b/src/lib/design/tokens.css
+@@ -1,7 +1,7 @@
+ /* ============================================================
+- * LnwCash Design Tokens — D-003, D-006
++ * LNWCASH Design Tokens — D-003, D-006
+  * CSS Custom Properties for theming and consistency
+- * Brand: Cyan/Teal (LnwCash)
++ * Brand: Cyan/Teal (LNWCASH)
+  * ============================================================ */
+ 
+ /* ─── Smooth Theme Transition ──────────────────────────── */
+diff --git a/src/lib/router.ts b/src/lib/router.ts
+index 72b7e53..021844f 100644
+--- a/src/lib/router.ts
++++ b/src/lib/router.ts
+@@ -1,5 +1,5 @@
+ /**
+- * Simple hash-based router for LnwCash wallet.
++ * Simple hash-based router for LNWCASH wallet.
+  *
+  * Route consolidation (D-002): ~9 screens → 6 main routes
+  *   #/          → home (dashboard: balance + quick actions + recent tx)
+diff --git a/src/lib/storage/__tests__/local.test.ts b/src/lib/storage/__tests__/local.test.ts
+index e0e22b4..811fbff 100644
+--- a/src/lib/storage/__tests__/local.test.ts
++++ b/src/lib/storage/__tests__/local.test.ts
+@@ -168,7 +168,7 @@ describe('localStorage service', () => {
+ 	});
+ 
+ 	describe('clearAll', () => {
+-		it('should clear all LnwCash data', () => {
++		it('should clear all LNWCASH data', () => {
+ 			setWalletMetadata({ name: 'test', created_at: 1 });
+ 			setSettings({ language: 'en' });
+ 			setKeysetCache('https://mint.example.com', []);
+diff --git a/src/lib/storage/local.ts b/src/lib/storage/local.ts
+index fa891de..ba68849 100644
+--- a/src/lib/storage/local.ts
++++ b/src/lib/storage/local.ts
+@@ -170,7 +170,7 @@ export function isAvailable(): boolean {
+ 	return isLocalStorageAvailable();
+ }
+ 
+-// ─── Clear all LnwCash data from localStorage ────────────────
++// ─── Clear all LNWCASH data from localStorage ────────────────
+ 
+ export function clearAll(): void {
+ 	removeKey(KEYS.WALLET_META);
+diff --git a/src/lib/types.ts b/src/lib/types.ts
+index bb701c3..91952d3 100644
+--- a/src/lib/types.ts
++++ b/src/lib/types.ts
+@@ -1,5 +1,5 @@
+ /**
+- * Core type definitions for LnwCash wallet
++ * Core type definitions for LNWCASH wallet
+  */
+ 
+ // ─── Storage Types ───────────────────────────────────────────
+diff --git a/src/lib/wallet/__tests__/mint-discovery.test.ts b/src/lib/wallet/__tests__/mint-discovery.test.ts
+index c4fef01..fb8219a 100644
+--- a/src/lib/wallet/__tests__/mint-discovery.test.ts
++++ b/src/lib/wallet/__tests__/mint-discovery.test.ts
+@@ -124,7 +124,7 @@ describe('(A) Default mint configuration', () => {
+ 		});
+ 
+ 		it('should have correct default name', () => {
+-			expect(DEFAULT_MINT_CONFIG.name).toBe('LnwCash mint');
++			expect(DEFAULT_MINT_CONFIG.name).toBe('LNWCASH mint');
+ 		});
+ 
+ 		it('should have a valid 33-byte compressed pubkey (66 hex chars)', () => {
+@@ -411,7 +411,7 @@ describe('(C) Mint config store', () => {
+ 		it('should return default mint config for default URL (seed)', () => {
+ 			const config = getMintConfig(DEFAULT_MINT_CONFIG.url);
+ 			expect(config).toBeTruthy();
+-			expect(config!.name).toBe('LnwCash mint');
++			expect(config!.name).toBe('LNWCASH mint');
+ 		});
+ 
+ 		it('should store and retrieve a config', () => {
+diff --git a/src/lib/wallet/config.ts b/src/lib/wallet/config.ts
+index bf59a50..5618c99 100644
+--- a/src/lib/wallet/config.ts
++++ b/src/lib/wallet/config.ts
+@@ -47,7 +47,7 @@ export interface MintConfig {
+  */
+ export const DEFAULT_MINT_CONFIG: MintConfig = {
+ 	url: 'https://mint.lnw.cash',
+-	name: 'LnwCash mint',
++	name: 'LNWCASH mint',
+ 	pubkey: '03d0e4cda0f937bde65b9d160b58febe04bd229243ea45e390ce80252504e1176e',
+ 	version: 'Nutshell/0.20.1',
+ 	supported_nuts: [
+diff --git a/src/locales/en.json b/src/locales/en.json
+index ac95e19..386d3c1 100644
+--- a/src/locales/en.json
++++ b/src/locales/en.json
+@@ -1,5 +1,5 @@
+ {
+-	"app.name": "LnwCash Wallet",
++	"app.name": "LNWCASH Wallet",
+ 	"app.tagline": "Lightning Network Wallet — Fast, Easy, Secure",
+ 	"app.description": "Lightning Network Wallet for Thai people",
+ 	"nav.home": "Home",
+@@ -60,7 +60,7 @@
+ 	"screen.balance.online": "Online",
+ 	"screen.balance.offline": "Offline",
+ 	"screen.balance.mint_breakdown": "Per-mint Breakdown",
+-	"screen.home.title": "LnwCash",
++	"screen.home.title": "LNWCASH",
+ 	"screen.home.total_balance": "Total Balance",
+ 	"screen.home.quick_actions": "Quick Actions",
+ 	"screen.home.recent_tx": "Recent Transactions",
+@@ -105,9 +105,13 @@
+ 	"screen.history.filter_all": "All",
+ 	"screen.history.filter_mint": "Mint",
+ 	"screen.history.filter_melt": "Melt",
++	"screen.history.filter_receive": "Receive",
++	"screen.history.filter_send": "Send",
+ 	"screen.history.filter_transfer": "Transfer",
+ 	"screen.history.type_mint": "Ecash mint",
+ 	"screen.history.type_melt": "Ecash melt",
++	"screen.history.type_receive": "Receive",
++	"screen.history.type_send": "Send",
+ 	"screen.history.type_transfer": "Transfer",
+ 	"screen.history.amount": "Amount",
+ 	"screen.history.date": "Date",
+@@ -129,7 +133,7 @@
+ 	"screen.settings.theme_dark": "Dark",
+ 	"screen.settings.theme_system": "System",
+ 	"screen.settings.about_version": "Version",
+-	"screen.settings.about_description": "LnwCash — Lightning Wallet for everyone",
++	"screen.settings.about_description": "LNWCASH — Lightning Wallet for everyone",
+ 	"screen.settings.about_github": "GitHub",
+ 	"screen.settings.about_license": "MIT License",
+ 	"screen.setup.title": "Wallet Setup",
+@@ -175,7 +179,7 @@
+ 	"offline.banner": "🔴 Offline — Limited features",
+ 	"offline.back_online": "🟢 Back online",
+ 	"pwa.install_title": "Install App",
+-	"pwa.install_description": "Add LnwCash to your home screen for faster access",
++	"pwa.install_description": "Add LNWCASH to your home screen for faster access",
+ 	"pwa.install_button": "Install",
+ 	"pwa.later_button": "Later",
+ 	"splash.loading": "Loading...",
+@@ -193,5 +197,61 @@
+ 	"mint.settings.errorFetch": "Could not fetch mint info. Please check the URL.",
+ 	"mint.settings.empty": "No custom mints — using default mint only",
+ 	"mint.settings.version": "Version",
+-	"mint.settings.supportedNuts": "Supported NUTs"
++	"mint.settings.supportedNuts": "Supported NUTs",
++
++	"screen.receive.tab_lightning": "Lightning",
++	"screen.receive.tab_cashu": "Cashu",
++	"screen.receive.amount_label": "Amount",
++	"screen.receive.amount_required": "Please enter an amount",
++	"screen.receive.creating_invoice": "Creating invoice...",
++	"screen.receive.waiting_payment": "Waiting for payment...",
++	"screen.receive.success_received": "Payment received",
++	"screen.receive.amount_received_sat": "Received {amount} sats",
++	"screen.receive.paste_token": "Paste Cashu token",
++	"screen.receive.token_placeholder": "Paste cashuA... token here",
++	"screen.receive.token_required": "Please paste a token",
++	"screen.receive.validate_token": "Validate",
++	"screen.receive.error_invalid_token": "Invalid token — must start with cashuA",
++	"screen.receive.token_preview": "Token preview",
++	"screen.receive.token_amount": "Amount",
++	"screen.receive.receive_token": "Receive token",
++	"screen.receive.receiving_token": "Receiving token...",
++	"screen.receive.token_received": "Token received",
++	"screen.receive.token_received_success": "Token received successfully",
++	"screen.receive.error_receive_token": "Could not receive token",
++	"screen.receive.error_mint_404": "Mint endpoint not found — check the URL",
++	"screen.receive.error_mint_forbidden": "Mint denied the connection — check permissions",
++	"screen.receive.error_mint_server": "Mint internal error — try again later",
++	"screen.receive.error_mint_unreachable": "Cannot reach the mint — check your network",
++	"screen.receive.error_mint_timeout": "Mint response timeout — try again",
++	"screen.receive.error_quote_expired": "Invoice creation expired — please create a new one",
++	"screen.receive.error_payment_timeout": "Payment not detected within time limit — please try again",
++
++	"screen.send.tab_lightning": "Lightning",
++	"screen.send.tab_cashu": "Cashu",
++	"screen.send.enter_invoice": "Enter Lightning invoice",
++	"screen.send.invoice_placeholder": "Paste lnbc... invoice",
++	"screen.send.description": "Description",
++	"screen.send.total": "Total",
++	"screen.send.check_fee": "Check fee",
++	"screen.send.confirm_send": "Confirm send",
++	"screen.send.irreversible_warning": "This transaction cannot be undone",
++	"screen.send.confirm_send_irreversible": "Confirm — irreversible",
++	"screen.send.sending": "Sending...",
++	"screen.send.do_not_close": "Please wait, do not close the app",
++	"screen.send.success_payment": "Payment sent",
++	"screen.send.amount_sent": "Sent {amount} sats",
++	"screen.send.error_invalid_invoice": "Invalid invoice",
++	"screen.send.mint_unreachable": "Mint unreachable",
++	"screen.send.mint_url_label": "Mint URL",
++	"screen.send.amount_required": "Please enter an amount",
++	"screen.send.preview_token": "Preview token",
++	"screen.send.preview_token_msg": "Will create a token worth {amount} sats",
++	"screen.send.create_token": "Create token",
++	"screen.send.creating_token": "Creating token...",
++	"screen.send.token_created": "Token created",
++	"screen.send.share_token": "Share this token with the recipient",
++	"screen.send.error_create_token": "Could not create token",
++	"screen.send.error_already_spent": "Proof already spent — possible double-spend attempt",
++	"screen.send.error_melt_timeout": "Mint response timeout — try again"
+ }
+diff --git a/src/locales/th.json b/src/locales/th.json
+index c3719ef..af1545c 100644
+--- a/src/locales/th.json
++++ b/src/locales/th.json
+@@ -1,5 +1,5 @@
+ {
+-	"app.name": "LnwCash Wallet",
++	"app.name": "LNWCASH Wallet",
+ 	"app.tagline": "Lightning Network Wallet — เร็ว ง่าย ปลอดภัย",
+ 	"app.description": "กระเป๋า Lightning Network สำหรับคนไทย",
+ 	"nav.home": "หน้าแรก",
+@@ -60,7 +60,7 @@
+ 	"screen.balance.online": "ออนไลน์",
+ 	"screen.balance.offline": "ออฟไลน์",
+ 	"screen.balance.mint_breakdown": "แยกตาม Mint",
+-	"screen.home.title": "LnwCash",
++	"screen.home.title": "LNWCASH",
+ 	"screen.home.total_balance": "ยอดคงเหลือทั้งหมด",
+ 	"screen.home.quick_actions": "ดำเนินการด่วน",
+ 	"screen.home.recent_tx": "ธุรกรรมล่าสุด",
+@@ -105,9 +105,13 @@
+ 	"screen.history.filter_all": "ทั้งหมด",
+ 	"screen.history.filter_mint": "Mint",
+ 	"screen.history.filter_melt": "Melt",
++	"screen.history.filter_receive": "รับ",
++	"screen.history.filter_send": "ส่ง",
+ 	"screen.history.filter_transfer": "โอน",
+ 	"screen.history.type_mint": "รับ ecash",
+ 	"screen.history.type_melt": "จ่าย ecash",
++	"screen.history.type_receive": "รับ",
++	"screen.history.type_send": "ส่ง",
+ 	"screen.history.type_transfer": "โอน",
+ 	"screen.history.amount": "จำนวน",
+ 	"screen.history.date": "วันที่",
+@@ -129,7 +133,7 @@
+ 	"screen.settings.theme_dark": "มืด",
+ 	"screen.settings.theme_system": "ตามระบบ",
+ 	"screen.settings.about_version": "เวอร์ชัน",
+-	"screen.settings.about_description": "LnwCash — กระเป๋า Lightning สำหรับทุกคน",
++	"screen.settings.about_description": "LNWCASH — กระเป๋า Lightning สำหรับทุกคน",
+ 	"screen.settings.about_github": "GitHub",
+ 	"screen.settings.about_license": "MIT License",
+ 	"screen.setup.title": "ตั้งค่ากระเป๋า",
+@@ -175,7 +179,7 @@
+ 	"offline.banner": "🔴 ออฟไลน์ — ฟีเจอร์จำกัด",
+ 	"offline.back_online": "🟢 กลับมาออนไลน์แล้ว",
+ 	"pwa.install_title": "ติดตั้งแอป",
+-	"pwa.install_description": "ติดตั้ง LnwCash บนหน้าจอหลักเพื่อใช้งานได้เร็วขึ้น",
++	"pwa.install_description": "ติดตั้ง LNWCASH บนหน้าจอหลักเพื่อใช้งานได้เร็วขึ้น",
+ 	"pwa.install_button": "ติดตั้ง",
+ 	"pwa.later_button": "ภายหลัง",
+ 	"splash.loading": "กำลังโหลด...",
+@@ -193,5 +197,61 @@
+ 	"mint.settings.errorFetch": "ไม่สามารถดึงข้อมูล mint ได้ กรุณาตรวจสอบ URL",
+ 	"mint.settings.empty": "ไม่มี mint ที่กำหนดเอง — ใช้ mint เริ่มต้นเท่านั้น",
+ 	"mint.settings.version": "เวอร์ชัน",
+-	"mint.settings.supportedNuts": "NUTs ที่รองรับ"
++	"mint.settings.supportedNuts": "NUTs ที่รองรับ",
++
++	"screen.receive.tab_lightning": "Lightning",
++	"screen.receive.tab_cashu": "Cashu",
++	"screen.receive.amount_label": "จำนวนเงิน",
++	"screen.receive.amount_required": "กรุณาระบุจำนวนเงิน",
++	"screen.receive.creating_invoice": "กำลังสร้างใบแจ้งหนี้...",
++	"screen.receive.waiting_payment": "รอการชำระเงิน...",
++	"screen.receive.success_received": "ได้รับเงินแล้ว",
++	"screen.receive.amount_received_sat": "ได้รับ {amount} sat แล้ว",
++	"screen.receive.paste_token": "วาง Cashu token",
++	"screen.receive.token_placeholder": "วาง cashuA... token ที่นี่",
++	"screen.receive.token_required": "กรุณาวาง token",
++	"screen.receive.validate_token": "ตรวจสอบ",
++	"screen.receive.error_invalid_token": "token ไม่ถูกต้อง — ต้องขึ้นต้นด้วย cashuA",
++	"screen.receive.token_preview": "ตัวอย่าง token",
++	"screen.receive.token_amount": "จำนวน",
++	"screen.receive.receive_token": "รับ token",
++	"screen.receive.receiving_token": "กำลังรับ token...",
++	"screen.receive.token_received": "ได้รับ token แล้ว",
++	"screen.receive.token_received_success": "รับ token สำเร็จ",
++	"screen.receive.error_receive_token": "ไม่สามารถรับ token ได้",
++	"screen.receive.error_mint_404": "ไม่พบ endpoint ของ mint — ตรวจสอบ URL",
++	"screen.receive.error_mint_forbidden": "Mint ปฏิเสธการเชื่อมต่อ — ตรวจสอบสิทธิ์",
++	"screen.receive.error_mint_server": "Mint มีปัญหาภายใน — ลองใหม่ภายหลัง",
++	"screen.receive.error_mint_unreachable": "ไม่สามารถเชื่อมต่อ mint ได้ — ตรวจสอบเครือข่าย",
++	"screen.receive.error_mint_timeout": "Mint ตอบกลับช้า — ลองใหม่",
++	"screen.receive.error_quote_expired": "เวลาสร้าง invoice หมดอายุ — กรุณาสร้างใหม่",
++	"screen.receive.error_payment_timeout": "ไม่พบการชำระเงินภายในเวลา — กรุณาลองใหม่",
++
++	"screen.send.tab_lightning": "Lightning",
++	"screen.send.tab_cashu": "Cashu",
++	"screen.send.enter_invoice": "ป้อน Lightning invoice",
++	"screen.send.invoice_placeholder": "วาง lnbc... invoice",
++	"screen.send.description": "รายละเอียด",
++	"screen.send.total": "รวมทั้งสิ้น",
++	"screen.send.check_fee": "ตรวจสอบค่าธรรมเนียม",
++	"screen.send.confirm_send": "ยืนยันการส่ง",
++	"screen.send.irreversible_warning": "ธุรกรรมนี้ไม่สามารถยกเลิกได้",
++	"screen.send.confirm_send_irreversible": "ยืนยันการส่ง — ไม่สามารถยกเลิกได้",
++	"screen.send.sending": "กำลังส่ง...",
++	"screen.send.do_not_close": "กรุณารอ อย่าปิดแอป",
++	"screen.send.success_payment": "ส่งเงินสำเร็จ",
++	"screen.send.amount_sent": "ส่ง {amount} sat แล้ว",
++	"screen.send.error_invalid_invoice": "Invoice ไม่ถูกต้อง",
++	"screen.send.mint_unreachable": "ไม่สามารถเชื่อมต่อ mint ได้",
++	"screen.send.mint_url_label": "Mint URL",
++	"screen.send.amount_required": "กรุณาระบุจำนวนเงิน",
++	"screen.send.preview_token": "ดูตัวอย่าง token",
++	"screen.send.preview_token_msg": "จะสร้าง token มูลค่า {amount} sat",
++	"screen.send.create_token": "สร้าง token",
++	"screen.send.creating_token": "กำลังสร้าง token...",
++	"screen.send.token_created": "สร้าง token สำเร็จ",
++	"screen.send.share_token": "ส่ง token นี้ให้ผู้รับ",
++	"screen.send.error_create_token": "ไม่สามารถสร้าง token ได้",
++	"screen.send.error_already_spent": "Proof ถูกใช้ไปแล้ว — อาจมีการใช้ซ้ำ",
++	"screen.send.error_melt_timeout": "Mint ตอบกลับช้า — ลองใหม่"
+ }
+diff --git a/src/routes/settings/mint/+page.svelte b/src/routes/settings/mint/+page.svelte
+index 842945f..440faa5 100644
+--- a/src/routes/settings/mint/+page.svelte
++++ b/src/routes/settings/mint/+page.svelte
+@@ -13,9 +13,12 @@
+ 		removeMintConfig,
+ 		getDefaultMintUrl,
+ 		getMintConfig,
+-		setMintConfig
++		setMintConfig,
++		getActiveMintUrl,
++		setActiveMintUrl
+ 	} from '$lib/wallet/store';
+-	import { DEFAULT_MINT_CONFIG, type MintConfig } from '$lib/wallet/config';
++	import { DEFAULT_MINT_CONFIG, normalizeSupportedNuts, type MintConfig } from '$lib/wallet/config';
++	import type { MintInfo } from '$lib/types';
+ 	import Input from '$lib/components/ui/Input.svelte';
+ 	import Button from '$lib/components/ui/Button.svelte';
+ 	import Card from '$lib/components/ui/Card.svelte';
+@@ -23,23 +26,7 @@
+ 	import Badge from '$lib/components/ui/Badge.svelte';
+ 	import Modal from '$lib/components/ui/Modal.svelte';
+ 
+-	// ─── Active Mint Tracking (UI concern, localStorage) ─────────
+-
+-	const ACTIVE_MINT_KEY = 'lnwcash_active_mint';
+-
+-	function getActiveMintUrl(): string {
+-		try {
+-			const stored = localStorage.getItem(ACTIVE_MINT_KEY);
+-			if (stored && getMintConfig(stored)) return stored;
+-		} catch { /* ignore */ }
+-		return getDefaultMintUrl();
+-	}
+-
+-	function setActiveMintUrl(url: string): void {
+-		try {
+-			localStorage.setItem(ACTIVE_MINT_KEY, url);
+-		} catch { /* ignore */ }
+-	}
++	// ─── Active Mint Tracking (shared — imported from $lib/wallet/store) ──
+ 
+ 	// ─── State ───────────────────────────────────────────────────
+ 
+@@ -148,20 +135,57 @@
+ 		validateError = '';
+ 		addUrlError = '';
+ 
++		// F-044: Direct /v1/info fetch with 5s timeout for validation
++		const controller = new AbortController();
++		const timeoutId = setTimeout(() => controller.abort(), 5000);
++
+ 		try {
+-			const result: DiscoveryResult = await discoverMintEndpoints(cleaned);
++			const response = await fetch(`${cleaned}/v1/info`, {
++				method: 'GET',
++				headers: { Accept: 'application/json' },
++				signal: controller.signal
++			});
++
++			clearTimeout(timeoutId);
++
++			if (!response.ok) {
++				validateError = 'ไม่พบ mint — ตรวจสอบ URL';
++				validatedConfig = null;
++				validatedNuts = [];
++				return;
++			}
++
++			const info: MintInfo = await response.json();
+ 
+-			if (!result.success) {
+-				validateError = result.error ?? $_('mint.settings.errorFetch');
++			if (!info || typeof info !== 'object') {
++				validateError = 'ไม่พบ mint — ตรวจสอบ URL';
+ 				validatedConfig = null;
+ 				validatedNuts = [];
+ 				return;
+ 			}
+ 
+-			validatedConfig = result.config;
+-			validatedNuts = result.config.supported_nuts;
++			const supported_nuts = info.nuts ? normalizeSupportedNuts(info.nuts) : [];
++
++			// F-044: Build validated config from /v1/info response
++			validatedConfig = {
++				url: cleaned,
++				name: info.name ?? '',
++				pubkey: info.pubkey ?? '',
++				version: info.version ?? '',
++				supported_nuts,
++				cached_endpoints: [],
++				ttl: 0,
++				last_info_fetch: Date.now()
++			};
++			validatedNuts = supported_nuts;
+ 		} catch (e) {
+-			validateError = e instanceof Error ? e.message : $_('mint.settings.errorFetch');
++			clearTimeout(timeoutId);
++
++			if (e instanceof DOMException && e.name === 'AbortError') {
++				validateError = 'ไม่พบ mint — ตรวจสอบ URL (หมดเวลา 5 วินาที)';
++			} else {
++				validateError = 'ไม่พบ mint — ตรวจสอบ URL';
++			}
+ 			validatedConfig = null;
+ 			validatedNuts = [];
+ 		} finally {
+@@ -174,12 +198,23 @@
+ 
+ 		saving = true;
+ 		try {
+-			// The discoverMintEndpoints already called setMintConfig, but ensure it's stored
+-			setMintConfig(validatedConfig);
++			// F-044: Run full discovery for endpoint resolution on confirmed mint
++			let finalConfig = validatedConfig;
++			try {
++				const discovery: DiscoveryResult = await discoverMintEndpoints(validatedConfig.url);
++				if (discovery.success) {
++					finalConfig = discovery.config;
++				}
++			} catch {
++				// Fallback: use the validated config from /v1/info
++			}
++
++			// Persist the config
++			setMintConfig(finalConfig);
+ 
+ 			// Set as active mint
+-			setActiveMintUrl(validatedConfig.url);
+-			activeMintUrl = validatedConfig.url;
++			setActiveMintUrl(finalConfig.url);
++			activeMintUrl = finalConfig.url;
+ 
+ 			// Refresh list
+ 			loadMints();
+@@ -238,7 +273,7 @@
+ </script>
+ 
+ <svelte:head>
+-	<title>{$_('mint.settings.title')} — LnwCash</title>
++	<title>{$_('mint.settings.title')} — LNWCASH</title>
+ </svelte:head>
+ 
+ <div class="mint-settings">
+diff --git a/src/routes/settings/mint/__tests__/+page.test.ts b/src/routes/settings/mint/__tests__/+page.test.ts
+index cec23e6..3cf2d5c 100644
+--- a/src/routes/settings/mint/__tests__/+page.test.ts
++++ b/src/routes/settings/mint/__tests__/+page.test.ts
+@@ -23,7 +23,7 @@ const DEFAULT_URL = 'https://mint.lnw.cash';
+ 
+ const DEFAULT_MINT: MintConfig = {
+ 	url: DEFAULT_URL,
+-	name: 'LnwCash mint',
++	name: 'LNWCASH mint',
+ 	pubkey: '03d0e4cda0f937bde65b9d160b58febe04bd229243ea45e390ce80252504e1176e',
+ 	version: 'Nutshell/0.20.1',
+ 	supported_nuts: ['04', '05', '07', '08'],
+@@ -122,6 +122,18 @@ vi.mock('$lib/wallet/store', () => ({
+ 		const placeholder = { ...PLACEHOLDER_MINT, url };
+ 		mockMints.push(placeholder);
+ 		return placeholder;
++	}),
++	// TASK-076: Active mint URL tracking
++	getActiveMintUrl: vi.fn(() => {
++		const stored = localStorage.getItem('lnwcash_active_mint');
++		if (stored) {
++			const mint = mockMints.find(m => m.url === stored);
++			if (mint) return stored;
++		}
++		return DEFAULT_URL;
++	}),
++	setActiveMintUrl: vi.fn((url: string) => {
++		localStorage.setItem('lnwcash_active_mint', url);
+ 	})
+ }));
+ 
+@@ -147,7 +159,7 @@ describe('MintSettings (+page.svelte)', () => {
+ 		const { container } = render(MintSettings);
+ 
+ 		// Default mint should appear as active
+-		expect(container.textContent).toContain('LnwCash mint');
++		expect(container.textContent).toContain('LNWCASH mint');
+ 		expect(container.textContent).toContain(DEFAULT_URL);
+ 		expect(container.textContent).toContain('Nutshell/0.20.1');
+ 
+diff --git a/src/screens/F001-Register.svelte b/src/screens/F001-Register.svelte
+index ffc424b..aa3fc59 100644
+--- a/src/screens/F001-Register.svelte
++++ b/src/screens/F001-Register.svelte
+@@ -52,7 +52,7 @@
+ 		loading = true;
+ 		try {
+ 			const settings = getSettings();
+-			const walletName = settings.default_mint ? `LnwCash-${Date.now()}` : 'LnwCash Wallet';
++			const walletName = settings.default_mint ? `LNWCASH-${Date.now()}` : 'LNWCASH Wallet';
+ 			const result = await createWallet(pin, walletName);
+ 			onWalletReady?.(getWalletStatus());
+ 		} catch (e) {
+diff --git a/src/screens/Home.svelte b/src/screens/Home.svelte
+index 0a17faf..b23aa68 100644
+--- a/src/screens/Home.svelte
++++ b/src/screens/Home.svelte
+@@ -1,11 +1,13 @@
+ <script lang="ts">
+ 	/**
+-	 * Home Dashboard — D-004
+-	 * Balance card + Quick Actions + Recent Transactions
+-	 * Uses TASK-050: Card, Button, Heading, Body, Icons
++	 * Home Dashboard — Wallet Page Redesign (TASK-059)
++	 * Home-centric: Balance display + Send/Receive + Recent transactions
++	 * Design token: LNWCASH Cyan = #00bcd4
++	 *
++	 * Svelte 5 runes: $state, $derived, $effect
+ 	 */
+ 	import { _ } from 'svelte-i18n';
+-	import { getBalance, getMintBalances, type Balance, type MintBalance } from '$lib/wallet/balance';
++	import { getBalance } from '$lib/wallet/balance';
+ 	import { getTransactions } from '$lib/storage/db';
+ 	import type { Transaction, TransactionType, TransactionStatus } from '$lib/types';
+ 	import { isOnline, onConnectivityChange } from '$lib/wallet/offline';
+@@ -17,15 +19,11 @@
+ 	import Button from '$lib/components/ui/Button.svelte';
+ 	import Heading from '$lib/components/ui/Heading.svelte';
+ 	import Body from '$lib/components/ui/Body.svelte';
+-	import Badge from '$lib/components/ui/Badge.svelte';
+ 	import Divider from '$lib/components/ui/Divider.svelte';
+ 
+ 	// TASK-050 Icons
+-	import Wallet from '$lib/components/icons/Wallet.svelte';
+ 	import Receive from '$lib/components/icons/Receive.svelte';
+ 	import Send from '$lib/components/icons/Send.svelte';
+-	import Scan from '$lib/components/icons/Scan.svelte';
+-	import History from '$lib/components/icons/History.svelte';
+ 	import ArrowRight from '$lib/components/icons/ArrowRight.svelte';
+ 
+ 	interface Props {
+@@ -39,10 +37,7 @@
+ 	let error: string = $state('');
+ 	let online: boolean = $state(isOnline());
+ 	let recentTxs: Transaction[] = $state([]);
+-	let pullDistance: number = $state(0);
+-	let isPulling: boolean = $state(false);
+ 	let refreshing: boolean = $state(false);
+-	let touchStartY: number = $state(0);
+ 
+ 	$effect(() => {
+ 		const cleanup = onConnectivityChange((status: boolean) => {
+@@ -53,8 +48,11 @@
+ 	});
+ 
+ 	async function loadAll() {
+-		await Promise.all([loadBalance(), loadRecentTxs()]);
+-		loading = false;
++		try {
++			await Promise.all([loadBalance(), loadRecentTxs()]);
++		} finally {
++			loading = false;
++		}
+ 	}
+ 
+ 	async function loadBalance() {
+@@ -72,16 +70,21 @@
+ 			const txs = await getTransactions({});
+ 			recentTxs = txs.slice(0, 5);
+ 		} catch {
+-			// Non-critical — recent tx is secondary
++			// Non-critical
+ 		}
+ 	}
+ 
++	async function handleRefresh() {
++		refreshing = true;
++		await loadAll();
++		refreshing = false;
++	}
++
+ 	function formatSat(amount: number): string {
+ 		return new Intl.NumberFormat().format(amount);
+ 	}
+ 
+ 	function estimateFiat(sats: number): string {
+-		// Rough estimate: 1 sat ≈ 0.015 THB
+ 		const thb = Math.round(sats * 0.015);
+ 		return thb.toLocaleString();
+ 	}
+@@ -90,14 +93,10 @@
+ 		navigateTo(screen);
+ 	}
+ 
+-	function handleScan() {
+-		onQRScan?.();
+-	}
+-
+ 	function txTypeLabel(type: TransactionType): string {
+ 		switch (type) {
+-			case 'mint': return $_('screen.history.type_mint');
+-			case 'melt': return $_('screen.history.type_melt');
++			case 'mint': return $_('screen.history.type_receive');
++			case 'melt': return $_('screen.history.type_send');
+ 			case 'transfer': return $_('screen.history.type_transfer');
+ 			default: return type;
+ 		}
+@@ -126,185 +125,182 @@
+ 		}
+ 	}
+ 
+-	// Pull-to-refresh
+-	function handleTouchStart(e: TouchEvent) {
+-		touchStartY = e.touches[0].clientY;
+-	}
++	function handleRipple(e: MouseEvent) {
++		const btn = e.currentTarget as HTMLElement;
++		const rect = btn.getBoundingClientRect();
++		const size = Math.max(rect.width, rect.height);
++		const x = e.clientX - rect.left - size / 2;
++		const y = e.clientY - rect.top - size / 2;
+ 
+-	function handleTouchMove(e: TouchEvent) {
+-		const dy = e.touches[0].clientY - touchStartY;
+-		if (dy > 0 && pullDistance < 120) {
+-			pullDistance = Math.min(dy, 120);
+-			isPulling = true;
+-		}
+-	}
++		const ripple = document.createElement('span');
++		ripple.className = 'ripple-effect';
++		ripple.style.width = `${size}px`;
++		ripple.style.height = `${size}px`;
++		ripple.style.left = `${x}px`;
++		ripple.style.top = `${y}px`;
+ 
+-	async function handleTouchEnd() {
+-		if (pullDistance >= 60) {
+-			refreshing = true;
+-			await loadAll();
+-			refreshing = false;
+-		}
+-		pullDistance = 0;
+-		isPulling = false;
++		btn.appendChild(ripple);
++		ripple.addEventListener('animationend', () => {
++			ripple.remove();
++		});
+ 	}
+ </script>
+ 
+-<div
+-	class="home-screen"
+-	ontouchstart={handleTouchStart}
+-	ontouchmove={handleTouchMove}
+-	ontouchend={handleTouchEnd}
+-	role="main"
+-	aria-label={$_('screen.home.title')}
+->
+-
+-	{#if isPulling}
+-		<div class="pull-indicator" style="height: {pullDistance}px" aria-hidden="true">
+-			{#if refreshing}
+-				<Body size="sm" color="secondary">{$_('common.loading')}</Body>
+-			{:else}
+-				<Body size="sm" color="secondary">
+-					{pullDistance >= 60 ? $_('common.loading') : $_('screen.home.refresh')}
+-				</Body>
+-			{/if}
+-		</div>
+-	{/if}
+-
+-	<!-- ─── Balance Card ──────────────────────────────────── -->
+-	<Card variant="basic" padding="lg">
+-		<div class="balance-section">
+-			<Heading level="h2" align="center">{$_('screen.home.total_balance')}</Heading>
+-			{#if loading}
+-				<Body size="lg" weight="semibold" color="disabled" align="center">{$_('common.loading')}</Body>
+-			{:else if error}
+-				<Body size="lg" color="disabled" align="center">{error}</Body>
+-			{:else if totalBalance === 0}
+-				<Body size="lg" color="disabled" align="center">{$_('screen.balance.empty')}</Body>
+-			{:else}
+-				<div class="balance-amount">
+-					<span class="balance-value">{formatSat(totalBalance)}</span>
+-					<span class="balance-unit">{$_('screen.balance.sats')}</span>
+-				</div>
+-				<div class="fiat-estimate">
+-					{$_('screen.home.estimated_fiat'.replace('{amount}', estimateFiat(totalBalance)))}
+-				</div>
+-			{/if}
+-			<div class="balance-status">
+-				<Badge>
++<div class="home-scroll" role="main" aria-label={$_('screen.home.title')}>
++	<div class="home-content">
++
++		<!-- A — Balance Display -->
++		<div class="balance-container">
++			<div class="balance-section">
++				<Heading level="h2" align="center">{$_('screen.home.total_balance')}</Heading>
++
++				{#if loading}
++					<Body size="lg" weight="semibold" color="disabled" align="center">
++						{$_('common.loading')}
++					</Body>
++				{:else if error}
++					<Body size="md" color="disabled" align="center">
++						{error}
++					</Body>
++				{:else}
++					<div class="balance-amount">
++						<span class="balance-value" aria-live="polite" aria-atomic="true">
++							{formatSat(totalBalance)}
++						</span>
++						<span class="balance-unit">{$_('screen.balance.sats')}</span>
++					</div>
++					<div class="fiat-estimate">
++						≈ {estimateFiat(totalBalance)} THB
++					</div>
++				{/if}
++
++				<div class="balance-status">
+ 					{#if online}
+-						{$_('screen.balance.online')}
++						<span class="status-badge online-badge">{$_('screen.balance.online')}</span>
+ 					{:else}
+-						{$_('screen.balance.offline')}
++						<span class="status-badge offline-badge">{$_('screen.balance.offline')}</span>
+ 					{/if}
+-				</Badge>
++				</div>
+ 			</div>
+ 		</div>
+-	</Card>
+-
+-	<!-- ─── Quick Actions ─────────────────────────────────── -->
+-	<div class="quick-actions">
+-		<Heading level="h3">{$_('screen.home.quick_actions')}</Heading>
+-		<div class="action-buttons">
+-			<button
+-				type="button"
+-				class="action-btn"
+-				onclick={() => navTo('receive')}
+-				aria-label={$_('wallet.receive')}
+-			>
+-				<span class="action-icon receive-icon">
+-					<Receive size={24} />
+-				</span>
+-				<Body size="sm" weight="medium">{$_('wallet.receive')}</Body>
+-			</button>
+-
+-			<button
+-				type="button"
+-				class="action-btn"
+-				onclick={() => navTo('send')}
+-				aria-label={$_('wallet.send')}
+-			>
+-				<span class="action-icon send-icon">
+-					<Send size={24} />
+-				</span>
+-				<Body size="sm" weight="medium">{$_('wallet.send')}</Body>
+-			</button>
+-
+-			<button
+-				type="button"
+-				class="action-btn"
+-				onclick={handleScan}
+-				aria-label={$_('screen.receive.scan_qr')}
+-			>
+-				<span class="action-icon scan-icon">
+-					<Scan size={24} />
+-				</span>
+-				<Body size="sm" weight="medium">{$_('screen.receive.scan_qr')}</Body>
+-			</button>
+-		</div>
+-	</div>
+ 
+-	<Divider />
+-
+-	<!-- ─── Recent Transactions ───────────────────────────── -->
+-	<div class="recent-tx-section">
+-		<div class="section-header">
+-			<Heading level="h3">{$_('screen.home.recent_tx')}</Heading>
+-			<Button variant="ghost" size="sm" onclick={() => navTo('history')}>
+-				{#snippet children()}
+-					{$_('screen.home.view_all')}
+-					<ArrowRight size={14} />
+-				{/snippet}
+-			</Button>
++		<!-- B — Quick Actions -->
++		<div class="quick-actions">
++			<Heading level="h3">{$_('screen.home.quick_actions')}</Heading>
++			<div class="action-buttons-row">
++				<!-- F-053/D-013: Receive ซ้าย, Send ขวา -->
++				<button type="button" class="action-btn action-receive"
++					onclick={(e) => { handleRipple(e); navTo('receive'); }}
++					aria-label={$_('wallet.receive')}>
++					<span class="action-icon-wrap" aria-hidden="true">
++						<Receive size={28} />
++					</span>
++					<Body size="md" weight="semibold">{$_('wallet.receive')}</Body>
++				</button>
++
++				<button type="button" class="action-btn action-send"
++					onclick={(e) => { handleRipple(e); navTo('send'); }}
++					aria-label={$_('wallet.send')}>
++					<span class="action-icon-wrap" aria-hidden="true">
++						<Send size={28} />
++					</span>
++					<Body size="md" weight="semibold">{$_('wallet.send')}</Body>
++				</button>
++			</div>
+ 		</div>
+ 
+-		{#if recentTxs.length === 0}
+-			<Card variant="basic" padding="md">
+-				<Body size="sm" color="secondary" align="center">{$_('screen.home.no_tx')}</Body>
+-			</Card>
+-		{:else}
+-			<div class="tx-list">
+-				{#each recentTxs as tx}
+-					<Card variant="interactive" padding="md" onclick={() => navTo('history')}>
+-						<div class="tx-item">
+-							<span class="tx-icon-bg" aria-hidden="true">{txTypeIcon(tx.type)}</span>
+-							<div class="tx-info">
+-								<Body size="sm" weight="semibold">{txTypeLabel(tx.type)}</Body>
+-								<Body size="sm" color="secondary">
+-									{tx.amount} {$_('screen.balance.sats')} · {formatTxDate(tx.timestamp)}
+-								</Body>
+-							</div>
+-							<div class="tx-status-dot" style="background: {statusColor(tx.status)}" title={tx.status}></div>
+-						</div>
+-					</Card>
+-				{/each}
++		<Divider />
++
++		<!-- C — Recent Transactions -->
++		<div class="recent-tx-section">
++			<div class="section-header">
++				<Heading level="h3">{$_('screen.home.recent_tx')}</Heading>
++				<div class="section-header-actions">
++					<Button variant="ghost" size="sm" loading={refreshing}
++						onclick={handleRefresh} ariaLabel="Refresh transactions">
++						{#snippet children()}
++							<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14"
++								viewBox="0 0 24 24" fill="none" stroke="currentColor"
++								stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
++								class:spin={refreshing}>
++								<polyline points="23 4 23 10 17 10" />
++								<polyline points="1 20 1 14 7 14" />
++								<path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
++							</svg>
++						{/snippet}
++					</Button>
++					<Button variant="ghost" size="sm" onclick={() => navTo('history')}>
++						{#snippet children()}
++							{$_('screen.home.view_all')}
++							<ArrowRight size={14} />
++						{/snippet}
++					</Button>
++				</div>
+ 			</div>
+-		{/if}
+-	</div>
+ 
+-	<!-- Spacer for bottom nav -->
+-	<div class="bottom-spacer"></div>
++			{#if loading}
++				<Card variant="basic" padding="md">
++					<Body size="sm" color="secondary" align="center">{$_('common.loading')}</Body>
++				</Card>
++			{:else if recentTxs.length === 0}
++				<Card variant="basic" padding="md">
++					<Body size="sm" color="secondary" align="center">
++						{$_('screen.home.no_tx')}
++					</Body>
++				</Card>
++			{:else}
++				<div class="tx-list">
++					{#each recentTxs as tx}
++						<Card variant="interactive" padding="md" onclick={() => navTo('history')}>
++							<div class="tx-item">
++								<span class="tx-icon-bg" aria-hidden="true">{txTypeIcon(tx.type)}</span>
++								<div class="tx-info">
++									<Body size="sm" weight="semibold">{txTypeLabel(tx.type)}</Body>
++									<Body size="sm" color="secondary">
++										{tx.amount} {$_('screen.balance.sats')} · {formatTxDate(tx.timestamp)}
++									</Body>
++								</div>
++								<div class="tx-status-dot"
++									style="background: {statusColor(tx.status)}"
++									title={tx.status}></div>
++							</div>
++						</Card>
++					{/each}
++				</div>
++			{/if}
++		</div>
++
++		<!-- D — Safe-area bottom spacer -->
++		<div class="bottom-spacer"></div>
++	</div>
+ </div>
+ 
+ <style>
+-	.home-screen {
++	.home-scroll {
+ 		max-width: 480px;
+ 		margin: 0 auto;
++		height: 100%;
++		overflow-y: auto;
++		overflow-x: hidden;
++		-webkit-overflow-scrolling: touch;
++		overscroll-behavior-y: contain;
++	}
++
++	.home-content {
+ 		padding: var(--space-md);
+ 		display: flex;
+ 		flex-direction: column;
+ 		gap: var(--space-lg);
+ 	}
+ 
+-	.pull-indicator {
+-		display: flex;
+-		align-items: center;
+-		justify-content: center;
+-		overflow: hidden;
+-		transition: height 0.15s ease;
++	/* A — Balance */
++	.balance-container {
++		background: transparent;
++		border-radius: 0;
++		padding: var(--space-lg);
++		box-shadow: none;
+ 	}
+ 
+-	/* Balance Card */
+ 	.balance-section {
+ 		display: flex;
+ 		flex-direction: column;
+@@ -320,10 +316,11 @@
+ 
+ 	.balance-value {
+ 		font-family: var(--font-family);
+-		font-size: var(--font-size-3xl);
+-		font-weight: var(--font-weight-bold);
++		font-size: 3.25rem; /* 52px — F-052: Wallet of Satoshi style */
++		font-weight: 800;
+ 		color: var(--color-primary);
+ 		line-height: var(--line-height-tight);
++		transition: transform 0.3s ease;
+ 	}
+ 
+ 	.balance-unit {
+@@ -342,41 +339,60 @@
+ 		margin-top: var(--space-xs);
+ 	}
+ 
+-	/* Quick Actions */
++	.status-badge {
++		display: inline-flex;
++		align-items: center;
++		padding: 2px 8px;
++		border-radius: var(--radius-full);
++		font-size: var(--font-size-xs);
++		font-weight: var(--font-weight-semibold);
++		letter-spacing: 0.02em;
++	}
++
++	.online-badge {
++		background: var(--color-success-light);
++		color: var(--color-success);
++	}
++
++	.offline-badge {
++		background: var(--color-warning-light);
++		color: var(--color-warning);
++	}
++
++	/* B — Quick Actions */
+ 	.quick-actions {
+ 		display: flex;
+ 		flex-direction: column;
+ 		gap: var(--space-md);
+ 	}
+ 
+-	.action-buttons {
++	.action-buttons-row {
+ 		display: flex;
+-		justify-content: space-around;
++		flex-direction: row;
+ 		gap: var(--space-md);
+ 	}
+ 
+ 	.action-btn {
++		position: relative;
+ 		display: flex;
+ 		flex-direction: column;
+ 		align-items: center;
+ 		justify-content: center;
+ 		gap: var(--space-sm);
+-		padding: var(--space-md);
++		flex: 1;
++		padding: var(--space-lg) var(--space-md);
+ 		border: none;
+-		background: none;
++		border-radius: var(--radius-lg);
+ 		cursor: pointer;
+-		color: var(--color-text);
+ 		font-family: var(--font-family);
+-		transition: all var(--transition-fast);
+-		border-radius: var(--radius-lg);
+-		min-width: 80px;
+-		min-height: 44px;
++		overflow: hidden;
+ 		-webkit-tap-highlight-color: transparent;
++		transition: transform var(--transition-fast), box-shadow var(--transition-fast);
++		min-height: 56px;
+ 	}
+ 
+-	.action-btn:hover,
+-	.action-btn:focus-visible {
+-		background: var(--color-surface-variant);
++	.action-btn:active {
++		transform: scale(0.96);
+ 	}
+ 
+ 	.action-btn:focus-visible {
+@@ -384,21 +400,47 @@
+ 		outline-offset: 2px;
+ 	}
+ 
+-	.action-icon {
++	.action-send {
++		background: var(--color-primary);
++		color: var(--color-primary-contrast);
++		box-shadow: 0 2px 8px rgba(0, 188, 212, 0.3);
++	}
++
++	.action-send:hover {
++		background: var(--color-primary-hover);
++	}
++
++	.action-receive {
++		background: var(--color-surface-variant);
++		color: var(--color-text);
++		border: 1px solid var(--color-border);
++	}
++
++	.action-receive:hover {
++		background: var(--color-border);
++	}
++
++	.action-icon-wrap {
+ 		display: flex;
+ 		align-items: center;
+ 		justify-content: center;
+-		width: 48px;
+-		height: 48px;
+-		border-radius: var(--radius-full);
+-		color: white;
+ 	}
+ 
+-	.receive-icon { background: var(--color-success); }
+-	.send-icon { background: var(--color-primary); }
+-	.scan-icon { background: var(--color-secondary); }
++	/* Ripple (dynamically created) */
++	:global(.ripple-effect) {
++		position: absolute;
++		border-radius: 50%;
++		background: rgba(255, 255, 255, 0.35);
++		transform: scale(0);
++		animation: ripple-anim 0.6s ease-out;
++		pointer-events: none;
++	}
++
++	@keyframes ripple-anim {
++		to { transform: scale(4); opacity: 0; }
++	}
+ 
+-	/* Recent Tx */
++	/* C — Recent Transactions */
+ 	.recent-tx-section {
+ 		display: flex;
+ 		flex-direction: column;
+@@ -411,6 +453,12 @@
+ 		align-items: center;
+ 	}
+ 
++	.section-header-actions {
++		display: flex;
++		align-items: center;
++		gap: var(--space-xs);
++	}
++
+ 	.tx-list {
+ 		display: flex;
+ 		flex-direction: column;
+@@ -450,7 +498,36 @@
+ 		flex-shrink: 0;
+ 	}
+ 
++	/* D — Bottom Spacer */
+ 	.bottom-spacer {
+-		height: 80px;
++		height: calc(80px + env(safe-area-inset-bottom, 0px));
++	}
++
++	/* Refresh spin */
++	.spin {
++		animation: spin-rotate 0.8s linear infinite;
++	}
++
++	@keyframes spin-rotate {
++		to { transform: rotate(360deg); }
++	}
++
++	/* Responsive */
++	@media (max-width: 480px) {
++		.action-btn {
++			padding: var(--space-md) var(--space-sm);
++		}
++		.balance-value {
++			font-size: clamp(2rem, 8vw, 3.25rem);
++		}
++	}
++
++	@media (prefers-reduced-motion: reduce) {
++		.action-btn {
++			transition: none !important;
++		}
++		.spin {
++			animation: none !important;
++		}
+ 	}
+ </style>
+diff --git a/vite.config.ts b/vite.config.ts
+index 795f39e..ed95640 100644
+--- a/vite.config.ts
++++ b/vite.config.ts
+@@ -6,15 +6,20 @@ import { fileURLToPath } from 'url';
+ import fs from 'fs';
+ const __dirname = fileURLToPath(new URL('.', import.meta.url));
+ 
++const pkg = JSON.parse(fs.readFileSync(resolve(__dirname, 'package.json'), 'utf-8'));
++
+ export default defineConfig({
++	define: {
++		'import.meta.env.APP_VERSION': JSON.stringify(pkg.version)
++	},
+ 	plugins: [
+ 		svelte(),
+ 		VitePWA({
+ 			registerType: 'autoUpdate',
+ 			includeAssets: ['favicon.svg'],
+ 			manifest: {
+-				name: 'LnwCash Wallet',
+-				short_name: 'LnwCash',
++				name: 'LNWCASH Wallet',
++				short_name: 'LNWCASH',
+ 				description: 'Lightning Network Wallet',
+ 				theme_color: '#f7931a',
+ 				background_color: '#1a1a2e',
+@@ -44,9 +49,23 @@ export default defineConfig({
+ 				globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+ 				runtimeCaching: [
+ 					{
+-						// Cache-first for static assets (JS, CSS, fonts, images)
+-						urlPattern: /\.(?:js|css|woff2?|svg|png|jpg|ico)$/,
+-						handler: 'CacheFirst',
++						// F-036 FIX: NetworkFirst for CSS/JS — prevent cache staleness on deploy
++						// Network first (5s timeout) → fallback to cache if offline/slow
++						urlPattern: /\.(?:js|css)$/,
++						handler: 'NetworkFirst',
++						options: {
++							cacheName: 'static-assets',
++							networkTimeoutSeconds: 5,
++							expiration: {
++								maxEntries: 100,
++								maxAgeSeconds: 24 * 60 * 60 // 1 day max (short TTL for fresh deploys)
++							}
++						}
++					},
++					{
++						// StaleWhileRevalidate for fonts/images — non-critical, safe to serve stale
++						urlPattern: /\.(?:woff2?|svg|png|jpg|ico)$/,
++						handler: 'StaleWhileRevalidate',
+ 						options: {
+ 							cacheName: 'static-assets',
+ 							expiration: {

@@ -1,0 +1,25 @@
+=== SETTINGS BACK BUTTON VERIFICATION ===
+
+Settings.svelte internal top-bar:
+  <button type="button" class="back-btn" onclick={handleBack} aria-label={$_('common.back')}>
+    <ArrowLeft size={24} />
+  </button>
+
+handleBack() calls onBack?.()
+In App.svelte: <Settings onBack={handleBack} />
+App.svelte handleBack(): window.history.back()
+
+Flow:
+  User on home → taps hamburger ☰ → navigateTo('settings')
+  → window.location.hash = '#/settings'
+  → Browser history: home → settings
+  → User taps back button in Settings → window.history.back()
+  → Returns to previous page (home)
+
+Back button:
+  - aria-label: $_('common.back') → "กลับ" (th) / "Back" (en) ✓
+  - Touch target: min-width: 44px, min-height: 44px ✓
+  - Uses ArrowLeft icon (24px) ✓
+  - Position: top-left of settings content ✓
+
+Status: VERIFIED - Back button present and functional

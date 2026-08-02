@@ -1,0 +1,47 @@
+# F-045 — Wallet Name Optional Verification
+# Date: 2026-08-02
+# Task: TASK-080
+
+## Setup.svelte Changes:
+
+### 1. handleCreateWallet() — lines 159-183:
+```
+async function handleCreateWallet() {
+    error = '';
+    // F-045: walletName optional — default to 'LNWCASH Wallet'
+    const effectiveName = walletName.trim() || 'LNWCASH Wallet';
+    ...
+    await createWallet(pin, effectiveName);
+```
+
+- walletName validation REMOVED ✅
+- Falls back to 'LNWCASH Wallet' if empty ✅
+- mintUrls validation still enforced (≥ 2 required) ✅
+- pin validation still enforced (≥ 6 chars) ✅
+- Original `$_('screen.wallet.error_name_required')` error code preserved (no breaking change to i18n) ✅
+
+### 2. Input placeholder — line 281:
+```
+placeholder="LNWCASH Wallet (default)"
+```
+- Shows user the default name ✅
+
+### 3. Button disabled condition — line 334:
+```
+disabled={loading || mintUrls.length < 2}
+```
+- Removed `|| !walletName.trim()` ✅
+- Button enabled even when walletName is empty ✅
+
+### User Flow:
+1. User enters PIN → navigates to create-wallet step
+2. User sees "Wallet Name" input with placeholder "LNWCASH Wallet (default)"
+3. User can SKIP entering a name (leave empty)
+4. User adds ≥ 2 mint URLs
+5. User clicks "Create Wallet"
+6. Wallet created with name "LNWCASH Wallet" (default)
+
+### DID NOT TOUCH:
+- mintUrls initialization/management (TASK-078 F-043 scope) ✅
+- PIN registration/unlock logic ✅
+- Any other Setup.svelte sections ✅

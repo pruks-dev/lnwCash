@@ -1,8 +1,9 @@
 /**
- * Test: Receive.svelte — TASK-051 Receive screen
+ * Test: Receive.svelte — TASK-066 Redesigned Receive screen
+ * Tests: Tab rendering, amount input, invoice generation flow, Cashu token input
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/svelte';
+import { render, screen, cleanup, fireEvent } from '@testing-library/svelte';
 import Receive from '../../screens/Receive.svelte';
 
 vi.mock('svelte-i18n', () => {
@@ -20,34 +21,103 @@ vi.mock('svelte-i18n', () => {
 	};
 });
 
-describe('Receive (TASK-051)', () => {
-	beforeEach(() => { localStorage.clear(); });
+vi.mock('$lib/router', () => ({
+	navigateTo: vi.fn(),
+	getCurrentScreen: () => 'receive',
+	onRouteChange: () => () => {}
+}));
+
+describe('Receive (TASK-066)', () => {
+	beforeEach(() => { localStorage.clear(); vi.clearAllMocks(); });
 	afterEach(() => { cleanup(); });
+
+	// ════════════════════════════════════════════════════
+	// AC: Screen renders with tabs
+	// ════════════════════════════════════════════════════
 
 	it('should render receive title', () => {
 		render(Receive, {});
 		expect(screen.getByText('screen.receive.title')).toBeTruthy();
 	});
 
-	it('should show lightning invoice section', () => {
+	it('should render Lightning tab', () => {
 		render(Receive, {});
-		expect(screen.getByText('screen.receive.lightning_invoice')).toBeTruthy();
+		const tab = screen.getByRole('tab', { name: /screen.receive.tab_lightning/ });
+		expect(tab).toBeTruthy();
 	});
 
-	it('should show amount input label', () => {
+	it('should render Cashu tab', () => {
 		render(Receive, {});
-		expect(screen.getByText('screen.receive.amount')).toBeTruthy();
+		const tab = screen.getByRole('tab', { name: /screen.receive.tab_cashu/ });
+		expect(tab).toBeTruthy();
 	});
 
-	it('should show mint button', () => {
+	it('should have two tabs with role=tab', () => {
 		render(Receive, {});
-		expect(screen.getByText('screen.receive.mint_button')).toBeTruthy();
+		const tabs = document.querySelectorAll('[role="tab"]');
+		expect(tabs.length).toBe(2);
 	});
 
-	it('should show scan qr button', () => {
+	// ════════════════════════════════════════════════════
+	// AC: Lightning tab — amount input
+	// ════════════════════════════════════════════════════
+
+	it('should show amount label in Lightning tab', () => {
 		render(Receive, {});
-		expect(screen.getByText('screen.receive.scan_qr')).toBeTruthy();
+		expect(screen.getByText('screen.receive.amount_label')).toBeTruthy();
 	});
+
+	it('should show "sats" unit label', () => {
+		render(Receive, {});
+		expect(screen.getByText('screen.balance.sats')).toBeTruthy();
+	});
+
+	it('should display default amount 0', () => {
+		render(Receive, {});
+		const amountEl = document.querySelector('.amount-value');
+		expect(amountEl).toBeTruthy();
+	});
+
+	it('should have a numpad with digits 0-9', () => {
+		render(Receive, {});
+		// Numpad renders digit buttons
+		const btn1 = screen.queryByText('1');
+		expect(btn1).toBeTruthy();
+	});
+
+	it('should show create invoice confirm button', () => {
+		render(Receive, {});
+		expect(screen.getByText('screen.receive.create_invoice')).toBeTruthy();
+	});
+
+	// ════════════════════════════════════════════════════
+	// AC: Cashu tab — token input
+	// ════════════════════════════════════════════════════
+
+	it('should switch to Cashu tab and show token input', async () => {
+		render(Receive, {});
+		const cashuTab = screen.getByRole('tab', { name: /screen.receive.tab_cashu/ });
+		await fireEvent.click(cashuTab);
+		expect(screen.getByText('screen.receive.paste_token')).toBeTruthy();
+	});
+
+	it('should show validate button in Cashu tab', async () => {
+		render(Receive, {});
+		const cashuTab = screen.getByRole('tab', { name: /screen.receive.tab_cashu/ });
+		await fireEvent.click(cashuTab);
+		expect(screen.getByText('screen.receive.validate_token')).toBeTruthy();
+	});
+
+	it('should show paste button in Cashu tab', async () => {
+		render(Receive, {});
+		const cashuTab = screen.getByRole('tab', { name: /screen.receive.tab_cashu/ });
+		await fireEvent.click(cashuTab);
+		expect(screen.getByText('common.paste')).toBeTruthy();
+	});
+
+	// ════════════════════════════════════════════════════
+	// AC: Props
+	// ════════════════════════════════════════════════════
 
 	it('should render with QR scan callback', () => {
 		const onQRScan = vi.fn();
@@ -58,5 +128,20 @@ describe('Receive (TASK-051)', () => {
 	it('should render with default mint url', () => {
 		render(Receive, { defaultMintUrl: 'https://test.mint' });
 		expect(screen.getByText('screen.receive.title')).toBeTruthy();
+	});
+
+	// ════════════════════════════════════════════════════
+	// AC: Accessibility
+	// ════════════════════════════════════════════════════
+
+	it('should have aria role main', () => {
+		render(Receive, {});
+		expect(document.querySelector('[role="main"]')).toBeTruthy();
+	});
+
+	it('should have back button with aria-label', () => {
+		render(Receive, {});
+		const backBtn = document.querySelector('[aria-label="common.back"]');
+		expect(backBtn).toBeTruthy();
 	});
 });

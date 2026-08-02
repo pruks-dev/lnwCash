@@ -6,6 +6,14 @@
 	import { initPwaInstall } from '$lib/pwa-install';
 	import { trackWasOffline } from '$lib/offline-indicator';
 
+	// TASK-076 (F-041): Import getActiveMintUrl for mint URL propagation
+	// to Receive/Send screens — reads lnwcash_active_mint from localStorage
+	import { getActiveMintUrl } from '$lib/wallet/store';
+
+	// TASK-067: Theme reactivity — $effect subscribes to themeMode store
+	// and applies data-theme attribute to document.documentElement reactively.
+	import { themeMode, resolveTheme, applyThemeDom } from '$lib/design/theme';
+
 	// TASK-051 New Route Screens
 	import Home from './screens/Home.svelte';
 	import Receive from './screens/Receive.svelte';
@@ -17,6 +25,7 @@
 	// TASK-051 Navigation Components
 	import BottomNav from './components/BottomNav.svelte';
 	import TopAppBar from './components/TopAppBar.svelte';
+	import ArrowLeft from '$lib/components/icons/ArrowLeft.svelte';
 
 	// Legacy screens kept for backward compatibility (QRScan)
 	import F007QRScan from './screens/F007-QRScan.svelte';
@@ -33,6 +42,9 @@
 	let activeScreen: ScreenKey = $state('home');
 	let appView: AppView = $state('splash');
 	let showQRScan: boolean = $state(false);
+
+	// TASK-076 (F-041): Active mint URL for propagation to Receive/Send
+	let activeMintUrl: string = $state('');
 
 	// ─── Initialize on mount ──────────────────────────────────
 	$effect(() => {
@@ -59,11 +71,30 @@
 			appView = 'setup';
 		}
 
+		// TASK-076 (F-041): Read active mint URL from localStorage
+		// Falls back to DEFAULT_MINT_CONFIG.url when no mint configured
+		try {
+			activeMintUrl = getActiveMintUrl();
+		} catch {
+			// If localStorage is completely broken, rely on derived fallback
+			activeMintUrl = '';
+		}
+
 		return () => {
 			pwaCleanup();
 			offlineCleanup();
 			routeCleanup();
 		};
+	});
+
+	// TASK-067: Reactive theme — subscribe to themeMode store
+	// and apply data-theme attribute to DOM on every change.
+	$effect(() => {
+		const unsub = themeMode.subscribe((mode) => {
+			const resolved = resolveTheme(mode);
+			applyThemeDom(resolved);
+		});
+		return unsub;
 	});
 
 	// ─── Navigation ───────────────────────────────────────────
@@ -105,8 +136,8 @@
 		window.history.back();
 	}
 
-	// Determine if back button should show (not on home)
-	let showBack = $derived(activeScreen !== 'home' && activeScreen !== 'settings');
+	// Determine if back button should show (only on Send/Receive sub-pages per TASK-060)
+	let showBack = $derived(activeScreen === 'send' || activeScreen === 'receive');
 	let isMainNavScreen = $derived(
 		activeScreen === 'home' ||
 		activeScreen === 'receive' ||
@@ -114,6 +145,7 @@
 		activeScreen === 'history' ||
 		activeScreen === 'settings'
 	);
+
 </script>
 
 <ErrorBoundary />
@@ -135,17 +167,31 @@
 				<Setup onWalletReady={handleWalletReady} />
 			</div>
 		{:else}
-			<!-- Top App Bar -->
-			<TopAppBar screen={activeScreen} showBack={showBack} onBack={handleBack} />
+			<!-- TASK-079 (F-051): Conditional header — Home/History get full TopAppBar; Send/Receive/Settings get back button only -->
+			{#if activeScreen === 'home' || activeScreen === 'history'}
+				<TopAppBar screen={activeScreen} showBack={false} onMenuClick={() => navigateTo('settings')} />
+			{:else}
+				<!-- Send/Receive/Settings: inline back button only — no TopAppBar -->
+				<div class="back-header">
+					<button
+						type="button"
+						class="back-btn"
+						onclick={handleBack}
+						aria-label={$_('common.back')}
+					>
+						<ArrowLeft size={24} />
+					</button>
+				</div>
+			{/if}
 
 			<!-- Screen Content -->
 			<div class="main-content">
 				{#if activeScreen === 'home'}
 					<Home onQRScan={handleQRScanRequest} />
 				{:else if activeScreen === 'receive'}
-					<Receive onQRScan={handleQRScanRequest} />
+					<Receive onQRScan={handleQRScanRequest} defaultMintUrl={activeMintUrl} />
 				{:else if activeScreen === 'send'}
-					<Send onQRScan={handleQRScanRequest} />
+					<Send onQRScan={handleQRScanRequest} defaultMintUrl={activeMintUrl} />
 				{:else if activeScreen === 'history'}
 					<History />
 				{:else if activeScreen === 'settings'}
@@ -194,5 +240,40 @@
 		z-index: 200;
 		background: var(--color-surface);
 		overflow-y: auto;
+	}
+
+	/* TASK-079 (F-051): Back header for secondary screens (Send/Receive/Settings) */
+	.back-header {
+		display: flex;
+		align-items: center;
+		padding: var(--space-sm) var(--space-md);
+		padding-top: calc(var(--space-sm) + env(safe-area-inset-top, 0));
+		min-height: 48px;
+	}
+
+	.back-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: var(--space-sm);
+		min-width: 44px;
+		min-height: 44px;
+		background: none;
+		border: none;
+		color: var(--color-text);
+		cursor: pointer;
+		border-radius: var(--radius-full);
+		-webkit-tap-highlight-color: transparent;
+		transition: background var(--transition-fast);
+	}
+
+	.back-btn:hover,
+	.back-btn:focus-visible {
+		background: var(--color-surface-variant);
+	}
+
+	.back-btn:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
 	}
 </style>

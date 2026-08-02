@@ -13,7 +13,9 @@
 		removeMintConfig,
 		getDefaultMintUrl,
 		getMintConfig,
-		setMintConfig
+		setMintConfig,
+		getActiveMintUrl,
+		setActiveMintUrl
 	} from '$lib/wallet/store';
 	import { DEFAULT_MINT_CONFIG, type MintConfig } from '$lib/wallet/config';
 	import Input from '$lib/components/ui/Input.svelte';
@@ -23,23 +25,7 @@
 	import Badge from '$lib/components/ui/Badge.svelte';
 	import Modal from '$lib/components/ui/Modal.svelte';
 
-	// ─── Active Mint Tracking (UI concern, localStorage) ─────────
-
-	const ACTIVE_MINT_KEY = 'lnwcash_active_mint';
-
-	function getActiveMintUrl(): string {
-		try {
-			const stored = localStorage.getItem(ACTIVE_MINT_KEY);
-			if (stored && getMintConfig(stored)) return stored;
-		} catch { /* ignore */ }
-		return getDefaultMintUrl();
-	}
-
-	function setActiveMintUrl(url: string): void {
-		try {
-			localStorage.setItem(ACTIVE_MINT_KEY, url);
-		} catch { /* ignore */ }
-	}
+	// ─── Active Mint Tracking (shared — imported from $lib/wallet/store) ──
 
 	// ─── State ───────────────────────────────────────────────────
 
@@ -148,11 +134,20 @@
 		validateError = '';
 		addUrlError = '';
 
+		// F-044: /v1/info validation via discoverMintEndpoints with 5s timeout
+		const TIMEOUT_MS = 5000;
+		const timeoutPromise = new Promise<never>((_, reject) => {
+			setTimeout(() => reject(new DOMException('Validation timeout', 'AbortError')), TIMEOUT_MS);
+		});
+
 		try {
-			const result: DiscoveryResult = await discoverMintEndpoints(cleaned);
+			const result: DiscoveryResult = await Promise.race([
+				discoverMintEndpoints(cleaned),
+				timeoutPromise
+			]);
 
 			if (!result.success) {
-				validateError = result.error ?? $_('mint.settings.errorFetch');
+				validateError = result.error ?? 'ไม่พบ mint — ตรวจสอบ URL';
 				validatedConfig = null;
 				validatedNuts = [];
 				return;
@@ -161,7 +156,11 @@
 			validatedConfig = result.config;
 			validatedNuts = result.config.supported_nuts;
 		} catch (e) {
-			validateError = e instanceof Error ? e.message : $_('mint.settings.errorFetch');
+			if (e instanceof DOMException && e.name === 'AbortError') {
+				validateError = 'ไม่พบ mint — ตรวจสอบ URL (หมดเวลา 5 วินาที)';
+			} else {
+				validateError = e instanceof Error ? e.message : 'ไม่พบ mint — ตรวจสอบ URL';
+			}
 			validatedConfig = null;
 			validatedNuts = [];
 		} finally {
@@ -174,7 +173,8 @@
 
 		saving = true;
 		try {
-			// The discoverMintEndpoints already called setMintConfig, but ensure it's stored
+			// The discoverMintEndpoints already called setMintConfig via discovery flow,
+			// but ensure it's stored explicitly
 			setMintConfig(validatedConfig);
 
 			// Set as active mint
@@ -238,7 +238,7 @@
 </script>
 
 <svelte:head>
-	<title>{$_('mint.settings.title')} — LnwCash</title>
+	<title>{$_('mint.settings.title')} — LNWCASH</title>
 </svelte:head>
 
 <div class="mint-settings">

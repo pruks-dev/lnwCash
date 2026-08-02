@@ -1,0 +1,44 @@
+=== NETWORK / CACHE ANALYSIS ===
+Method: Static analysis of generated workbox strategies in dist/sw.js
+
+BEFORE FIX (CacheFirst era):
+  CSS/JS requests:
+    CacheFirst → serve from cache → NEVER check network
+    Result after deploy: old CSS/JS → layout/color mismatch
+
+  Font/Image requests:
+    CacheFirst → serve from cache → NEVER check network
+    Result: stale images possible (less critical)
+
+AFTER FIX (NetworkFirst era):
+  CSS/JS requests:
+    NetworkFirst (5s timeout) → check network FIRST
+    ┌─ Network available → fetch fresh CSS/JS → update cache → serve fresh
+    ├─ Network slow (>5s) → fallback to cache → serve cached
+    └─ Network offline → serve cached immediately
+    Result: FRESH CSS/JS every time network is available ✅
+
+  Font/Image requests:
+    StaleWhileRevalidate → serve from cache immediately, update in background
+    Result: fast load + eventual freshness ✅
+
+  Mint API requests:
+    StaleWhileRevalidate → serve cached, update in background
+    cacheAge: 5 min max
+
+  Other API requests:
+    NetworkFirst (10s timeout) → network first, cache fallback
+
+NETWORK TAB SIMULATION (post-fix deploy):
+  1. User F5 → SW intercepts index-Cv_7AgS-.js
+  2. NetworkFirst → fetch https://app.example.com/assets/index-Cv_7AgS-.js
+  3. Server responds 200 OK (fresh deploy → new file exists)
+  4. SW caches response → returns fresh JS to page
+  5. Result: correct layout, color Cyan #00bcd4
+
+  If file NOT on server (old hash deleted):
+  1. NetworkFirst → fetch → 404
+  2. Fallback to cache → serve old cached version
+  3. User sees old version (acceptable fallback — better than broken page)
+
+VERDICT: NetworkFirst eliminates cache staleness for CSS/JS ✅

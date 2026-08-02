@@ -1,12 +1,14 @@
 <script lang="ts">
 	/**
-	 * Icon: Check
+	 * Icon: Check — Iconly 3.0 Bold Tick-Square
+	 * Checkmark inside a rounded square
 	 */
 	interface Props {
 		size?: number;
 		class?: string;
+		color?: string;
 	}
-	let { size = 24, class: className = '' }: Props = $props();
+	let { size = 24, class: className = '', color = 'currentColor' }: Props = $props();
 </script>
 
 <svg
@@ -15,13 +17,14 @@
 	height={size}
 	viewBox="0 0 24 24"
 	fill="none"
-	stroke="currentColor"
-	stroke-width="1.75"
+	stroke={color}
+	stroke-width="2"
 	stroke-linecap="round"
 	stroke-linejoin="round"
 	class={className}
 	aria-hidden="true"
 	role="img"
 >
-	<polyline points="20 6 9 17 4 12" />
+	<path d="M9 22H15C20 22 22 20 22 15V9C22 4 20 2 15 2H9C4 2 2 4 2 9V15C2 20 4 22 9 22Z" />
+	<path d="M7.75 12L10.58 14.83L16.25 9.17" />
 </svg>

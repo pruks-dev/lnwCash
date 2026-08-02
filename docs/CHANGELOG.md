@@ -1,6 +1,6 @@
 # CHANGELOG
 
-All notable changes to LnwCash Wallet are documented here.
+All notable changes to LNWCASH Wallet are documented here.
 
 Versioning follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH`.
 
@@ -38,7 +38,7 @@ Versioning follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATC
 
 ### Initial MVP Release
 
-First public release of LnwCash Wallet — a client-side Lightning Network wallet powered by the Cashu ecash protocol.
+First public release of LNWCASH Wallet — a client-side Lightning Network wallet powered by the Cashu ecash protocol.
 
 ### Included Features
 

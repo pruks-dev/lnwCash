@@ -1,0 +1,32 @@
+=== Gate J: BALANCE FONT (F-052) ===
+--- Checking font-size near .balance-value ---
+165-				{:else}
+166-					<div class="balance-amount">
+167:						<span class="balance-value" aria-live="polite" aria-atomic="true">
+168-							{formatSat(totalBalance)}
+169-						</span>
+--
+315-	}
+316-
+317:	.balance-value {
+318-		font-family: var(--font-family);
+319-		font-size: 3.25rem; /* 52px — F-052: Wallet of Satoshi style */
+--
+518-			padding: var(--space-md) var(--space-sm);
+519-		}
+520:		.balance-value {
+521-			font-size: clamp(2rem, 8vw, 3.25rem);
+522-		}
+--- Checking font-size in balance section ---
+319:		font-size: 3.25rem; /* 52px — F-052: Wallet of Satoshi style */
+328:		font-size: var(--font-size-md);
+334:		font-size: var(--font-size-sm);
+347:		font-size: var(--font-size-xs);
+482:		font-size: var(--font-size-lg);
+521:			font-size: clamp(2rem, 8vw, 3.25rem);
+--- Checking font-weight: 800 ---
+320:		font-weight: 800;
+329:		font-weight: var(--font-weight-medium);
+348:		font-weight: var(--font-weight-semibold);
+--- Checking color: var(--color-primary) in balance ---
+321:		color: var(--color-primary);

@@ -23,7 +23,7 @@ const standardMint: MintInfo = {
 
 /** Config 2: mint.lnw.cash — real NUT-19 structure */
 const lnwCashMint: MintInfo = {
-	name: 'LnwCash',
+	name: 'LNWCASH',
 	pubkey: '03d0e4cda0f937bde65b9d160b58febe04bd229243ea45e390ce80252504e1176e',
 	version: 'Nutshell/0.20.1',
 	time: 1785554043,

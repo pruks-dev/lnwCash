@@ -1,0 +1,44 @@
+# F-051: Send/Receive screens — header hidden verification
+
+## Send Screen (/send):
+- activeScreen === 'send' → NOT home AND NOT history
+- Enters {:else} branch
+- Renders: back-header with ArrowLeft button ONLY
+- NO TopAppBar rendered
+- BottomNav: visible
+✅ **Send screen: No TopAppBar, back button only**
+
+## Receive Screen (/receive):
+- activeScreen === 'receive' → NOT home AND NOT history
+- Enters {:else} branch
+- Renders: back-header with ArrowLeft button ONLY
+- NO TopAppBar rendered
+- BottomNav: visible
+✅ **Receive screen: No TopAppBar, back button only**
+
+## Back-button structure:
+```html
+<div class="back-header">
+    <button type="button" class="back-btn" onclick={handleBack} aria-label="กลับ">
+        <ArrowLeft size={24} />
+    </button>
+</div>
+```
+
+### handleBack implementation:
+```typescript
+function handleBack() {
+    window.history.back();
+}
+```
+
+### Back-header CSS:
+```css
+.back-header {
+    display: flex;
+    align-items: center;
+    padding: var(--space-sm) var(--space-md);
+    padding-top: calc(var(--space-sm) + env(safe-area-inset-top, 0));
+    min-height: 48px;
+}
+```

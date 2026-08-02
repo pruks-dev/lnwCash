@@ -157,6 +157,37 @@ export function getDefaultMintUrl(): string {
 	return DEFAULT_MINT_CONFIG.url;
 }
 
+// ─── Active Mint Tracking (shared with App.svelte) ─────────────
+
+const ACTIVE_MINT_KEY = 'lnwcash_active_mint';
+
+/**
+ * Get the currently active mint URL.
+ *
+ * Reads from localStorage key `lnwcash_active_mint`.
+ * Falls back to `DEFAULT_MINT_CONFIG.url` when:
+ *  - no active mint is stored
+ *  - the stored mint is no longer in the config store
+ *  - localStorage is unavailable
+ */
+export function getActiveMintUrl(): string {
+	try {
+		const stored = localStorage.getItem(ACTIVE_MINT_KEY);
+		if (stored && getMintConfig(stored)) return stored;
+	} catch { /* ignore — return default */ }
+	return getDefaultMintUrl();
+}
+
+/**
+ * Persist the active mint URL to localStorage.
+ * Used by Mint Settings page and Setup flow.
+ */
+export function setActiveMintUrl(url: string): void {
+	try {
+		localStorage.setItem(ACTIVE_MINT_KEY, url);
+	} catch { /* ignore — localStorage unavailable */ }
+}
+
 /**
  * Get a MintConfig for a URL, creating a placeholder if nothing exists.
  * Always returns a MintConfig (never undefined).

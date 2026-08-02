@@ -1,28 +1,37 @@
 <script lang="ts">
-	/**
-	 * TopAppBar — TASK-051 (B)
-	 * Top app bar component: screen title + optional back button
-	 * Uses TASK-050 Nav component (top position)
-	 */
-	import { _ } from 'svelte-i18n';
-	import type { ScreenKey } from '$lib/router';
+/**
+ * TopAppBar — TASK-051 (B) → TASK-060 (A) header redesign → TASK-069 hamburger
+ * Shows LNWCASH logo (32px) on left, hamburger ☰ on right.
+ * Back button only on sub-pages (Send, Receive) — HMR-safe {#if} pattern preserved.
+ *
+ * TASK-056: {#if} wrap preserved for HMR safety
+ * TASK-060: Added logo + gear icon, removed Nav dependency
+ * TASK-069: Gear → hamburger ☰, navigates to /settings
+ */
+import { _ } from 'svelte-i18n';
+import type { ScreenKey } from '$lib/router';
 
-	// TASK-050 Components
-	import Nav from '$lib/components/ui/Nav.svelte';
+// Icons
+import ArrowLeft from '$lib/components/icons/ArrowLeft.svelte';
+import Menu from '$lib/components/icons/Menu.svelte';
 
-	// TASK-050 Icons
-	import ArrowLeft from '$lib/components/icons/ArrowLeft.svelte';
+interface Props {
+	/** Current screen */
+	screen: ScreenKey;
+	/** Show back button? */
+	showBack?: boolean;
+	/** Back handler */
+	onBack?: () => void;
+	/** Hamburger icon click handler — navigates to settings */
+	onMenuClick?: () => void;
+}
 
-	interface Props {
-		/** Current screen */
-		screen: ScreenKey;
-		/** Show back button? */
-		showBack?: boolean;
-		/** Back handler */
-		onBack?: () => void;
-	}
-
-	let { screen = 'home', showBack = false, onBack }: Props = $props();
+let {
+	screen = 'home',
+	showBack = false,
+	onBack,
+	onMenuClick
+}: Props = $props();
 
 	function screenTitle(key: ScreenKey): string {
 		switch (key) {
@@ -39,36 +48,114 @@
 	let title = $derived(screenTitle(screen));
 </script>
 
-{#snippet backBtn()}
-	{#if showBack}
-		<button
-			type="button"
-			class="back-btn"
-			onclick={onBack}
-			aria-label={$_('common.back')}
-		>
-			<ArrowLeft size={24} />
-		</button>
-	{/if}
-{/snippet}
-
+<!-- HMR-safe {#if} pattern from TASK-056 preserved: -->
 {#if showBack}
-	<Nav
-		position="top"
-		title={title}
-		leading={backBtn}
-		ariaLabel="Top navigation"
-	/>
+	<header class="top-app-bar">
+		<div class="top-bar-row">
+			<button
+				type="button"
+				class="icon-btn back-btn"
+				onclick={onBack}
+				aria-label={$_('common.back')}
+			>
+				<ArrowLeft size={24} />
+			</button>
+
+			<div class="brand">
+				<img
+					src="/lnw-logo-144.png"
+					alt="LNWCASH"
+					class="logo"
+					width={32}
+					height={32}
+				/>
+				<span class="wordmark">LNWCASH</span>
+			</div>
+
+			<div class="flex-spacer"></div>
+
+			<button
+				type="button"
+				class="icon-btn menu-btn"
+				onclick={onMenuClick}
+				aria-label={$_('screen.settings.title')}
+			>
+				<Menu size={24} />
+			</button>
+		</div>
+	</header>
 {:else}
-	<Nav
-		position="top"
-		title={title}
-		ariaLabel="Top navigation"
-	/>
+	<header class="top-app-bar">
+		<div class="top-bar-row">
+			<div class="brand">
+				<img
+					src="/lnw-logo-144.png"
+					alt="LNWCASH"
+					class="logo"
+					width={32}
+					height={32}
+				/>
+				<span class="wordmark">LNWCASH</span>
+			</div>
+
+			<div class="flex-spacer"></div>
+
+			<button
+				type="button"
+				class="icon-btn menu-btn"
+				onclick={onMenuClick}
+				aria-label={$_('screen.settings.title')}
+			>
+				<Menu size={24} />
+			</button>
+		</div>
+	</header>
 {/if}
 
 <style>
-	.back-btn {
+	.top-app-bar {
+		position: sticky;
+		top: 0;
+		z-index: var(--z-sticky);
+		background: transparent;
+		border: none;
+		padding-top: env(safe-area-inset-top, 0);
+	}
+
+	.top-bar-row {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		padding: var(--space-sm) var(--space-md);
+		min-height: 48px;
+	}
+
+	.logo {
+		height: 32px;
+		width: auto;
+		aspect-ratio: 144 / 144;
+		object-fit: contain;
+		flex-shrink: 0;
+	}
+
+	.brand {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.wordmark {
+		font-size: 1.25rem;
+		font-weight: 700;
+		color: var(--color-text);
+	}
+
+	.flex-spacer {
+		flex: 1;
+	}
+
+	/* Icon buttons */
+	.icon-btn {
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -82,14 +169,15 @@
 		border-radius: var(--radius-full);
 		-webkit-tap-highlight-color: transparent;
 		transition: background var(--transition-fast);
+		flex-shrink: 0;
 	}
 
-	.back-btn:hover,
-	.back-btn:focus-visible {
+	.icon-btn:hover,
+	.icon-btn:focus-visible {
 		background: var(--color-surface-variant);
 	}
 
-	.back-btn:focus-visible {
+	.icon-btn:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: 2px;
 	}

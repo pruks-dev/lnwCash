@@ -1,0 +1,245 @@
+diff --git a/src/screens/Settings.svelte b/src/screens/Settings.svelte
+index 7df850f..43a5e44 100644
+--- a/src/screens/Settings.svelte
++++ b/src/screens/Settings.svelte
+@@ -23,6 +23,9 @@
+ 	import ArrowRight from '$lib/components/icons/ArrowRight.svelte';
+ 	import ArrowLeft from '$lib/components/icons/ArrowLeft.svelte';
+ 
++	// Mint Settings sub-page (F-042: Manage Mint routing)
++	import MintSettings from '../routes/settings/mint/+page.svelte';
++
+ 	interface Props {
+ 		onBack?: () => void;
+ 	}
+@@ -31,6 +34,7 @@
+ 
+ 	let currentLang: string = $state('th');
+ 	let currentTheme: ThemeMode = $state('system');
++	let showMintManage: boolean = $state(false); // F-042: sub-view for Manage Mint
+ 
+ 	$effect(() => {
+ 		try {
+@@ -69,103 +73,115 @@
+ 		<div class="top-spacer"></div>
+ 	</div>
+ 
+-	<!-- ─── Mint Section ──────────────────────────────── -->
+-	<Card variant="basic" padding="md">
+-		<div class="section">
+-			<Heading level="h4">{$_('screen.settings.mint_section')}</Heading>
+-			<Body size="sm" color="secondary">{$_('screen.settings.mint_description')}</Body>
+-			<ListItem
+-				title={$_('screen.settings.mint_manage')}
+-				onclick={() => navigateTo('home')}
+-			>
+-				{#snippet leading()}
+-					<Mint size={20} />
+-				{/snippet}
+-				{#snippet trailing()}
+-					<ArrowRight size={16} />
+-				{/snippet}
+-			</ListItem>
++	{#if showMintManage}
++		<!-- F-042: Mint Manage sub-view -->
++		<div class="mint-manage-header">
++			<button type="button" class="back-btn" onclick={() => { showMintManage = false; }} aria-label={$_('common.back')}>
++				<ArrowLeft size={24} />
++			</button>
++			<Heading level="h2" align="center">{$_('screen.settings.mint_manage')}</Heading>
++			<div class="top-spacer"></div>
+ 		</div>
+-	</Card>
+-
+-	<!-- ─── Language Section ──────────────────────────── -->
+-	<Card variant="basic" padding="md">
+-		<div class="section">
+-			<Heading level="h4">{$_('screen.settings.language_section')}</Heading>
+-			<div class="option-row">
+-				<button
+-					type="button"
+-					class="option-btn"
+-					class:active={currentLang === 'th'}
+-					onclick={() => switchLanguage('th')}
+-				>
+-					{$_('screen.language.th')}
+-				</button>
+-				<button
+-					type="button"
+-					class="option-btn"
+-					class:active={currentLang === 'en'}
+-					onclick={() => switchLanguage('en')}
++		<MintSettings />
++	{:else}
++		<!-- ─── Mint Section ──────────────────────────────── -->
++		<Card variant="basic" padding="md">
++			<div class="section">
++				<Heading level="h4">{$_('screen.settings.mint_section')}</Heading>
++				<Body size="sm" color="secondary">{$_('screen.settings.mint_description')}</Body>
++				<ListItem
++					title={$_('screen.settings.mint_manage')}
++					onclick={() => { showMintManage = true; }}
+ 				>
+-					{$_('screen.language.en')}
+-				</button>
++					{#snippet leading()}
++						<Mint size={20} />
++					{/snippet}
++					{#snippet trailing()}
++						<ArrowRight size={16} />
++					{/snippet}
++				</ListItem>
+ 			</div>
+-		</div>
+-	</Card>
+-
+-	<!-- ─── Theme Section ─────────────────────────────── -->
+-	<Card variant="basic" padding="md">
+-		<div class="section">
+-			<Heading level="h4">{$_('screen.settings.theme_section')}</Heading>
+-			<div class="option-row option-row-3">
+-				<button
+-					type="button"
+-					class="option-btn"
+-					class:active={currentTheme === 'light'}
+-					onclick={() => switchTheme('light')}
+-				>
+-					{$_('screen.settings.theme_light')}
+-				</button>
+-				<button
+-					type="button"
+-					class="option-btn"
+-					class:active={currentTheme === 'dark'}
+-					onclick={() => switchTheme('dark')}
+-				>
+-					{$_('screen.settings.theme_dark')}
+-				</button>
+-				<button
+-					type="button"
+-					class="option-btn"
+-					class:active={currentTheme === 'system'}
+-					onclick={() => switchTheme('system')}
+-				>
+-					{$_('screen.settings.theme_system')}
+-				</button>
++		</Card>
++
++		<!-- ─── Language Section ──────────────────────────── -->
++		<Card variant="basic" padding="md">
++			<div class="section">
++				<Heading level="h4">{$_('screen.settings.language_section')}</Heading>
++				<div class="option-row">
++					<button
++						type="button"
++						class="option-btn"
++						class:active={currentLang === 'th'}
++						onclick={() => switchLanguage('th')}
++					>
++						{$_('screen.language.th')}
++					</button>
++					<button
++						type="button"
++						class="option-btn"
++						class:active={currentLang === 'en'}
++						onclick={() => switchLanguage('en')}
++					>
++						{$_('screen.language.en')}
++					</button>
++				</div>
+ 			</div>
+-		</div>
+-	</Card>
+-
+-	<!-- ─── About Section ─────────────────────────────── -->
+-	<Card variant="basic" padding="md">
+-		<div class="section">
+-			<Heading level="h4">{$_('screen.settings.about_section')}</Heading>
+-			<Body size="sm" color="secondary">{$_('screen.settings.about_description')}</Body>
+-			<Divider />
+-			<div class="about-details">
+-				<div class="detail-row">
+-					<Body size="sm" color="secondary">{$_('screen.settings.about_version')}</Body>
+-					<Body size="sm" weight="semibold">1.0.0</Body>
++		</Card>
++
++		<!-- ─── Theme Section ─────────────────────────────── -->
++		<Card variant="basic" padding="md">
++			<div class="section">
++				<Heading level="h4">{$_('screen.settings.theme_section')}</Heading>
++				<div class="option-row option-row-3">
++					<button
++						type="button"
++						class="option-btn"
++						class:active={currentTheme === 'light'}
++						onclick={() => switchTheme('light')}
++					>
++						{$_('screen.settings.theme_light')}
++					</button>
++					<button
++						type="button"
++						class="option-btn"
++						class:active={currentTheme === 'dark'}
++						onclick={() => switchTheme('dark')}
++					>
++						{$_('screen.settings.theme_dark')}
++					</button>
++					<button
++						type="button"
++						class="option-btn"
++						class:active={currentTheme === 'system'}
++						onclick={() => switchTheme('system')}
++					>
++						{$_('screen.settings.theme_system')}
++					</button>
+ 				</div>
+-				<div class="detail-row">
+-					<Body size="sm" color="secondary">{$_('screen.settings.about_license')}</Body>
+-					<Body size="sm" weight="semibold">MIT</Body>
++			</div>
++		</Card>
++
++		<!-- ─── About Section ─────────────────────────────── -->
++		<Card variant="basic" padding="md">
++			<div class="section">
++				<Heading level="h4">{$_('screen.settings.about_section')}</Heading>
++				<Body size="sm" color="secondary">{$_('screen.settings.about_description')}</Body>
++				<Divider />
++				<div class="about-details">
++					<div class="detail-row">
++						<Body size="sm" color="secondary">{$_('screen.settings.about_version')}</Body>
++						<Body size="sm" weight="semibold">{import.meta.env.APP_VERSION}</Body>
++					</div>
++					<div class="detail-row">
++						<Body size="sm" color="secondary">{$_('screen.settings.about_license')}</Body>
++						<Body size="sm" weight="semibold">MIT</Body>
++					</div>
+ 				</div>
+ 			</div>
+-		</div>
+-	</Card>
++		</Card>
+ 
+-	<div class="bottom-spacer"></div>
++		<div class="bottom-spacer"></div>
++	{/if}
+ </div>
+ 
+ <style>
+@@ -192,6 +208,17 @@
+ 		width: 40px;
+ 	}
+ 
++	.mint-manage-header {
++		display: flex;
++		align-items: center;
++		gap: var(--space-sm);
++		margin-bottom: var(--space-sm);
++	}
++
++	.mint-manage-header :global(h2) {
++		flex: 1;
++	}
++
+ 	.back-btn {
+ 		display: flex;
+ 		align-items: center;

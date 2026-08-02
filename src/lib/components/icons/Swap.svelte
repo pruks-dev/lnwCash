@@ -1,12 +1,14 @@
 <script lang="ts">
 	/**
-	 * Icon: Swap
+	 * Icon: Swap — Iconly 3.0 Bold Swap
+	 * Two arrows swapping direction
 	 */
 	interface Props {
 		size?: number;
 		class?: string;
+		color?: string;
 	}
-	let { size = 24, class: className = '' }: Props = $props();
+	let { size = 24, class: className = '', color = 'currentColor' }: Props = $props();
 </script>
 
 <svg
@@ -15,16 +17,16 @@
 	height={size}
 	viewBox="0 0 24 24"
 	fill="none"
-	stroke="currentColor"
-	stroke-width="1.75"
+	stroke={color}
+	stroke-width="2"
 	stroke-linecap="round"
 	stroke-linejoin="round"
 	class={className}
 	aria-hidden="true"
 	role="img"
 >
-	<polyline points="7 16 3 12 7 8" />
-	<line x1="3" y1="12" x2="15" y2="12" />
-	<polyline points="17 8 21 12 17 16" />
-	<line x1="21" y1="12" x2="9" y2="12" />
+	<path d="M16.84 3.99L20.27 7.42L16.84 10.85" />
+	<path d="M4.18 12.51H19.27" />
+	<path d="M7.16 20.01L3.73 16.58L7.16 13.15" />
+	<path d="M19.82 11.49H4.73" />
 </svg>

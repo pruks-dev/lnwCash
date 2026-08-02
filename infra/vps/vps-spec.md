@@ -1,12 +1,12 @@
-# 🖥️ VPS Specification — LnwCash Wallet
+# 🖥️ VPS Specification — LNWCASH Wallet
 
-เอกสารนี้เสนอสเปก VPS สำหรับ host LnwCash Wallet (Static SPA + Nginx)
+เอกสารนี้เสนอสเปก VPS สำหรับ host LNWCASH Wallet (Static SPA + Nginx)
 
 ---
 
 ## 📊 Load Analysis
 
-### LnwCash คืออะไร?
+### LNWCASH คืออะไร?
 
 - **Single Page Application** — client-side rendering, static files only
 - **ไม่มี backend** — ไม่มี database, ไม่มี API server, ไม่มี server-side compute

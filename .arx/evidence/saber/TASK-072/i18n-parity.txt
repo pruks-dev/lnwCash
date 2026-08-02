@@ -1,0 +1,8 @@
+=== GATE K: i18n PARITY ===
+
+Counting keys in th.json...
+Thai keys: 251
+English keys: 251
+Parity: PASS 
+Threshold requirement: >= 197
+Verdict: PASS 

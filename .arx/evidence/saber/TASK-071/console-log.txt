@@ -1,0 +1,43 @@
+=== CONSOLE LOG — BUILD OUTPUT ===
+
+npm run build (final, post-fix):
+
+> lnw-cash@0.0.0 build
+> vite build
+
+vite v8.1.5 building client environment for production...
+transforming... ✓ 248 modules transformed.
+rendering chunks...
+computing gzip size...
+
+dist/registerSW.js                          0.13 kB
+dist/manifest.webmanifest                   0.42 kB
+dist/index.html                             1.16 kB │ gzip:  0.56 kB
+dist/assets/index-Cr-sDzOB.css             46.58 kB │ gzip:  8.31 kB
+dist/assets/esm-CSuQkwXN.js                 0.38 kB │ gzip:  0.25 kB
+dist/assets/esm-BOlHbHM7.js                 0.41 kB │ gzip:  0.27 kB
+dist/assets/rolldown-runtime-Bh1tDfsg.js    0.56 kB │ gzip:  0.36 kB
+dist/assets/web-Dg3l2GBd.js                 0.99 kB │ gzip:  0.42 kB
+dist/assets/preload-helper-Czpn1I53.js      1.19 kB │ gzip:  0.67 kB
+dist/assets/dist-Do0m8ifp.js                7.74 kB │ gzip:  3.08 kB
+dist/assets/en-zQMZfTZI.js                  8.07 kB │ gzip:  2.41 kB
+dist/assets/th-BKkeA9jh.js                 11.52 kB │ gzip:  2.96 kB
+dist/assets/web-DsTV7MsT.js               131.14 kB │ gzip: 48.20 kB
+dist/assets/index-Cv_7AgS-.js             232.45 kB │ gzip: 72.12 kB
+
+[WARNING] INEFFECTIVE_DYNAMIC_IMPORT — node_modules/idb/build/index.js
+  (Known issue — not related to SW/cache fix)
+
+[WARNING] INEFFECTIVE_DYNAMIC_IMPORT — src/lib/wallet/proofsDb.ts
+  (Known issue — not related to SW/cache fix)
+
+✓ built in 2.42s
+
+PWA v1.3.0
+mode      generateSW
+precache  23 entries (470.60 KiB)
+files generated: dist/sw.js, dist/workbox-9e0cfdd6.js
+
+ERRORS:   0 ✅
+WARNINGS: 2 (pre-existing [INEFFECTIVE_DYNAMIC_IMPORT] — unrelated to fix)
+NEW ERRORS INTRODUCED BY FIX: 0 ✅

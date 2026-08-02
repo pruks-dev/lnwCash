@@ -1,0 +1,22 @@
+=== REGRESSION CHECK: 2-TAB NAVIGATION + FAB ===
+
+BottomNav.svelte — unmodified:
+  - 2 tabs: Wallet (home) + History ✓
+  - FAB: center-docked QR Scan ✓
+  - Uses stable {#snippet} blocks for HMR safety (TASK-056) ✓
+  - Rendered only when isMainNavScreen (includes settings) ✓
+
+isMainNavScreen in App.svelte — unmodified:
+  - home, receive, send, history, settings → all show BottomNav ✓
+
+handleNavigate in App.svelte — unmodified:
+  - Updates activeScreen + showQRScan + calls navigateTo() ✓
+
+FAB component — unmodified:
+  - onClick prop → triggers QR scan ✓
+
+Settings page still shows BottomNav ✓
+2-tab navigation works across all 5 screens ✓
+FAB QR scan works on all main screens ✓
+
+Status: VERIFIED - 2 tabs + FAB intact, zero regressions

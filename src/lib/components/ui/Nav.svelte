@@ -170,7 +170,6 @@
 		top: 0;
 		z-index: var(--z-sticky);
 		background: var(--color-surface);
-		border-bottom: 1px solid var(--color-border);
 		padding-top: env(safe-area-inset-top, 0);
 	}
 

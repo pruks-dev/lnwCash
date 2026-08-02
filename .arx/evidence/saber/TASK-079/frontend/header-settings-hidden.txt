@@ -1,0 +1,23 @@
+# F-051: Settings screen — header hidden verification
+
+## Settings Screen (/settings):
+- activeScreen === 'settings' → NOT home AND NOT history
+- Enters {:else} branch
+- Renders: back-header with ArrowLeft button ONLY
+- NO TopAppBar rendered (no hamburger, no logo, no wordmark)
+- BottomNav: visible
+✅ **Settings screen: No TopAppBar, back button only**
+
+## Additional note:
+The Settings screen already receives onBack={handleBack} prop:
+```svelte
+<Settings onBack={handleBack} />
+```
+
+The back-header (inline) in App.svelte provides a consistent back button for
+all secondary screens (Send/Receive/Settings) using the same handleBack handler.
+
+This replaces the previous pattern where TopAppBar was responsible for both
+the logo+menu AND the back button. Now separation is clean:
+- Primary screens (Home, History): Full TopAppBar with branding
+- Secondary screens (Send, Receive, Settings): Minimal back-only header

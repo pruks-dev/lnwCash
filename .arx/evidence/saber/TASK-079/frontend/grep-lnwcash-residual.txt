@@ -1,0 +1,52 @@
+# grep 'LnwCash' residual check — F-049
+
+## Command: grep -r 'LnwCash' --include='*.ts' --include='*.svelte' --include='*.json' --include='*.css' --include='*.html' --include='*.md' . | grep -v node_modules | grep -v '.arx/' | grep -v dist/ | grep -v '.git/' | grep -v android/ | grep -v 'lnw\.cash'
+
+## Result: 0 matches (EMPTY OUTPUT)
+
+All instances of LnwCash have been renamed to LNWCASH except:
+- lnw.cash (lowercase URL — intentionally preserved per Commander order)
+- .arx/ evidence archives (historical — should not be modified)
+
+## Files affected by rename (22 source files):
+1. ./index.html
+2. ./vite.config.ts
+3. ./capacitor.config.ts
+4. ./capacitor.config.json
+5. ./src/screens/Home.svelte
+6. ./src/screens/F001-Register.svelte
+7. ./src/__tests__/lib/i18n-init.test.ts
+8. ./src/components/TopAppBar.svelte
+9. ./src/locales/en.json
+10. ./src/locales/th.json
+11. ./src/routes/settings/mint/+page.svelte
+12. ./src/routes/settings/mint/__tests__/+page.test.ts
+13. ./src/lib/storage/local.ts
+14. ./src/lib/storage/__tests__/local.test.ts
+15. ./src/lib/cashu/__tests__/endpoint-resolution.test.ts
+16. ./src/lib/router.ts
+17. ./src/lib/components/__tests__/design-system.test.ts
+18. ./src/lib/wallet/config.ts
+19. ./src/lib/wallet/__tests__/mint-discovery.test.ts
+20. ./src/lib/design/animations.css
+21. ./src/lib/design/tokens.css
+22. ./src/lib/types.ts
+
+## Additional doc/infra files (9 files):
+- ./docs/CHANGELOG.md
+- ./docs/user-guide-en.md
+- ./docs/api-reference.md
+- ./docs/user-guide-th.md
+- ./docs/developer.md
+- ./infra/DEPLOY.md
+- ./infra/vps/vps-spec.md
+- ./infra/DEPLOY-v4-local.md
+- ./infra/cloudflare/cloudflare-setup.md
+
+## Key renames:
+- index.html: title, description, apple-mobile-web-app-title
+- th.json/en.json: app.name, screen.home.title, screen.settings.about_description, pwa.install_description
+- TopAppBar.svelte: alt text
+- capacitor.config.ts/json: appName
+
+VERDICT: grep LnwCash → 0 (except lnw.cash URLs) ✓

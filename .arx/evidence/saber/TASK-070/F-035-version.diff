@@ -1,0 +1,11 @@
+--- /tmp/TASK-070-package-before.json	2026-08-02 01:42:10.613034112 -0400
++++ /home/debian/arx-projects/lnw-cash/package.json	2026-08-02 01:42:38.396488717 -0400
+@@ -1,7 +1,7 @@
+ {
+ 	"name": "lnw-cash",
+ 	"private": true,
+-	"version": "0.0.0",
++	"version": "2.0.0",
+ 	"type": "module",
+ 	"scripts": {
+ 		"dev": "vite",

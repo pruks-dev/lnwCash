@@ -44,9 +44,11 @@
 		size?: number;
 		/** Additional CSS class */
 		class?: string;
+		/** Stroke color (default currentColor) */
+		color?: string;
 	}
 
-	let { name, size = 24, class: className = '' }: Props = $props();
+	let { name, size = 24, class: className = '', color = 'currentColor' }: Props = $props();
 
 	const iconMap: Record<IconName, typeof Wallet> = {
 		Wallet,
@@ -70,4 +72,4 @@
 </script>
 
 <!-- svelte-ignore svelte_component_deprecated -->
-<svelte:component this={iconComponent} {size} class={className} />
+<svelte:component this={iconComponent} {size} {color} class={className} />

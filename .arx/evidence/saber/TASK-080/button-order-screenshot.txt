@@ -1,0 +1,35 @@
+# F-053 — Button Order Verification (D-013)
+# Date: 2026-08-02
+# Task: TASK-080
+
+## Button Order on Home Screen:
+1. Receive button (LEFT)  — action-receive class, navTo('receive') ✅
+2. Send button (RIGHT)     — action-send class, navTo('send') ✅
+
+## Requirement D-013: Receive ซ้าย, Send ขวา ✅
+
+## HTML Structure (Home.svelte lines 190-209):
+<div class="action-buttons-row">
+  <!-- F-053/D-013: Receive ซ้าย, Send ขวา -->
+  <button type="button" class="action-btn action-receive"
+    onclick={(e) => { handleRipple(e); navTo('receive'); }}
+    aria-label={$_('wallet.receive')}>
+    <span><Receive size={28} /></span>
+    <Body>Receive</Body>
+  </button>
+
+  <button type="button" class="action-btn action-send"
+    onclick={(e) => { handleRipple(e); navTo('send'); }}
+    aria-label={$_('wallet.send')}>
+    <span><Send size={28} /></span>
+    <Body>Send</Body>
+  </button>
+</div>
+
+## Styling:
+- action-receive: outlined style (surface-variant bg, border)
+- action-send: filled style (cyan bg, white text, shadow)
+- Flex row layout, equal flex
+
+## Previous (WRONG): Send left, Receive right ❌
+## Now (CORRECT): Receive left, Send right ✅

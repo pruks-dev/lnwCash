@@ -1,0 +1,56 @@
+=== TASK-068: wire-receive.diff ===
+File: src/screens/Receive.svelte
+Changes: Added two-phase mint integration with real mint service calls
+
+--- IMPORTS CHANGED ---
++ import { decomposeAmount } from '$lib/wallet/mint';
++ import { requestMintQuote, mintTokens, CashuError } from '$lib/cashu/client';
++ import { fetchAndCacheKeysets } from '$lib/cashu/keyset';
++ import { blindMessage, unblindSignature, deterministicBlindingFactor } from '$lib/cashu/blind';
++ import { addProofs } from '$lib/wallet/proofsDb';
++ import { getBalance } from '$lib/wallet/balance';
++ import { getPrivateKey } from '$lib/wallet/state';
+
+--- STATE ADDITIONS ---
++ let pendingQuoteId: string = $state('');
++ let pendingAmount: number = $state(0);
++ let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+--- NEW FUNCTIONS (thin wrappers in screen file) ---
++ requestMintQuoteWithUnit(mintUrl, amount) → thin wrapper with unit:"sat" for Nutshell compat
++ getMintQuoteState(mintUrl, quoteId) → GET /v1/mint/quote/bolt11/{id}
++ updateBalanceDisplay() → calls getBalance()
++ mapMintError(error) → API errors → user-friendly messages
+
+--- REPLACED handleCreateInvoice → two-phase flow ---
+Phase 1: requestMintQuoteWithUnit → get invoice → display QR → start polling
+Phase 2: completeMintAfterPayment (when quote state = PAID):
+  - fetchAndCacheKeysets → get keyset ID
+  - decomposeAmount → create outputs
+  - blindMessage + deterministicBlindingFactor → blinded outputs
+  - mintTokens(POST /v1/mint/bolt11) → blind signatures
+  - unblindSignature → proofs
+  - addProofs → store in IndexedDB
+  - updateBalanceDisplay → refresh balance
+
+--- REPLACED startPollingSimulation with startQuotePolling ---
++ Real polling: checks getMintQuoteState every 3s
++ Max 60 polls (~3 minutes) then timeout
++ Handles UNPAID, PAID/ISSUED, EXPIRED states
+
+--- UPDATED resetLightning ---
++ Cleans up pollTimer
++ Resets pendingQuoteId, pendingAmount
+
+--- CASHU TAB ---
+No changes (already wired in TASK-066)
+
+--- ERROR MAPPING ---
+mint/receive errors mapped to i18n keys:
+  error_mint_404 → "ไม่พบ endpoint ของ mint — ตรวจสอบ URL"
+  error_mint_forbidden → "Mint ปฏิเสธการเชื่อมต่อ"
+  error_mint_server → "Mint มีปัญหาภายใน"
+  error_mint_unreachable → "ไม่สามารถเชื่อมต่อ mint ได้"
+  error_mint_timeout → "Mint ตอบกลับช้า"
+  error_quote_expired → "เวลาสร้าง invoice หมดอายุ"
+  error_payment_timeout → "ไม่พบการชำระเงินภายในเวลา"

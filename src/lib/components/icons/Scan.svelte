@@ -1,12 +1,14 @@
 <script lang="ts">
 	/**
-	 * Icon: Scan (QR scanner frame)
+	 * Icon: Scan — Iconly 3.0 Bold Scan
+	 * QR scanner frame with corner brackets and scan line
 	 */
 	interface Props {
 		size?: number;
 		class?: string;
+		color?: string;
 	}
-	let { size = 24, class: className = '' }: Props = $props();
+	let { size = 24, class: className = '', color = 'currentColor' }: Props = $props();
 </script>
 
 <svg
@@ -15,17 +17,17 @@
 	height={size}
 	viewBox="0 0 24 24"
 	fill="none"
-	stroke="currentColor"
-	stroke-width="1.75"
+	stroke={color}
+	stroke-width="2"
 	stroke-linecap="round"
 	stroke-linejoin="round"
 	class={className}
 	aria-hidden="true"
 	role="img"
 >
-	<path d="M3 7V5a2 2 0 0 1 2-2h2" />
-	<path d="M17 3h2a2 2 0 0 1 2 2v2" />
-	<path d="M21 17v2a2 2 0 0 1-2 2h-2" />
-	<path d="M7 21H5a2 2 0 0 1-2-2v-2" />
-	<line x1="3" y1="12" x2="21" y2="12" />
+	<path d="M2 9V6C2 3.79 3.79 2 6 2H9" />
+	<path d="M15 2H18C20.21 2 22 3.79 22 6V9" />
+	<path d="M22 15V18C22 20.21 20.21 22 18 22H15" />
+	<path d="M9 22H6C3.79 22 2 20.21 2 18V15" />
+	<path d="M2 12H22" />
 </svg>

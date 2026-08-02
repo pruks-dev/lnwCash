@@ -1,0 +1,18 @@
+=== GATE G: THEME REACTIVE ===
+
+1. App.svelte has themeMode $effect (line 75-81):
+		const unsub = themeMode.subscribe((mode) => {
+			const resolved = resolveTheme(mode);
+			applyThemeDom(resolved);
+		});
+
+2. theme.ts exports resolveTheme + applyThemeDom:
+export function resolveTheme(mode: ThemeMode): ResolvedTheme {
+export function applyThemeDom(theme: ResolvedTheme) {
+
+3. CSS variables use [data-theme='dark'] selector in tokens.css:
+117:[data-theme='dark'] {
+165:	:root:not([data-theme='dark']) {
+173:	[data-theme='dark'] {
+
+Verdict: PASS

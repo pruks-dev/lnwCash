@@ -1,0 +1,28 @@
+F-044 — /v1/info Validation — Failure Scenarios
+==================================================
+
+Failure Modes:
+  1. Invalid URL format (isValidUrl check):
+     → 'mint.settings.errorFetch' (existing behavior, unchanged)
+  
+  2. Empty URL:
+     → 'common.error_mint_url_required' (existing behavior, unchanged)
+  
+  3. HTTP error (non-200 from /v1/info):
+     → 'ไม่พบ mint — ตรวจสอบ URL' (F-044 new)
+  
+  4. Network error (fetch throws):
+     → Error message from catch block (e.g. 'Network failure')
+     → Falls back to 'ไม่พบ mint — ตรวจสอบ URL' if no message
+  
+  5. Timeout (5s exceeded):
+     → 'ไม่พบ mint — ตรวจสอบ URL (หมดเวลา 5 วินาที)' (F-044 new)
+  
+  6. Invalid response (not an object):
+     → 'ไม่พบ mint — ตรวจสอบ URL' (F-044 new)
+
+Verification (test-based):
+  ✓ Shows error for empty URL → 'common.error_mint_url_required' (PASS)
+  ✓ Shows error for unreachable mint → 'Mint unreachable' in error (PASS)
+  ✓ Shows error when discovery throws → 'Network failure' (PASS)
+  ✓ Timeout scenario: 5s timeout fires → Thai error message

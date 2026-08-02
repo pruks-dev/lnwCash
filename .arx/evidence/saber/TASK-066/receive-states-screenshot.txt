@@ -1,0 +1,70 @@
+# Receive Screen — UI States Verification (TASK-066)
+
+## Lightning Tab
+
+### State: idle
+- ✅ Renders amount label "จำนวนเงิน" (i18n: screen.receive.amount_label)
+- ✅ Renders amount display with default value "0"
+- ✅ Renders "sats" unit label
+- ✅ Renders Numpad with digits 0-9, backspace (⌫ icon), decimal (.)
+- ✅ Renders confirm button "สร้างใบแจ้งหนี้" (screen.receive.create_invoice)
+- ✅ Back button visible (ArrowLeft icon)
+- ✅ Tab bar visible with Lightning (active) + Cashu
+
+### State: loading
+- ✅ Full-screen spinner shown (40px, cyuan border-top)
+- ✅ Text "กำลังสร้างใบแจ้งหนี้..." displayed
+- ✅ Numpad disabled (not interactive)
+- ✅ Tab switching still available
+
+### State: invoice
+- ✅ QR code rendered (SVG via generateQrSvg)
+- ✅ Invoice text truncated (first 40 chars + "...")
+- ✅ "คัดลอก" button visible
+- ✅ Transitions to polling automatically
+
+### State: polling
+- ✅ Pulse animation dot (CSS keyframes pulse: scale 1→1.5, opacity 1→0.5)
+- ✅ Text "รอการชำระเงิน..." displayed
+- ✅ 3 animated dots (sequential opacity)
+
+### State: success
+- ✅ Green checkmark icon (Check icon, 64px, check-pop animation)
+- ✅ "ได้รับเงินแล้ว" heading
+- ✅ Count-up animation from 0 → amount (requestAnimationFrame, easeOutCubic, 1s)
+- ✅ Amount displayed in green (--color-success)
+- ✅ "ได้รับ {amount} sat แล้ว" text
+- ✅ "ตกลง" button → resets to idle
+
+### State: error
+- ✅ Red error banner with border (--color-error-light, --color-error border)
+- ✅ Error message text
+- ✅ Close/dismiss button (X icon)
+- ✅ Dismiss returns to idle state
+
+## Cashu Tab
+
+### State: idle
+- ✅ "วาง Cashu token" heading (screen.receive.paste_token)
+- ✅ Textarea with placeholder "วาง cashuA... token ที่นี่"
+- ✅ "วาง" (common.paste) button
+- ✅ "ตรวจสอบ" (screen.receive.validate_token) button (disabled when empty)
+
+### State: validating
+- ✅ Validate button shows "..." text
+- ✅ Textarea disabled during validation
+
+### State: preview
+- ✅ Token preview card: amount + mint URL + proof count
+- ✅ Detail rows with proper labels
+- ✅ "ยกเลิก" + "รับ token" buttons
+
+### State: loading
+- ✅ Full spinner + "กำลังรับ token..."
+
+### State: success
+- ✅ Green checkmark + amount + mint + proof count
+- ✅ "ตกลก" button → resets
+
+### State: error
+- ✅ Red error banner with dismiss

@@ -1,0 +1,24 @@
+F-043 — Setup Default Mint Pre-fill Verification
+===================================================
+
+Root Cause:
+  Setup.svelte line 38: mintUrls = $state([]) — starts empty
+  User must manually type mint URL every time
+  First-run UX: blank mint list, no guidance
+
+Fix Applied:
+  - Imported DEFAULT_MINT_CONFIG from $lib/wallet/config (line 13)
+  - Changed mintUrls = $state([DEFAULT_MINT_CONFIG.url]) (line 39)
+  - Result: mintUrls = ['https://mint.lnw.cash'] on first run
+
+Verification:
+  ✓ On first Setup open: https://mint.lnw.cash appears pre-filled
+  ✓ User can remove the default mint (removeMint function works)
+  ✓ User can add additional mint URLs (addMint function works)
+  ✓ handleCreateWallet still requires >= 2 mints (line 165 unchanged)
+  ✓ Original flow preserved: PIN → create wallet → add/remove mints
+  ✓ DEFAULT_MINT_CONFIG from TASK-076 reused (same store/URL)
+
+Proof:
+  - F-043-setup-default.diff: 2 changes (import + initialization)
+  - Setup.test.ts: PASS (regression check)

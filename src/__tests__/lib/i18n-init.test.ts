@@ -55,8 +55,8 @@ async function getTranslator(): Promise<(key: string) => string> {
 }
 
 // Known translations for validation
-const TH_APP_NAME = 'LnwCash Wallet';
-const EN_APP_NAME = 'LnwCash Wallet'; // same for both locales
+const TH_APP_NAME = 'LNWCASH Wallet';
+const EN_APP_NAME = 'LNWCASH Wallet'; // same for both locales
 const TH_TAGLINE = 'Lightning Network Wallet — เร็ว ง่าย ปลอดภัย';
 const EN_TAGLINE = 'Lightning Network Wallet — Fast, Easy, Secure';
 

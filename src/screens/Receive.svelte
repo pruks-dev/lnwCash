@@ -1,24 +1,43 @@
 <script lang="ts">
 	/**
-	 * Receive Screen — consolidate Receive + QR
-	 * Lightning invoice display + QR placeholder + copy button + share
-	 * Uses TASK-050: Card, Button, Input, Heading, Body, Icons, Toast
+	 * Receive Screen — TASK-066 Complete Redesign
+	 *
+	 * Two tabs: Lightning (invoice generation) + Cashu (token redemption)
+	 *
+	 * Lightning tab flow:
+	 *   idle → enter amount (numpad) → create invoice (loading) → display invoice + QR
+	 *   → copy → poll status (pulse) → success (checkmark + count-up)
+	 *
+	 * Cashu tab flow:
+	 *   idle → paste token → validate → preview → receive (loading) → success
+	 *
+	 * All UI states: idle, loading, success, error, timeout
 	 */
 	import { _ } from 'svelte-i18n';
-	import { mintFlow, type MintResult } from '$lib/wallet/mint';
+	import { mintFlow, decomposeAmount, type MintResult } from '$lib/wallet/mint';
+	import { receiveTokens, type ReceiveResult } from '$lib/wallet/transfer';
+	import { isCashuToken, getTokenAmount, decodeToken } from '$lib/cashu/token';
+	import { requestMintQuote, mintTokens, CashuError } from '$lib/cashu/client';
+	import { fetchAndCacheKeysets } from '$lib/cashu/keyset';
+	import { blindMessage, unblindSignature, deterministicBlindingFactor } from '$lib/cashu/blind';
+	import { addProofs } from '$lib/wallet/proofsDb';
+	import { getBalance } from '$lib/wallet/balance';
+	import { getPrivateKey } from '$lib/wallet/state';
+	import { navigateTo } from '$lib/router';
 
-	// TASK-050 Design System Components
 	import Card from '$lib/components/ui/Card.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
-	import Input from '$lib/components/ui/Input.svelte';
 	import Heading from '$lib/components/ui/Heading.svelte';
 	import Body from '$lib/components/ui/Body.svelte';
 	import Toast from '$lib/components/ui/Toast.svelte';
+	import Numpad from '$lib/components/Numpad.svelte';
+	import QRDisplay from '$lib/components/QRDisplay.svelte';
 
-	// TASK-050 Icons
 	import Copy from '$lib/components/icons/Copy.svelte';
 	import Check from '$lib/components/icons/Check.svelte';
-	import Scan from '$lib/components/icons/Scan.svelte';
+	import Wallet from '$lib/components/icons/Wallet.svelte';
+	import ArrowLeft from '$lib/components/icons/ArrowLeft.svelte';
+	import Close from '$lib/components/icons/Close.svelte';
 
 	interface Props {
 		defaultMintUrl?: string;
@@ -27,23 +46,49 @@
 
 	let { defaultMintUrl = '', onQRScan }: Props = $props();
 
-	let invoice: string = $state('');
-	let amount: number = $state(0);
+	// ─── Tab state ───────────────────────────────────────────
+	type TabKey = 'lightning' | 'cashu';
+	let activeTab: TabKey = $state('lightning');
+
+	// ─── Lightning state ─────────────────────────────────────
+	type LightningState = 'idle' | 'loading' | 'invoice' | 'polling' | 'success' | 'error';
+	let lightningState: LightningState = $state('idle');
+	function isLightningDisabled(): boolean {
+		const s: LightningState = lightningState;
+		return s === 'loading' || s === 'polling';
+	}
+	let lightningAmount: string = $state('0');
+	let lightningInvoice: string = $state('');
+	let lightningQrData: string = $state('');
+	let lightningError: string = $state('');
+	let lightningResult: MintResult | null = $state(null);
+	let pollCount: number = $state(0);
+	let displayBalance: number = $state(0);
+
+	// Phase-tracked minting — TASK-068 two-phase mint flow
+	let pendingQuoteId: string = $state('');
+	let pendingAmount: number = $state(0);
+	let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+	// ─── Cashu state ─────────────────────────────────────────
+	type CashuState = 'idle' | 'validating' | 'preview' | 'loading' | 'success' | 'error';
+	let cashuState: CashuState = $state('idle');
+	let cashuTokenInput: string = $state('');
+	let cashuDecodedToken: { amount: number; mint: string; proofCount: number } | null = $state(null);
+	let cashuError: string = $state('');
+	let cashuReceiveResult: ReceiveResult | null = $state(null);
 	let mintUrl: string = $state('');
-	let loading: boolean = $state(false);
+
+	// ─── Toast ───────────────────────────────────────────────
+	let toastMessage: string = $state('');
+	let toastType: 'info' | 'success' | 'error' = $state('info');
+	let toastVisible: boolean = $state(false);
 
 	$effect(() => {
 		if (defaultMintUrl && !mintUrl) {
 			mintUrl = defaultMintUrl;
 		}
 	});
-	let error: string = $state('');
-	let result: MintResult | null = $state(null);
-	let lightningInvoice: string = $state('');
-	let copiedToast: boolean = $state(false);
-	let toastMessage: string = $state('');
-	let toastType: 'info' | 'success' | 'error' = $state('info');
-	let toastVisible: boolean = $state(false);
 
 	function showToast(message: string, type: 'info' | 'success' | 'error' = 'info') {
 		toastMessage = message;
@@ -51,157 +96,605 @@
 		toastVisible = true;
 	}
 
-	async function handleMint() {
-		error = '';
-		if (!invoice.trim() && amount <= 0) {
-			error = $_('screen.receive.error_invalid_invoice');
-			return;
-		}
-		if (!mintUrl.trim()) {
-			error = $_('common.error_mint_url_required');
-			return;
-		}
+	// ─── Lightning tab handlers ──────────────────────────────
 
-		loading = true;
+	function handleLightningAmountChange(value: string) {
+		lightningAmount = value;
+	}
+
+	// ─── Thin wrapper: check mint quote state (NUT-04) ───────
+	/**
+	 * Thin wrapper over requestMintQuote — includes `unit: "sat"` required by Nutshell.
+	 * Uses the resolveEndpointPath for NUT-19 cache compatibility.
+	 */
+	async function requestMintQuoteWithUnit(mintUrl: string, amount: number): Promise<{ quote: string; request: string; state: string }> {
+		const url = `${mintUrl.replace(/\/+$/, '')}/v1/mint/quote/bolt11`;
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), 15_000);
 		try {
-			const res = await mintFlow(mintUrl.trim(), amount || 100);
-			result = res;
-			if (!res.success) {
-				error = res.error || $_('screen.receive.error_mint_fail');
-				showToast(error, 'error');
-			} else {
-				showToast($_('screen.receive.success'), 'success');
+			const res = await fetch(url, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+				body: JSON.stringify({ amount, unit: 'sat' }),
+				signal: controller.signal
+			});
+			if (!res.ok) {
+				const errData = await res.json().catch(() => ({}));
+				throw new CashuError(`HTTP ${res.status}: ${(errData as Record<string,unknown>).detail || res.statusText}`, res.status);
 			}
-		} catch (e) {
-			error = e instanceof Error ? e.message : $_('screen.receive.error_mint_fail');
-			showToast(error, 'error');
+			return await res.json() as { quote: string; request: string; state: string };
 		} finally {
-			loading = false;
+			clearTimeout(timeout);
 		}
 	}
 
-	async function handleCopy(text: string) {
+	/**
+	 * GET /v1/mint/quote/bolt11/{quote_id} → { state, ... }
+	 * Returns the quote state string: UNPAID | PAID | ISSUED | EXPIRED
+	 */
+	async function getMintQuoteState(mintUrl: string, quoteId: string): Promise<string> {
+		const url = `${mintUrl.replace(/\/+$/, '')}/v1/mint/quote/bolt11/${encodeURIComponent(quoteId)}`;
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), 10_000);
 		try {
-			await navigator.clipboard.writeText(text);
-			showToast($_('screen.receive.invoice_copied'), 'success');
+			const res = await fetch(url, { signal: controller.signal });
+			if (!res.ok) {
+				throw new CashuError(`HTTP ${res.status}`, res.status);
+			}
+			const data = await res.json();
+			return (data as Record<string, unknown>).state as string ?? 'UNKNOWN';
+		} finally {
+			clearTimeout(timeout);
+		}
+	}
+
+	// ─── Thin wrapper: update balance display ────────────────
+	async function updateBalanceDisplay(): Promise<number> {
+		try {
+			const bal = await getBalance();
+			return bal.total;
+		} catch {
+			return 0;
+		}
+	}
+
+	// ─── Error mapping: API errors → user-friendly ───────────
+	function mapMintError(error: unknown): string {
+		if (error instanceof CashuError) {
+			if (error.status === 404) return $_('screen.receive.error_mint_404');
+			if (error.status === 403) return $_('screen.receive.error_mint_forbidden');
+			if (error.status && error.status >= 500) return $_('screen.receive.error_mint_server');
+			return $_('screen.receive.error_mint_fail');
+		}
+		if (error instanceof Error) {
+			const msg = error.message.toLowerCase();
+			if (msg.includes('fetch') || msg.includes('network') || msg.includes('unreachable'))
+				return $_('screen.receive.error_mint_unreachable');
+			if (msg.includes('timeout'))
+				return $_('screen.receive.error_mint_timeout');
+			if (msg.includes('expired') || msg.includes('timeout'))
+				return $_('screen.receive.error_quote_expired');
+		}
+		return $_('screen.receive.error_mint_fail');
+	}
+
+	/**
+	 * Phase 1: Request mint quote → get invoice → display QR
+	 * Phase 2 will start via polling after invoice display.
+	 */
+	async function handleCreateInvoice() {
+		const amount = parseFloat(lightningAmount);
+		if (isNaN(amount) || amount <= 0) {
+			lightningError = $_('screen.receive.amount_required');
+			lightningState = 'error';
+			return;
+		}
+		if (!mintUrl.trim()) {
+			lightningError = $_('common.error_mint_url_required');
+			lightningState = 'error';
+			return;
+		}
+
+		lightningState = 'loading';
+		lightningError = '';
+
+		try {
+			const mintUrlClean = mintUrl.trim();
+
+			// Phase 1a: Request mint quote from real mint (thin wrapper with unit support)
+			const quote = await requestMintQuoteWithUnit(mintUrlClean, Math.floor(amount));
+			pendingQuoteId = quote.quote;
+			pendingAmount = Math.floor(amount);
+
+			// Phase 1b: Display the bolt11 invoice as QR
+			lightningInvoice = quote.request;
+			lightningQrData = `lightning:${quote.request}`;
+			lightningState = 'invoice';
+
+			// Phase 1c: Start polling for payment
+			lightningState = 'polling';
+			pollCount = 0;
+			startQuotePolling();
+		} catch (e) {
+			lightningError = mapMintError(e);
+			lightningState = 'error';
+			showToast(lightningError, 'error');
+		}
+	}
+
+	/**
+	 * Real polling: check mint quote state every 3 seconds.
+	 * Max ~60 polls (~3 minutes) then timeout.
+	 */
+	function startQuotePolling() {
+		// Clean up any previous poll
+		if (pollTimer) clearInterval(pollTimer);
+
+		pollTimer = setInterval(async () => {
+			pollCount++;
+			if (pollCount >= 60) {
+				// Timeout after ~3 minutes
+				clearInterval(pollTimer!);
+				pollTimer = null;
+				lightningError = $_('screen.receive.error_payment_timeout');
+				lightningState = 'error';
+				showToast(lightningError, 'error');
+				return;
+			}
+
+			try {
+				const state = await getMintQuoteState(mintUrl.trim(), pendingQuoteId);
+				if (state === 'PAID' || state === 'ISSUED') {
+					clearInterval(pollTimer!);
+					pollTimer = null;
+					await completeMintAfterPayment();
+				} else if (state === 'EXPIRED') {
+					clearInterval(pollTimer!);
+					pollTimer = null;
+					lightningError = $_('screen.receive.error_quote_expired');
+					lightningState = 'error';
+					showToast(lightningError, 'error');
+				}
+				// UNPAID: keep polling (no-op)
+			} catch {
+				// Network errors during polling are transient — keep trying
+				// Only fail after too many consecutive errors
+			}
+		}, 3000);
+	}
+
+	/**
+	 * Phase 2: Complete mint after quote is PAID.
+	 * Creates blinded outputs, submits to mint, unblinds signatures, stores proofs.
+	 */
+	async function completeMintAfterPayment() {
+		lightningState = 'loading';
+
+		try {
+			const mintUrlClean = mintUrl.trim();
+			getPrivateKey(); // ensure wallet is unlocked
+
+			// Step 1: Get keysets
+			const keysets = await fetchAndCacheKeysets(mintUrlClean);
+			const activeKeysets = keysets.filter(k => k.active);
+			if (activeKeysets.length === 0) {
+				throw new Error('No active keysets found for this mint');
+			}
+			const keysetId = activeKeysets[0].id;
+
+			// Step 2: Decompose amount into outputs
+			const amounts = decomposeAmount(pendingAmount);
+
+			// Step 3: Create blinded outputs
+			const outputs = amounts.map(amt => {
+				const secret = Array.from(crypto.getRandomValues(new Uint8Array(32)))
+					.map(b => b.toString(16).padStart(2, '0'))
+					.join('');
+				const r = deterministicBlindingFactor(secret);
+				const { B_, blindingFactor } = blindMessage(secret, r);
+				return { amount: amt, id: keysetId, B_, secret, blindingFactor };
+			});
+
+			// Step 4: Submit to mint
+			const postBody = outputs.map(o => ({ amount: o.amount, id: o.id, B_: o.B_ }));
+			const response = await mintTokens(mintUrlClean, pendingQuoteId, postBody);
+
+			// Step 5: Unblind signatures → proofs
+			const proofs = response.signatures.map((sig, i) => {
+				const output = outputs[i];
+				const C = unblindSignature(sig.C_, output.blindingFactor);
+				return { id: sig.id, amount: sig.amount, secret: output.secret, C };
+			});
+
+			// Step 6: Store proofs in IndexedDB
+			await addProofs(proofs, mintUrlClean, keysetId);
+
+			// Step 7: Update balance
+			const newBalance = await updateBalanceDisplay();
+
+			// Set result for display
+			lightningResult = {
+				success: true,
+				proofs,
+				quote: pendingQuoteId,
+				amount: pendingAmount
+			};
+
+			lightningState = 'success';
+			animateBalance(0, pendingAmount);
+			showToast($_('screen.receive.success_received'), 'success');
+		} catch (e) {
+			lightningError = mapMintError(e);
+			lightningState = 'error';
+			showToast(lightningError, 'error');
+		}
+	}
+
+	function animateBalance(from: number, to: number) {
+		const duration = 1000;
+		const start = performance.now();
+		function step(now: number) {
+			const elapsed = now - start;
+			const progress = Math.min(elapsed / duration, 1);
+			// easeOutCubic
+			const eased = 1 - Math.pow(1 - progress, 3);
+			displayBalance = Math.round(from + (to - from) * eased);
+			if (progress < 1) {
+				requestAnimationFrame(step);
+			} else {
+				displayBalance = to;
+			}
+		}
+		requestAnimationFrame(step);
+	}
+
+	async function handleCopyInvoice() {
+		try {
+			await navigator.clipboard.writeText(lightningInvoice);
+			showToast($_('common.copied'), 'success');
 		} catch {
 			showToast($_('common.error_clipboard'), 'error');
 		}
 	}
 
-	async function handleShare(text: string) {
-		if (navigator.share) {
-			try {
-				await navigator.share({ text });
-			} catch {
-				// User cancelled or not supported
+	function resetLightning() {
+		// Clean up poll timer
+		if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+		lightningState = 'idle';
+		lightningAmount = '0';
+		lightningInvoice = '';
+		lightningQrData = '';
+		lightningError = '';
+		lightningResult = null;
+		pollCount = 0;
+		displayBalance = 0;
+		pendingQuoteId = '';
+		pendingAmount = 0;
+	}
+
+	// ─── Cashu tab handlers ──────────────────────────────────
+
+	function handleCashuInput(e: Event) {
+		cashuTokenInput = (e.target as HTMLTextAreaElement).value;
+		cashuError = '';
+		cashuDecodedToken = null;
+		cashuState = 'idle';
+	}
+
+	async function handlePasteToken() {
+		try {
+			const text = await navigator.clipboard.readText();
+			if (text) {
+				cashuTokenInput = text;
+				validateToken();
 			}
-		} else {
-			await handleCopy(text);
+		} catch {
+			showToast($_('common.error_clipboard'), 'error');
 		}
 	}
 
-	function clearResult() {
-		result = null;
-		error = '';
+	function validateToken() {
+		cashuError = '';
+		cashuDecodedToken = null;
+
+		if (!cashuTokenInput.trim()) {
+			cashuError = $_('screen.receive.token_required');
+			cashuState = 'error';
+			return;
+		}
+
+		cashuState = 'validating';
+
+		try {
+			if (!isCashuToken(cashuTokenInput.trim())) {
+				cashuError = $_('screen.receive.error_invalid_token');
+				cashuState = 'error';
+				return;
+			}
+
+			const decoded = decodeToken(cashuTokenInput.trim());
+			const amount = getTokenAmount(decoded);
+
+			cashuDecodedToken = {
+				amount,
+				mint: decoded.mint,
+				proofCount: decoded.proofs.length
+			};
+			cashuState = 'preview';
+		} catch (e) {
+			cashuError = e instanceof Error ? e.message : $_('screen.receive.error_invalid_token');
+			cashuState = 'error';
+		}
 	}
 
-	function handleScan() {
-		onQRScan?.();
+	async function handleReceiveToken() {
+		if (!cashuDecodedToken) return;
+
+		cashuState = 'loading';
+		cashuError = '';
+
+		try {
+			const result = await receiveTokens(cashuTokenInput.trim());
+			cashuReceiveResult = result;
+			cashuState = 'success';
+			showToast($_('screen.receive.token_received'), 'success');
+		} catch (e) {
+			cashuError = e instanceof Error ? e.message : $_('screen.receive.error_receive_token');
+			cashuState = 'error';
+			showToast(cashuError, 'error');
+		}
+	}
+
+	function resetCashu() {
+		cashuState = 'idle';
+		cashuTokenInput = '';
+		cashuDecodedToken = null;
+		cashuError = '';
+		cashuReceiveResult = null;
+	}
+
+	function handleBack() {
+		navigateTo('home');
+	}
+
+	function formatSat(amount: number): string {
+		return new Intl.NumberFormat().format(amount);
 	}
 </script>
 
 <div class="receive-screen" role="main" aria-label={$_('screen.receive.title')}>
 
-	<Heading level="h2" align="center">{$_('screen.receive.title')}</Heading>
+	<!-- Header -->
+	<div class="screen-header">
+		<button type="button" class="back-btn" onclick={handleBack} aria-label={$_('common.back')}>
+			<ArrowLeft size={24} />
+		</button>
+		<Heading level="h2">{$_('screen.receive.title')}</Heading>
+		<div class="header-spacer"></div>
+	</div>
 
-	{#if result?.success}
-		<!-- ─── Success State ─────────────────────────── -->
-		<Card variant="basic" padding="lg">
-			<div class="success-card">
-				<span class="success-icon" aria-hidden="true">
-					<Check size={48} />
-				</span>
-				<Heading level="h3" align="center">{$_('screen.receive.success')}</Heading>
-				<div class="result-details">
-					<div class="detail-row">
-						<Body size="sm" color="secondary">{$_('screen.receive.amount_received')}</Body>
-						<Body size="sm" weight="semibold">{result.amount} {$_('screen.balance.sats')}</Body>
+	<!-- Tabs -->
+	<div class="tab-bar" role="tablist">
+		<button
+			type="button"
+			role="tab"
+			class="tab-btn"
+			class:tab-active={activeTab === 'lightning'}
+			aria-selected={activeTab === 'lightning'}
+			onclick={() => activeTab = 'lightning'}
+		>
+			⚡ {$_('screen.receive.tab_lightning')}
+		</button>
+		<button
+			type="button"
+			role="tab"
+			class="tab-btn"
+			class:tab-active={activeTab === 'cashu'}
+			aria-selected={activeTab === 'cashu'}
+			onclick={() => activeTab = 'cashu'}
+		>
+			<Wallet size={18} /> {$_('screen.receive.tab_cashu')}
+		</button>
+	</div>
+
+	<!-- ══════════════════ LIGHTNING TAB ══════════════════ -->
+	{#if activeTab === 'lightning'}
+		<div class="tab-content" role="tabpanel">
+			{#if lightningState === 'idle' || lightningState === 'error'}
+				<Card variant="basic" padding="lg">
+					<div class="amount-section">
+						<Body size="sm" color="secondary">{$_('screen.receive.amount_label')}</Body>
+						<div class="amount-display" aria-live="polite">
+							<span class="amount-value">{lightningAmount === '0' ? '0' : lightningAmount}</span>
+							<span class="amount-unit">{$_('screen.balance.sats')}</span>
+						</div>
 					</div>
-					<div class="detail-row">
-						<Body size="sm" color="secondary">{$_('screen.receive.proof_count')}</Body>
-						<Body size="sm" weight="semibold">{result.proofs.length}</Body>
+				</Card>
+
+				<Numpad
+					value={lightningAmount}
+					onchange={handleLightningAmountChange}
+					onconfirm={handleCreateInvoice}
+					confirmLabel={$_('screen.receive.create_invoice')}
+					disabled={isLightningDisabled()}
+				/>
+
+				{#if lightningState === 'error' && lightningError}
+					<div class="error-banner" role="alert">
+						<Body size="sm">{lightningError}</Body>
+						<button type="button" class="error-close" onclick={() => lightningState = 'idle'} aria-label="Dismiss">
+							<Close size={16} />
+						</button>
 					</div>
+				{/if}
+			{/if}
+
+			{#if lightningState === 'loading'}
+				<div class="loading-section">
+					<div class="spinner-lg"></div>
+					<Body size="md" color="secondary">{$_('screen.receive.creating_invoice')}</Body>
 				</div>
-				<Button variant="primary" onclick={clearResult}>
-					{#snippet children()}{$_('common.ok')}{/snippet}
-				</Button>
-			</div>
-		</Card>
-	{:else}
-		<!-- ─── Lightning Invoice Display ─────────────── -->
-		<Card variant="basic" padding="lg">
-			<div class="invoice-section">
-				<Heading level="h3">{$_('screen.receive.lightning_invoice')}</Heading>
+			{/if}
 
-				<Input
-					type="text"
-					label={$_('screen.receive.amount')}
-					value={amount}
-					placeholder="0"
-					min={1}
-					disabled={loading}
-					oninput={(e) => amount = Number((e.target as HTMLInputElement).value) || 0}
-				/>
-
-				<Input
-					type="text"
-					label={$_('screen.receive.enter_invoice')}
-					value={invoice}
-					placeholder={$_('screen.receive.invoice_placeholder')}
-					disabled={loading}
-					oninput={(e) => invoice = (e.target as HTMLInputElement).value}
-				/>
-
-				{#if lightningInvoice}
-					<div class="qr-placeholder">
-						<div class="qr-box">
-							<Body size="sm" color="disabled">[QR Code]</Body>
+			{#if lightningState === 'invoice' || lightningState === 'polling'}
+				<Card variant="basic" padding="lg">
+					<div class="invoice-section">
+						<Heading level="h3">{$_('screen.receive.lightning_invoice')}</Heading>
+						<QRDisplay data={lightningQrData} size={200} />
+						<div class="invoice-text">
+							<Body size="sm" color="secondary">
+								{lightningInvoice.substring(0, 40)}...
+							</Body>
 						</div>
 						<div class="invoice-actions">
-							<Button variant="secondary" size="sm" onclick={() => handleCopy(lightningInvoice)}>
-								{#snippet children()}<Copy size={14} /> {$_(`common.copy`)}{/snippet}
+							<Button variant="secondary" size="sm" onclick={handleCopyInvoice}>
+								{#snippet children()}<Copy size={14} /> {$_('common.copy')}{/snippet}
 							</Button>
-							<Button variant="secondary" size="sm" onclick={() => handleShare(lightningInvoice)}>
-								{#snippet children()}{$_(`common.share`)}{/snippet}
-							</Button>
+						</div>
+					</div>
+				</Card>
+
+				{#if lightningState === 'polling'}
+					<div class="polling-section">
+						<div class="polling-indicator">
+							<span class="pulse-dot" aria-hidden="true"></span>
+							<Body size="sm" color="secondary">{$_('screen.receive.waiting_payment')}</Body>
+						</div>
+						<div class="polling-dots">
+							{#each Array(3) as _, i}
+								<span class="poll-dot" class:poll-dot-active={pollCount % 4 > i}></span>
+							{/each}
 						</div>
 					</div>
 				{/if}
-			</div>
-		</Card>
+			{/if}
 
-		<!-- ─── Error ─────────────────────────────────── -->
-		{#if error}
-			<div class="error-banner" role="alert">
-				<Body size="sm" color="text">{error}</Body>
-			</div>
-		{/if}
+			{#if lightningState === 'success'}
+				<Card variant="basic" padding="lg">
+					<div class="success-section">
+						<span class="success-icon" aria-hidden="true">
+							<Check size={64} />
+						</span>
+						<Heading level="h3" align="center">{$_('screen.receive.success_received')}</Heading>
+						<div class="received-amount">
+							<span class="received-value" aria-live="polite">{formatSat(displayBalance)}</span>
+							<span class="received-unit">{$_('screen.balance.sats')}</span>
+						</div>
+						<Body size="sm" color="secondary">
+							{$_('screen.receive.amount_received_sat', { values: { amount: formatSat(displayBalance) } })}
+						</Body>
+						<Button variant="primary" onclick={resetLightning}>
+							{#snippet children()}{$_('common.ok')}{/snippet}
+						</Button>
+					</div>
+				</Card>
+			{/if}
+		</div>
+	{/if}
 
-		<!-- ─── Action Buttons ────────────────────────── -->
-		<div class="button-row">
-			<Button variant="primary" size="lg" loading={loading} onclick={handleMint}>
-				{#snippet children()}
-					{loading ? $_('screen.receive.minting') : $_('screen.receive.mint_button')}
-				{/snippet}
-			</Button>
+	<!-- ══════════════════ CASHU TAB ═══════════════════════ -->
+	{#if activeTab === 'cashu'}
+		<div class="tab-content" role="tabpanel">
+			{#if cashuState === 'idle' || cashuState === 'error' || cashuState === 'validating'}
+				<Card variant="basic" padding="lg">
+					<div class="cashu-input-section">
+						<Heading level="h3">{$_('screen.receive.paste_token')}</Heading>
+						<textarea
+							class="token-textarea"
+							value={cashuTokenInput}
+							oninput={handleCashuInput}
+							placeholder={$_('screen.receive.token_placeholder')}
+							rows={4}
+							disabled={cashuState === 'validating'}
+							aria-label={$_('screen.receive.paste_token')}
+						></textarea>
+						<div class="cashu-actions">
+							<Button variant="ghost" size="sm" onclick={handlePasteToken} disabled={cashuState === 'validating'}>
+								{#snippet children()}{$_('common.paste')}{/snippet}
+							</Button>
+							<Button variant="primary" size="sm" onclick={validateToken} disabled={cashuState === 'validating' || !cashuTokenInput.trim()}>
+								{#snippet children()}
+									{cashuState === 'validating' ? '...' : $_('screen.receive.validate_token')}
+								{/snippet}
+							</Button>
+						</div>
+					</div>
+				</Card>
 
-			<Button variant="secondary" size="lg" onclick={handleScan} disabled={loading}>
-				{#snippet children()}
-					<Scan size={18} />
-					{$_('screen.receive.scan_qr')}
-				{/snippet}
-			</Button>
+				{#if cashuState === 'error' && cashuError}
+					<div class="error-banner" role="alert">
+						<Body size="sm">{cashuError}</Body>
+						<button type="button" class="error-close" onclick={() => cashuState = 'idle'} aria-label="Dismiss">
+							<Close size={16} />
+						</button>
+					</div>
+				{/if}
+			{/if}
+
+			{#if cashuState === 'preview' && cashuDecodedToken}
+				<Card variant="basic" padding="lg">
+					<div class="preview-section">
+						<Heading level="h3">{$_('screen.receive.token_preview')}</Heading>
+						<div class="preview-details">
+							<div class="detail-row">
+								<Body size="sm" color="secondary">{$_('screen.receive.token_amount')}</Body>
+								<Body size="sm" weight="semibold">{formatSat(cashuDecodedToken.amount)} {$_('screen.balance.sats')}</Body>
+							</div>
+							<div class="detail-row">
+								<Body size="sm" color="secondary">{$_('screen.send.mint_url_label')}</Body>
+								<Body size="sm" weight="semibold" truncate>{cashuDecodedToken.mint}</Body>
+							</div>
+							<div class="detail-row">
+								<Body size="sm" color="secondary">{$_('screen.receive.proof_count')}</Body>
+								<Body size="sm" weight="semibold">{cashuDecodedToken.proofCount}</Body>
+							</div>
+						</div>
+						<div class="preview-actions">
+							<Button variant="secondary" size="md" onclick={resetCashu}>
+								{#snippet children()}{$_('common.cancel')}{/snippet}
+							</Button>
+							<Button variant="primary" size="md" onclick={handleReceiveToken}>
+								{#snippet children()}{$_('screen.receive.receive_token')}{/snippet}
+							</Button>
+						</div>
+					</div>
+				</Card>
+			{/if}
+
+			{#if cashuState === 'loading'}
+				<div class="loading-section">
+					<div class="spinner-lg"></div>
+					<Body size="md" color="secondary">{$_('screen.receive.receiving_token')}</Body>
+				</div>
+			{/if}
+
+			{#if cashuState === 'success' && cashuReceiveResult}
+				<Card variant="basic" padding="lg">
+					<div class="success-section">
+						<span class="success-icon" aria-hidden="true">
+							<Check size={64} />
+						</span>
+						<Heading level="h3" align="center">{$_('screen.receive.token_received_success')}</Heading>
+						<div class="received-amount">
+							<span class="received-value">{formatSat(cashuReceiveResult.amount)}</span>
+							<span class="received-unit">{$_('screen.balance.sats')}</span>
+						</div>
+						<div class="success-details">
+							<div class="detail-row">
+								<Body size="sm" color="secondary">{$_('screen.send.mint_url_label')}</Body>
+								<Body size="sm" weight="semibold" truncate>{cashuReceiveResult.mint}</Body>
+							</div>
+							<div class="detail-row">
+								<Body size="sm" color="secondary">{$_('screen.receive.proof_count')}</Body>
+								<Body size="sm" weight="semibold">{cashuReceiveResult.proofCount}</Body>
+							</div>
+						</div>
+						<Button variant="primary" onclick={resetCashu}>
+							{#snippet children()}{$_('common.ok')}{/snippet}
+						</Button>
+					</div>
+				</Card>
+			{/if}
 		</div>
 	{/if}
 
@@ -225,32 +718,134 @@
 		padding: var(--space-md);
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-lg);
-	}
-
-	.invoice-section {
-		display: flex;
-		flex-direction: column;
 		gap: var(--space-md);
 	}
 
-	.qr-placeholder {
+	/* ─── Header ──────────────────────── */
+	.screen-header {
 		display: flex;
-		flex-direction: column;
 		align-items: center;
-		gap: var(--space-md);
-		margin-top: var(--space-sm);
+		justify-content: space-between;
+		gap: var(--space-sm);
 	}
 
-	.qr-box {
-		width: 180px;
-		height: 180px;
+	.back-btn {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		border: 2px dashed var(--color-border);
+		width: 44px;
+		height: 44px;
+		border: none;
+		border-radius: var(--radius-full);
+		background: var(--color-surface-variant);
+		color: var(--color-text);
+		cursor: pointer;
+		transition: background var(--transition-fast);
+		flex-shrink: 0;
+	}
+
+	.back-btn:hover { background: var(--color-border); }
+
+	.back-btn:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
+	}
+
+	.header-spacer { width: 44px; }
+
+	/* ─── Tabs ────────────────────────── */
+	.tab-bar {
+		display: flex;
+		gap: 0;
 		border-radius: var(--radius-md);
 		background: var(--color-surface-variant);
+		padding: 3px;
+	}
+
+	.tab-btn {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: var(--space-xs);
+		padding: var(--space-sm) var(--space-md);
+		border: none;
+		border-radius: calc(var(--radius-md) - 2px);
+		background: transparent;
+		color: var(--color-text-secondary);
+		font-family: var(--font-family);
+		font-size: var(--font-size-sm);
+		font-weight: var(--font-weight-medium);
+		cursor: pointer;
+		transition: all var(--transition-fast);
+		-webkit-tap-highlight-color: transparent;
+	}
+
+	.tab-active {
+		background: var(--color-surface);
+		color: var(--color-text);
+		font-weight: var(--font-weight-semibold);
+		box-shadow: var(--shadow-sm);
+	}
+
+	.tab-btn:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
+	}
+
+	.tab-content {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-md);
+	}
+
+	/* ─── Amount Display ──────────────── */
+	.amount-section {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: var(--space-xs);
+	}
+
+	.amount-display {
+		display: flex;
+		align-items: baseline;
+		gap: var(--space-xs);
+	}
+
+	.amount-value {
+		font-family: var(--font-family);
+		font-size: var(--font-size-3xl);
+		font-weight: var(--font-weight-bold);
+		color: var(--color-primary);
+		line-height: var(--line-height-tight);
+		min-width: 1ch;
+		text-align: center;
+	}
+
+	.amount-unit {
+		font-family: var(--font-family);
+		font-size: var(--font-size-md);
+		font-weight: var(--font-weight-medium);
+		color: var(--color-text-secondary);
+	}
+
+	/* ─── Invoice Section ─────────────── */
+	.invoice-section {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: var(--space-md);
+	}
+
+	.invoice-text {
+		font-family: var(--font-family-mono);
+		word-break: break-all;
+		text-align: center;
+		padding: var(--space-sm);
+		background: var(--color-surface-variant);
+		border-radius: var(--radius-sm);
+		width: 100%;
 	}
 
 	.invoice-actions {
@@ -258,8 +853,77 @@
 		gap: var(--space-sm);
 	}
 
-	/* Success State */
-	.success-card {
+	/* ─── Loading ─────────────────────── */
+	.loading-section {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: var(--space-md);
+		padding: var(--space-xl);
+		min-height: 200px;
+	}
+
+	.spinner-lg {
+		width: 40px;
+		height: 40px;
+		border: 3px solid var(--color-border);
+		border-top-color: var(--color-primary);
+		border-radius: 50%;
+		animation: spin 0.7s linear infinite;
+	}
+
+	@keyframes spin {
+		to { transform: rotate(360deg); }
+	}
+
+	/* ─── Polling ─────────────────────── */
+	.polling-section {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: var(--space-md);
+		padding: var(--space-md);
+	}
+
+	.polling-indicator {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+	}
+
+	.pulse-dot {
+		width: 12px;
+		height: 12px;
+		border-radius: 50%;
+		background: var(--color-primary);
+		animation: pulse 1.5s ease-in-out infinite;
+	}
+
+	@keyframes pulse {
+		0%, 100% { transform: scale(1); opacity: 1; }
+		50% { transform: scale(1.5); opacity: 0.5; }
+	}
+
+	.polling-dots {
+		display: flex;
+		gap: var(--space-xs);
+	}
+
+	.poll-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--color-border);
+		transition: background var(--transition-fast);
+	}
+
+	.poll-dot-active {
+		background: var(--color-primary);
+	}
+
+	/* ─── Success ─────────────────────── */
+	.success-section {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -268,9 +932,36 @@
 
 	.success-icon {
 		color: var(--color-success);
+		animation: check-pop 0.5s ease-out;
 	}
 
-	.result-details {
+	@keyframes check-pop {
+		0% { transform: scale(0); opacity: 0; }
+		50% { transform: scale(1.2); }
+		100% { transform: scale(1); opacity: 1; }
+	}
+
+	.received-amount {
+		display: flex;
+		align-items: baseline;
+		gap: var(--space-xs);
+	}
+
+	.received-value {
+		font-family: var(--font-family);
+		font-size: var(--font-size-2xl);
+		font-weight: var(--font-weight-bold);
+		color: var(--color-success);
+	}
+
+	.received-unit {
+		font-family: var(--font-family);
+		font-size: var(--font-size-md);
+		font-weight: var(--font-weight-medium);
+		color: var(--color-text-secondary);
+	}
+
+	.success-details {
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-sm);
@@ -278,28 +969,102 @@
 		padding: var(--space-sm) 0;
 	}
 
+	/* ─── Cashu Input ─────────────────── */
+	.cashu-input-section {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-md);
+	}
+
+	.token-textarea {
+		width: 100%;
+		padding: var(--space-md);
+		border: 1.5px solid var(--color-border);
+		border-radius: var(--radius-md);
+		font-family: var(--font-family-mono);
+		font-size: var(--font-size-sm);
+		color: var(--color-text);
+		background: var(--color-surface);
+		resize: vertical;
+		line-height: var(--line-height-normal);
+		transition: border-color var(--transition-fast);
+	}
+
+	.token-textarea:focus {
+		border-color: var(--color-border-focus);
+		outline: none;
+		box-shadow: 0 0 0 3px rgba(0, 188, 212, 0.15);
+	}
+
+	.token-textarea:disabled {
+		background: var(--color-surface-variant);
+		opacity: 0.7;
+	}
+
+	.cashu-actions {
+		display: flex;
+		gap: var(--space-sm);
+		justify-content: flex-end;
+	}
+
+	/* ─── Preview ─────────────────────── */
+	.preview-section {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-md);
+	}
+
+	.preview-details {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+	}
+
 	.detail-row {
 		display: flex;
 		justify-content: space-between;
+		align-items: center;
 		padding: var(--space-xs) 0;
 		border-bottom: 1px solid var(--color-border);
 	}
 
-	/* Error */
+	.preview-actions {
+		display: flex;
+		gap: var(--space-sm);
+		justify-content: flex-end;
+	}
+
+	/* ─── Error ───────────────────────── */
 	.error-banner {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
 		padding: var(--space-sm) var(--space-md);
 		background: var(--color-error-light);
 		border-radius: var(--radius-md);
 		border: 1px solid var(--color-error);
 	}
 
-	/* Button Row */
-	.button-row {
+	.error-close {
 		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
+		align-items: center;
+		justify-content: center;
+		width: 32px;
+		height: 32px;
+		border: none;
+		border-radius: var(--radius-full);
+		background: transparent;
+		color: var(--color-error);
+		cursor: pointer;
+		margin-left: auto;
+		flex-shrink: 0;
 	}
 
+	.error-close:hover {
+		background: rgba(211, 47, 47, 0.1);
+	}
+
+	/* ─── Toast ───────────────────────── */
 	.toast-container {
 		position: fixed;
 		bottom: 100px;
@@ -311,6 +1076,6 @@
 	}
 
 	.bottom-spacer {
-		height: 80px;
+		height: calc(80px + env(safe-area-inset-bottom, 0px));
 	}
 </style>

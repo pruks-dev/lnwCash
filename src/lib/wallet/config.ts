@@ -47,7 +47,7 @@ export interface MintConfig {
  */
 export const DEFAULT_MINT_CONFIG: MintConfig = {
 	url: 'https://mint.lnw.cash',
-	name: 'LnwCash mint',
+	name: 'LNWCASH mint',
 	pubkey: '03d0e4cda0f937bde65b9d160b58febe04bd229243ea45e390ce80252504e1176e',
 	version: 'Nutshell/0.20.1',
 	supported_nuts: [

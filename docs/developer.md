@@ -1,8 +1,8 @@
-# LnwCash Wallet — Developer Documentation
+# LNWCASH Wallet — Developer Documentation
 
 ## Overview
 
-LnwCash is a client-side Lightning Network wallet using the [Cashu protocol](https://cashu.space) (ecash). No backend, no server — all wallet operations happen in the browser or Android WebView. Built with Svelte 5 + TypeScript + Vite + Capacitor.
+LNWCASH is a client-side Lightning Network wallet using the [Cashu protocol](https://cashu.space) (ecash). No backend, no server — all wallet operations happen in the browser or Android WebView. Built with Svelte 5 + TypeScript + Vite + Capacitor.
 
 **Architecture highlight**: PIN-encrypted private key → localStorage. Plaintext key exists only in memory when the wallet is unlocked. Multi-mint by design.
 

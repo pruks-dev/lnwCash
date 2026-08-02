@@ -1,4 +1,4 @@
-# ☁️ Cloudflare Setup Guide — LnwCash Wallet
+# ☁️ Cloudflare Setup Guide — LNWCASH Wallet
 
 คู่มือนี้สำหรับ Commander ใช้ตั้งค่า Cloudflare ด้วยตนเอง — Brick (Deploy Agent) ไม่ดำเนินการตั้งค่า Cloudflare
 
@@ -76,7 +76,7 @@
 - **Full (strict)** ตรวจสอบว่า certificate บน VPS เป็น certificate ที่ valid (ออกให้ domain จริง, ไม่ expired, signed by trusted CA)
 - ป้องกัน MITM attack ระหว่าง Cloudflare ↔ VPS
 - ถ้า certificate บน VPS ไม่ valid — Cloudflare จะปฏิเสธการเชื่อมต่อ (fail closed)
-- สำหรับ LnwCash ซึ่งเป็น wallet app — ความปลอดภัยสำคัญที่สุด
+- สำหรับ LNWCASH ซึ่งเป็น wallet app — ความปลอดภัยสำคัญที่สุด
 
 ### วิธีทำ Certificate บน VPS
 
@@ -213,7 +213,7 @@ CI/CD workflow อาจต้องการ purge cache หลัง deploy �
 
 | Field | Value |
 |---|---|
-| **Token name** | `LnwCash Deploy Token` |
+| **Token name** | `LNWCASH Deploy Token` |
 
 **Permissions:**
 

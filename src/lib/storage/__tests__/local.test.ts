@@ -168,7 +168,7 @@ describe('localStorage service', () => {
 	});
 
 	describe('clearAll', () => {
-		it('should clear all LnwCash data', () => {
+		it('should clear all LNWCASH data', () => {
 			setWalletMetadata({ name: 'test', created_at: 1 });
 			setSettings({ language: 'en' });
 			setKeysetCache('https://mint.example.com', []);

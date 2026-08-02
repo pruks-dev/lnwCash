@@ -1,0 +1,28 @@
+=== Gate G: BALANCE CSS (F-040) ===
+--- Checking .balance-container in Home.svelte ---
+153:		<div class="balance-container">
+297:	.balance-container {
+--- Checking background style ---
+264:									style="background: {statusColor(tx.status)}"
+298:		background: transparent;
+353:		background: var(--color-success-light);
+358:		background: var(--color-warning-light);
+404:		background: var(--color-primary);
+410:		background: var(--color-primary-hover);
+414:		background: var(--color-surface-variant);
+420:		background: var(--color-border);
+433:		background: rgba(255, 255, 255, 0.35);
+481:		background: var(--color-surface-variant);
+--- Checking border/shadow ---
+299:		border-radius: 0;
+301:		box-shadow: none;
+346:		border-radius: var(--radius-full);
+384:		border: none;
+385:		border-radius: var(--radius-lg);
+390:		transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+406:		box-shadow: 0 2px 8px rgba(0, 188, 212, 0.3);
+416:		border: 1px solid var(--color-border);
+420:		background: var(--color-border);
+432:		border-radius: 50%;
+480:		border-radius: var(--radius-full);
+497:		border-radius: var(--radius-full);

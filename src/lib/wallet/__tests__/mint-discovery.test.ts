@@ -124,7 +124,7 @@ describe('(A) Default mint configuration', () => {
 		});
 
 		it('should have correct default name', () => {
-			expect(DEFAULT_MINT_CONFIG.name).toBe('LnwCash mint');
+			expect(DEFAULT_MINT_CONFIG.name).toBe('LNWCASH mint');
 		});
 
 		it('should have a valid 33-byte compressed pubkey (66 hex chars)', () => {
@@ -411,7 +411,7 @@ describe('(C) Mint config store', () => {
 		it('should return default mint config for default URL (seed)', () => {
 			const config = getMintConfig(DEFAULT_MINT_CONFIG.url);
 			expect(config).toBeTruthy();
-			expect(config!.name).toBe('LnwCash mint');
+			expect(config!.name).toBe('LNWCASH mint');
 		});
 
 		it('should store and retrieve a config', () => {

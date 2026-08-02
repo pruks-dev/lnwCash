@@ -1,0 +1,29 @@
+# F-052 — Balance Display Verification
+# Date: 2026-08-02
+# Task: TASK-080
+
+## Balance CSS Properties (Home.svelte .balance-value):
+- font-size: 3.25rem (52px) ✅
+- font-weight: 800 ✅
+- color: var(--color-primary) = #00bcd4 (Cyan) ✅
+- line-height: var(--line-height-tight) ✅
+- background: transparent (no card, no shadow) ✅
+
+## Responsive (≤ 480px):
+- font-size: clamp(2rem, 8vw, 3.25rem) ✅
+
+## Visual Appearance (Wallet of Satoshi style):
+- Large, bold balance number in Cyan
+- "sats" unit in smaller secondary text
+- Estimated THB below
+- No enclosing card — transparent background
+
+## File: src/screens/Home.svelte lines 317-324
+.balance-value {
+    font-family: var(--font-family);
+    font-size: 3.25rem; /* 52px — F-052: Wallet of Satoshi style */
+    font-weight: 800;
+    color: var(--color-primary);
+    line-height: var(--line-height-tight);
+    transition: transform 0.3s ease;
+}

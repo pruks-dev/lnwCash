@@ -1,0 +1,37 @@
+=== SW CACHE STRATEGY — BEFORE FIX ===
+Source: vite.config.ts → VitePWA.workbox.runtimeCaching
+Date: Before TASK-071 fix
+
+registerType: 'autoUpdate'
+  → auto-generates: self.skipWaiting() + workbox.clientsClaim()
+
+runtimeCaching rule #1 (CRITICAL — ROOT CAUSE):
+  urlPattern: /\.(?:js|css|woff2?|svg|png|jpg|ico)$/
+  handler: CacheFirst          ← PROBLEM: serves stale CSS/JS from cache
+  cacheName: static-assets
+  maxEntries: 100
+  maxAgeSeconds: 604800 (7 days)
+
+runtimeCaching rule #2:
+  urlPattern: /\/v1\/(mint|melt|swap|check|keys|keysets|info)/i
+  handler: StaleWhileRevalidate
+  cacheName: mint-api
+  maxEntries: 50
+  maxAgeSeconds: 300 (5 min)
+
+runtimeCaching rule #3:
+  urlPattern: /api/* or /v1/*
+  handler: NetworkFirst
+  cacheName: api-cache
+  networkTimeoutSeconds: 10
+  maxEntries: 30
+  maxAgeSeconds: 60
+
+ROOT CAUSE ANALYSIS:
+  CacheFirst for JS/CSS means service worker always serves cached
+  version first, never checking network. After deploy:
+  1. New index.html loads (from network or precache update)
+  2. index.html references new hashed JS/CSS files (e.g., app-abc123.js)
+  3. SW intercepts request → CacheFirst → returns OLD cached app-xyz789.js
+  4. OR: new hash not in cache → cache miss → network → OK
+  But: OLD cached CSS still served → layout/color mismatch

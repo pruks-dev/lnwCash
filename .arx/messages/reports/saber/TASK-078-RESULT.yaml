@@ -1,0 +1,57 @@
+message_id: TASK-078-RESULT
+type: RESULT
+sender: saber
+receiver: orion
+task_id: TASK-078
+verdict: COMPLETE
+
+summary: |
+  Mint Setup Fix Bundle — all 3 fixes applied successfully.
+  
+  F-042 (P0): Settings.svelte — 'Manage Mint' was navigating to 'home' via navigateTo('home').
+  Root cause: wrong click handler target. Fix: imported MintSettings component,
+  added showMintManage sub-view toggle. Now Settings → Manage Mint → mint list visible.
+  
+  F-043 (P0): Setup.svelte — mintUrls started empty on first run. Fix: imported
+  DEFAULT_MINT_CONFIG from $lib/wallet/config, initialized mintUrls with [DEFAULT_MINT_CONFIG.url].
+  Now https://mint.lnw.cash pre-filled, removable.
+  
+  F-044 (P1): mint/+page.svelte — isValidUrl() only checked format, no /v1/info fetch.
+  Fix: handleValidate() now wraps discoverMintEndpoints() with Promise.race + 5s timeout.
+  Thai error messages for timeout/unreachable. Loading state preserved.
+
+files_changed:
+  - src/screens/Setup.svelte (+2 lines: import DEFAULT_MINT_CONFIG, pre-fill mintUrls)
+  - src/screens/Settings.svelte (+20 lines: import MintSettings, showMintManage state, conditional render, CSS)
+  - src/routes/settings/mint/+page.svelte (+7 lines net: Promise.race timeout in handleValidate)
+
+proof_list:
+  - F-043-setup-default.diff
+  - setup-first-run.txt
+  - F-042-routing-fix.diff
+  - settings-mint-manage-fixed.txt
+  - setup-mint-manage-regression.txt
+  - F-044-info-validation.diff
+  - info-validation-success.txt
+  - info-validation-fail.txt
+  - info-validation-timeout.txt
+  - end-to-end-mint-flow.txt
+  - vitest-regression.log
+  - verification.md
+
+evidence_count: 12
+
+test_results:
+  passed: 703
+  failed: 1 (ErrorBoundary.test.ts — pre-existing, unrelated)
+  threshold: 700
+  threshold_met: true
+
+related_test_files:
+  - src/__tests__/screens/Settings.test.ts: PASS
+  - src/__tests__/screens/Setup.test.ts: PASS
+  - src/routes/settings/mint/__tests__/+page.test.ts: PASS
+  - src/lib/wallet/__tests__/mint-discovery.test.ts: PASS
+  - src/lib/wallet/__tests__/mint.test.ts: PASS
+
+blockers: []

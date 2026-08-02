@@ -1,4 +1,4 @@
-# คู่มือ Deploy — LnwCash Wallet (v4 Local)
+# คู่มือ Deploy — LNWCASH Wallet (v4 Local)
 
 > สำหรับ deploy บนเครื่อง local ด้วย Nginx  
 > Port 8080 | IP access only | ไม่ใช้ domain
@@ -129,7 +129,7 @@ http://100.86.66.4:8080
 ```
 
 **สิ่งที่ควรเห็น:**
-- หน้าเว็บ LnwCash Wallet แสดงผลถูกต้อง
+- หน้าเว็บ LNWCASH Wallet แสดงผลถูกต้อง
 - ไม่มี error ใน console (F12 → Console)
 - Service Worker ลงทะเบียนสำเร็จ (F12 → Application → Service Workers)
 - Icon และ assets โหลดครบ

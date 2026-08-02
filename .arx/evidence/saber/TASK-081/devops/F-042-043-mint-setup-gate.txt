@@ -1,0 +1,37 @@
+=== Gate F: MINT SETUP FLOW (F-042, F-043) ===
+--- Checking DEFAULT_MINT_CONFIG in Setup.svelte ---
+13:	import { DEFAULT_MINT_CONFIG } from '$lib/wallet/config';
+39:	let mintUrls: string[] = $state([DEFAULT_MINT_CONFIG.url]);
+--- Checking mintUrls initialization with DEFAULT_MINT_CONFIG ---
+39:	let mintUrls: string[] = $state([DEFAULT_MINT_CONFIG.url]);
+127:		if (mintUrls.includes(url)) {
+131:		mintUrls = [...mintUrls, url];
+138:		mintUrls = mintUrls.filter((u) => u !== url);
+164:		if (mintUrls.length < 2) {
+302:					{#if mintUrls.length > 0}
+304:							{#each mintUrls as url (url)}
+335:						disabled={loading || mintUrls.length < 2}
+--- Checking DEFAULT_MINT_CONFIG.url ---
+13:	import { DEFAULT_MINT_CONFIG } from '$lib/wallet/config';
+39:	let mintUrls: string[] = $state([DEFAULT_MINT_CONFIG.url]);
+--- Checking Settings.svelte Manage Mint navigation ---
+3:	 * Settings Screen — grouped sections: Mint, Language, Theme, About
+9:	import { navigateTo } from '$lib/router';
+21:	import Mint from '$lib/components/icons/Mint.svelte';
+26:	// Mint Settings sub-page (F-042: Manage Mint routing)
+27:	import MintSettings from '../routes/settings/mint/+page.svelte';
+37:	let showMintManage: boolean = $state(false); // F-042: sub-view for Manage Mint
+76:	{#if showMintManage}
+77:		<!-- F-042: Mint Manage sub-view -->
+78:		<div class="mint-manage-header">
+79:			<button type="button" class="back-btn" onclick={() => { showMintManage = false; }} aria-label={$_('common.back')}>
+82:			<Heading level="h2" align="center">{$_('screen.settings.mint_manage')}</Heading>
+85:		<MintSettings />
+87:		<!-- ─── Mint Section ──────────────────────────────── -->
+90:				<Heading level="h4">{$_('screen.settings.mint_section')}</Heading>
+91:				<Body size="sm" color="secondary">{$_('screen.settings.mint_description')}</Body>
+93:					title={$_('screen.settings.mint_manage')}
+94:					onclick={() => { showMintManage = true; }}
+97:						<Mint size={20} />
+211:	.mint-manage-header {
+218:	.mint-manage-header :global(h2) {

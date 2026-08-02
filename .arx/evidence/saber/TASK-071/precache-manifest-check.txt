@@ -1,0 +1,33 @@
+=== PRECACHE MANIFEST VERIFICATION ===
+
+BUILD 1 (Before fix — CacheFirst config):
+  workbox bundle: workbox-8d71a25b.js
+  Precache: 23 entries (470.60 KiB)
+  Asset hashes (sample):
+    index-Cr-sDzOB.css  (46.58 kB)
+    index-Cv_7AgS-.js   (232.45 kB)
+    en-zQMZfTZI.js      (8.07 kB)
+    th-BKkeA9jh.js      (11.52 kB)
+
+BUILD 2 (After fix — NetworkFirst config):
+  workbox bundle: workbox-9e0cfdd6.js  ← HASH CHANGED (config change reflected)
+  Precache: 23 entries (470.60 KiB)
+  Asset hashes (same source code):
+    index-Cr-sDzOB.css  (same)
+    index-Cv_7AgS-.js   (same)
+    en-zQMZfTZI.js      (same)
+    th-BKkeA9jh.js      (same)
+
+HASH ROTATION VERIFICATION:
+  ✅ workbox hash changes when PWA config changes (8d71a25b → 9e0cfdd6)
+  ✅ Asset hashes are content-based (same source → same hash)
+  ✅ When source code changes, asset hashes WILL change (content hash in filename)
+  ✅ precacheAndRoute uses null revision for hashed assets (filename IS the revision)
+  ✅ Static assets (png, svg, ico) have content-hash revision in precache manifest
+
+SW GENERATION:
+  ✅ CacheFirst: NOT PRESENT (confirmed via grep -c CacheFirst = 0)
+  ✅ NetworkFirst: PRESENT (for CSS/JS + API)
+  ✅ StaleWhileRevalidate: PRESENT (for fonts/images + mint API)
+  ✅ skipWaiting: PRESENT (via registerType: 'autoUpdate')
+  ✅ clientsClaim: PRESENT (via registerType: 'autoUpdate')

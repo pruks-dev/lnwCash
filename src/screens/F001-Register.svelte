@@ -52,7 +52,7 @@
 		loading = true;
 		try {
 			const settings = getSettings();
-			const walletName = settings.default_mint ? `LnwCash-${Date.now()}` : 'LnwCash Wallet';
+			const walletName = settings.default_mint ? `LNWCASH-${Date.now()}` : 'LNWCASH Wallet';
 			const result = await createWallet(pin, walletName);
 			onWalletReady?.(getWalletStatus());
 		} catch (e) {

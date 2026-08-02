@@ -1,6 +1,6 @@
-# 🚀 คู่มือ Deploy — LnwCash Wallet
+# 🚀 คู่มือ Deploy — LNWCASH Wallet
 
-คู่มือนี้ครอบคลุมการ deploy โปรเจกต์ LnwCash ขึ้น VPS ตั้งแต่ zero จนขึ้น production
+คู่มือนี้ครอบคลุมการ deploy โปรเจกต์ LNWCASH ขึ้น VPS ตั้งแต่ zero จนขึ้น production
 
 ---
 
@@ -12,7 +12,7 @@ User → Cloudflare (DNS + SSL) → VPS (Nginx) → Static Files (dist/)
                               GitHub Actions (CI/CD)
 ```
 
-LnwCash เป็น SPA (Single Page Application) ที่ build ออกมาเป็น static files เต็มรูปแบบ — ไม่มี backend, ไม่มี server-side rendering ไฟล์ที่ได้จาก `npm run build` จะอยู่ใน `dist/` ทั้งหมด
+LNWCASH เป็น SPA (Single Page Application) ที่ build ออกมาเป็น static files เต็มรูปแบบ — ไม่มี backend, ไม่มี server-side rendering ไฟล์ที่ได้จาก `npm run build` จะอยู่ใน `dist/` ทั้งหมด
 
 ---
 

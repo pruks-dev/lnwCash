@@ -1,0 +1,80 @@
+--- a/src/App.svelte
++++ b/src/App.svelte
+@@ -25,6 +25,7 @@
+ 	// TASK-051 Navigation Components
+ 	import BottomNav from './components/BottomNav.svelte';
+ 	import TopAppBar from './components/TopAppBar.svelte';
++	import ArrowLeft from '$lib/components/icons/ArrowLeft.svelte';
+ 
+ 	// Legacy screens kept for backward compatibility (QRScan)
+ 	import F007QRScan from './screens/F007-QRScan.svelte';
+@@ -137,7 +138,7 @@
+ 	function handleBack() {
+ 		window.history.back();
+ 	}
+ 
+-	// Determine if back button should show (only on Send/Receive sub-pages per TASK-060)
+-	let showBack = $derived(activeScreen === 'send' || activeScreen === 'receive');
++	// showBack derived kept for backward compatibility (no longer propagated to TopAppBar)
++	let showBack = $derived(false);
+ 	let isMainNavScreen = $derived(
+ 		activeScreen === 'home' ||
+ 		activeScreen === 'receive' ||
+@@ -169,8 +170,19 @@
+ 		{:else}
+-			<!-- Top App Bar -->
+-			<TopAppBar screen={activeScreen} showBack={showBack} onBack={handleBack} onMenuClick={() => navigateTo('settings')} />
++			<!-- TASK-079 (F-051): Conditional header — Home/History get full TopAppBar; Send/Receive/Settings get back button only -->
++			{#if activeScreen === 'home' || activeScreen === 'history'}
++				<TopAppBar screen={activeScreen} showBack={false} onMenuClick={() => navigateTo('settings')} />
++			{:else}
++				<!-- Send/Receive/Settings: inline back button only — no TopAppBar -->
++				<div class="back-header">
++					<button
++						type="button"
++						class="back-btn"
++						onclick={handleBack}
++						aria-label={$_('common.back')}
++					>
++						<ArrowLeft size={24} />
++					</button>
++				</div>
++			{/if}
+ 
+@@ -237,4 +249,34 @@
+ 	.qrscan-overlay {
+ 		...
+ 	}
++
++	/* TASK-079 (F-051): Back header for secondary screens (Send/Receive/Settings) */
++	.back-header {
++		display: flex;
++		align-items: center;
++		padding: var(--space-sm) var(--space-md);
++		padding-top: calc(var(--space-sm) + env(safe-area-inset-top, 0));
++		min-height: 48px;
++	}
++
++	.back-btn {
++		display: flex;
++		align-items: center;
++		justify-content: center;
++		padding: var(--space-sm);
++		min-width: 44px;
++		min-height: 44px;
++		background: none;
++		border: none;
++		color: var(--color-text);
++		cursor: pointer;
++		border-radius: var(--radius-full);
++		-webkit-tap-highlight-color: transparent;
++		transition: background var(--transition-fast);
++	}
++	...
+ </style>
+
+# F-051: Conditional header rendering
+# - Home/History: full TopAppBar (logo + wordmark + hamburger)
+# - Send/Receive/Settings: inline back button only (no TopAppBar)
+# - Import ArrowLeft icon for back button
+# - CSS for .back-header and .back-btn

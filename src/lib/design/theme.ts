@@ -25,12 +25,12 @@ function loadInitialMode(): ThemeMode {
 	}
 }
 
-function resolveTheme(mode: ThemeMode): ResolvedTheme {
+export function resolveTheme(mode: ThemeMode): ResolvedTheme {
 	if (mode === 'system') return getSystemPreference();
 	return mode;
 }
 
-function applyThemeDom(theme: ResolvedTheme) {
+export function applyThemeDom(theme: ResolvedTheme) {
 	if (typeof document !== 'undefined') {
 		document.documentElement.setAttribute('data-theme', theme);
 	}

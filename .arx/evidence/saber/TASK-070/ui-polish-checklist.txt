@@ -1,0 +1,45 @@
+TASK-070 — UI Polish Checklist
+===============================
+Date: 2026-08-02
+Status: COMPLETE (5/5)
+
+[✓] F-027 — Remove header border
+      File: src/lib/components/ui/Nav.svelte
+      Action: Removed border-bottom from .nav-top class
+      Diff: F-027-header-border.diff
+
+[✓] F-029 — Remove Card wrapper from balance
+      File: src/screens/Home.svelte
+      Action: Replaced <Card variant="basic" padding="lg"> with <div class="balance-container">
+      Added .balance-container CSS (background, border-radius, padding, box-shadow)
+      Diff: F-029-card-removal.diff
+
+[✓] F-030 — Zero balance → display '0'
+      File: src/screens/Home.svelte
+      Action: Removed {:else if totalBalance === 0} branch
+      Now falls through to balance-amount display, showing formatSat(0) = "0"
+      Removed unused .balance-empty CSS
+      Updated test: Home.test.ts — "shows empty state" → "displays zero when balance is zero"
+      Diff: F-030-zero-balance.diff
+
+[✓] F-034 — mint/melt → รับ/ส่ง (terminology)
+      Files: src/screens/History.svelte, src/screens/Home.svelte,
+             src/locales/th.json, src/locales/en.json
+      Action:
+        - Added new i18n keys (old keys intact):
+          screen.history.type_receive / screen.history.type_send
+          screen.history.filter_receive / screen.history.filter_send
+        - Updated History.svelte: typeLabel() and filter chips use new keys
+        - Updated Home.svelte: txTypeLabel() uses new keys
+        - Updated History.test.ts: filter chips test uses new keys
+      Diff: F-034-terminology.diff
+
+[✓] F-035 — Version 2.0.0
+      File: package.json
+      Action: Changed version from "0.0.0" to "2.0.0"
+      Diff: F-035-version.diff
+
+Build Verification:
+  npm run build   : PASS (0 new errors, 0 new warnings)
+  npx svelte-check: PASS (0 new errors — 9 pre-existing errors unchanged)
+  npx vitest run  : 703 passed, 1 pre-existing failure (ErrorBoundary)

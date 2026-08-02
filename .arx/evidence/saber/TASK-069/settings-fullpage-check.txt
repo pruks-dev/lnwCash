@@ -1,0 +1,17 @@
+=== SETTINGS FULL-PAGE CHECK ===
+
+Settings.svelte (src/screens/Settings.svelte):
+- Already implements full-page layout (NOT a bottom sheet)
+- Has max-width: 480px, margin: 0 auto for centered layout
+- Has its own top-bar with back button (ArrowLeft) + title
+- Uses Card components for section grouping
+- Sections: Mint, Language, Theme, About
+- Bottom spacer for scroll room (80px)
+
+No changes needed to Settings.svelte — it was already a full-page screen.
+
+TopAppBar still renders above Settings content (sticky header with logo + hamburger).
+BottomNav still renders below (2 tabs + FAB).
+Settings content scrolls between them.
+
+Verified: full-page layout ✓

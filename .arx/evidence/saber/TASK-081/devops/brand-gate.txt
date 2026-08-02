@@ -1,0 +1,23 @@
+=== Gate H: BRAND GATE ===
+--- Checking LNWCASH in TopAppBar.svelte ---
+4: * Shows LNWCASH logo (32px) on left, hamburger ☰ on right.
+67:					alt="LNWCASH"
+72:				<span class="wordmark">LNWCASH</span>
+93:					alt="LNWCASH"
+98:				<span class="wordmark">LNWCASH</span>
+--- Checking LNWCASH in index.html ---
+7:		<meta name="description" content="LNWCASH Wallet — Lightning Network Wallet" />
+12:		<meta name="apple-mobile-web-app-title" content="LNWCASH" />
+14:		<title>LNWCASH Wallet</title>
+--- Checking th.json ---
+2:	"app.name": "LNWCASH Wallet",
+63:	"screen.home.title": "LNWCASH",
+136:	"screen.settings.about_description": "LNWCASH — กระเป๋า Lightning สำหรับทุกคน",
+182:	"pwa.install_description": "ติดตั้ง LNWCASH บนหน้าจอหลักเพื่อใช้งานได้เร็วขึ้น",
+--- Checking en.json ---
+2:	"app.name": "LNWCASH Wallet",
+63:	"screen.home.title": "LNWCASH",
+136:	"screen.settings.about_description": "LNWCASH — Lightning Wallet for everyone",
+182:	"pwa.install_description": "Add LNWCASH to your home screen for faster access",
+--- Residual LnwCash (excluding lnw.cash) ---
+ZERO MATCHES - CLEAN

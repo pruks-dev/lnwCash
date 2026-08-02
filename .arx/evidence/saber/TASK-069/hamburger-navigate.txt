@@ -1,0 +1,28 @@
+=== HAMBURGER NAVIGATION VERIFICATION ===
+
+TopAppBar hamburger button:
+  <button type="button" class="icon-btn menu-btn"
+    onclick={onMenuClick}
+    aria-label={$_('screen.settings.title')}>
+    <Menu size={24} />
+  </button>
+
+In App.svelte:
+  <TopAppBar ... onMenuClick={() => navigateTo('settings')} />
+
+navigateTo('settings') → window.location.hash = '#/settings'
+Router maps '#/settings' → ScreenKey 'settings'
+App.svelte renders <Settings onBack={handleBack} />
+
+Hamburger icon: Menu.svelte
+  - 3 horizontal lines (stroke-width 2, rounded caps)
+  - Iconly style: SVG stroke-based, no fill
+  - Consistent with all other icons in the project
+
+Accessibility:
+  - aria-label: $_('screen.settings.title') → "ตั้งค่า" (th) / "Settings" (en) ✓
+  - Touch target: min-width: 44px, min-height: 44px (via .icon-btn class) ✓
+  - type="button" on button element ✓
+  - focus-visible outline: 2px solid var(--color-primary) with 2px offset ✓
+
+Status: VERIFIED - Hamburger navigates to /settings, accessible

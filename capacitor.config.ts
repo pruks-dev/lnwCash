@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
 	appId: 'cash.lnw.wallet',
-	appName: 'LnwCash',
+	appName: 'LNWCASH',
 	webDir: 'dist',
 	server: {
 		androidScheme: 'https'

@@ -1,6 +1,6 @@
-# LnwCash Wallet — User Guide
+# LNWCASH Wallet — User Guide
 
-LnwCash Wallet is a Lightning Network wallet built on the Cashu protocol. It lets you receive, pay, and transfer ecash — no Lightning node required. Entirely client-side, no central server. Works on web and mobile.
+LNWCASH Wallet is a Lightning Network wallet built on the Cashu protocol. It lets you receive, pay, and transfer ecash — no Lightning node required. Entirely client-side, no central server. Works on web and mobile.
 
 ---
 
@@ -71,7 +71,7 @@ The seed phrase is your recovery key. **Guard it with your life.** If you lose y
 
 ### ⚠️ Warnings
 - Seed phrase = full access to all funds. Whoever holds it can spend everything.
-- LnwCash does not store your seed. It is entirely your responsibility.
+- LNWCASH does not store your seed. It is entirely your responsibility.
 - Clearing browser data without your seed → permanent and irreversible loss of funds.
 
 ---
@@ -109,11 +109,11 @@ Different mints have different fee structures, liquidity, and uptime. Having mul
 ---
 
 ## Installing as PWA
-LnwCash supports Progressive Web App installation:
+LNWCASH supports Progressive Web App installation:
 1. Open in your browser
 2. Tap **Install** on the banner that appears
 3. Tap **Add to Home Screen**
 
 ---
 
-*LnwCash Wallet · Lightning Network Wallet — Fast, Easy, Secure*
+*LNWCASH Wallet · Lightning Network Wallet — Fast, Easy, Secure*

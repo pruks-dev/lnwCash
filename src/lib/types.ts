@@ -1,5 +1,5 @@
 /**
- * Core type definitions for LnwCash wallet
+ * Core type definitions for LNWCASH wallet
  */
 
 // ─── Storage Types ───────────────────────────────────────────

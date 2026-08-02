@@ -1,0 +1,31 @@
+F-044 — /v1/info Validation — Success Path
+=============================================
+
+Root Cause:
+  isValidUrl() (line 107-113): only checks new URL() format
+  Users could add fake/non-existent mint URLs
+  No actual /v1/info fetch to verify mint reachability
+
+Fix Applied:
+  Modified handleValidate() in mint/+page.svelte:
+  1. format check (isValidUrl) → unchanged
+  2. discoverMintEndpoints() call with Promise.race + 5s timeout
+  3. On success: displays mint name, version, supported NUTs (existing UI)
+  4. User sees mint info → confirms 'เพิ่ม mint นี้?' (existing confirm step)
+  5. Loading state (validating = true) displayed during validation
+
+Timeout Handling:
+  - Promise.race([discoverMintEndpoints(url), 5s timeout])
+  - Timeout → DOMException 'AbortError' → 'ไม่พบ mint — ตรวจสอบ URL (หมดเวลา 5 วินาที)'
+  - Network error → error message displayed
+  - HTTP error → 'ไม่พบ mint — ตรวจสอบ URL'
+
+Verification:
+  ✓ Valid mint URL → /v1/info fetched → mint name, version, NUTs displayed
+  ✓ User confirms → mint added to list
+  ✓ Existing UI flow preserved (modal → validate → confirm → save)
+  ✓ discoverMintEndpoints mock still works (tests pass!)
+
+Proof:
+  - F-044-info-validation.diff: handleValidate() with Promise.race timeout
+  - +page.test.ts: PASS (all 6 add/validate tests pass)

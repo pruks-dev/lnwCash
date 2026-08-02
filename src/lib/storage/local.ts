@@ -170,7 +170,7 @@ export function isAvailable(): boolean {
 	return isLocalStorageAvailable();
 }
 
-// ─── Clear all LnwCash data from localStorage ────────────────
+// ─── Clear all LNWCASH data from localStorage ────────────────
 
 export function clearAll(): void {
 	removeKey(KEYS.WALLET_META);

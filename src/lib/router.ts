@@ -1,5 +1,5 @@
 /**
- * Simple hash-based router for LnwCash wallet.
+ * Simple hash-based router for LNWCASH wallet.
  *
  * Route consolidation (D-002): ~9 screens → 6 main routes
  *   #/          → home (dashboard: balance + quick actions + recent tx)

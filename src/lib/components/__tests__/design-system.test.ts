@@ -240,8 +240,8 @@ describe('Nav', () => {
 	});
 
 	it('renders top app bar with title', () => {
-		render(Nav, { position: 'top', title: 'LnwCash' });
-		expect(screen.queryByText('LnwCash')).toBeTruthy();
+		render(Nav, { position: 'top', title: 'LNWCASH' });
+		expect(screen.queryByText('LNWCASH')).toBeTruthy();
 	});
 });
 
