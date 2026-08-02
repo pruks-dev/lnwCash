@@ -206,7 +206,7 @@ describe('Cashu mint HTTP client', () => {
 				`${MINT_A}/v1/mint/quote/bolt11`,
 				expect.objectContaining({
 					method: 'POST',
-					body: JSON.stringify({ amount: 1000 })
+					body: JSON.stringify({ amount: 1000, unit: 'sat' })
 				})
 			);
 		});

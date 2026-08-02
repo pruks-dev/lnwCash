@@ -74,36 +74,10 @@ export default defineConfig({
 							}
 						}
 					},
-					{
-						// Stale-while-revalidate for mint API calls
-						// Matches typical Cashu mint endpoints: /v1/mint, /v1/melt, /v1/swap, etc.
-						urlPattern: /\/v1\/(mint|melt|swap|check|keys|keysets|info)/i,
-						handler: 'StaleWhileRevalidate',
-						options: {
-							cacheName: 'mint-api',
-							expiration: {
-								maxEntries: 50,
-								maxAgeSeconds: 5 * 60 // 5 minutes max (per forbidden spec)
-							}
-						}
-					},
-					{
-						// Network-first for other API calls (webLn, etc.)
-						urlPattern: ({ url }) => {
-							// Cache anything that looks like an API endpoint
-							return url.pathname.startsWith('/api/') ||
-								url.pathname.startsWith('/v1/');
-						},
-						handler: 'NetworkFirst',
-						options: {
-							cacheName: 'api-cache',
-							networkTimeoutSeconds: 10,
-							expiration: {
-								maxEntries: 30,
-								maxAgeSeconds: 60 // 1 minute
-							}
-						}
-					}
+					// TASK-084: REMOVED — DO NOT cache /v1/* API endpoints.
+					// Cashu mint API calls must always hit the network.
+					// Caching mint/melt/swap responses causes stale proof states,
+					// double-spend risks, and crypto verification failures.
 				]
 			},
 			devOptions: {

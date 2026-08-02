@@ -46,6 +46,17 @@ vi.mock('../../cashu/client', () => ({
 	checkState: vi.fn().mockResolvedValue({
 		states: []
 	}),
+	// TASK-084: new functions
+	checkMintQuote: vi.fn(),
+	pollMintQuoteUntil: vi.fn(),
+	checkMeltQuote: vi.fn().mockResolvedValue({
+		quote: 'melt-quote-xyz',
+		amount: 50,
+		fee_reserve: 1,
+		paid: false,
+		expiry: 9999999999,
+		state: 'UNPAID'
+	}),
 	CashuError: class extends Error {},
 	MintUnreachableError: class extends Error {},
 	NetworkError: class extends Error {},

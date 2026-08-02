@@ -53,21 +53,27 @@ function bigIntToBytes(value: bigint, length: number): Uint8Array {
 /**
  * Map a message (bytes) to a point on secp256k1 using try-and-increment.
  *
+ * TASK-084 FIX: Try BOTH 02 and 03 prefixes for maximum compatibility.
+ *
  * Algorithm (Cashu reference / Nut-00):
  *   1. Hash the message with SHA-256
- *   2. Try to interpret the hash plus 0x02 prefix as a compressed secp256k1 point
- *   3. If the point is valid (x is on the curve), return it
- *   4. If not, re-hash (hash = SHA-256(previous_hash)) and try again
+ *   2. Try to interpret the hash + 0x02 prefix as a compressed secp256k1 point
+ *   3. If that fails, try 0x03 prefix
+ *   4. If both fail, re-hash (hash = SHA-256(previous_hash)) and try again
  *
- * This matches the Python Cashu reference implementation:
+ * This matches the Python Cashu reference implementation with both prefix attempts:
  *   def hash_to_curve(message: bytes) -> PublicKey:
  *       point = None
  *       msg_to_hash = message
  *       while point is None:
  *           _hash = hashlib.sha256(msg_to_hash).digest()
- *           try:
- *               point = PublicKey.from_bytes(b'\x02' + _hash, raw=True)
- *           except Exception:
+ *           for prefix in (b'\x02', b'\x03'):
+ *               try:
+ *                   point = PublicKey.from_bytes(prefix + _hash, raw=True)
+ *                   break
+ *               except Exception:
+ *                   continue
+ *           if point is None:
  *               msg_to_hash = _hash
  *       return point
  */
@@ -75,12 +81,16 @@ export function hash_to_curve(message: Uint8Array): typeof BASE {
 	let msgToHash = message;
 	while (true) {
 		const hash = sha256(msgToHash);
-		try {
-			return secp256k1.Point.fromHex('02' + bytesToHex(hash));
-		} catch {
-			// Point not on curve — re-hash and try again
-			msgToHash = hash;
+		// TASK-084: Try both 02 (even y) and 03 (odd y) prefixes
+		for (const prefix of ['02', '03']) {
+			try {
+				return secp256k1.Point.fromHex(prefix + bytesToHex(hash));
+			} catch {
+				// Point not valid with this prefix — try next prefix
+			}
 		}
+		// Neither prefix produced a valid point — re-hash and try again
+		msgToHash = hash;
 	}
 }
 

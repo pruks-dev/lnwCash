@@ -1,17 +1,19 @@
 /**
  * Mint flow — receive ecash from a Cashu mint via Lightning invoice.
  *
- * Flow:
- * 1. Get mint info + keysets (validate mint supports NUT-04)
- * 2. Request mint quote (POST /v1/mint/quote/bolt11)
- * 3. User pays Lightning invoice
- * 4. Create blinded outputs for desired amounts
- * 5. Submit outputs → get blind signatures → unblind → proofs
- * 6. Store proofs in IndexedDB
+ * TASK-084 FIX: Split into two-phase async flow:
+ *   Phase 1 (requestMint):   Get keysets + request quote → returns bolt11 invoice
+ *   Phase 2 (completeMint):  After user pays → poll for PAID → submit outputs → unblind → store proofs
  *
  * All mint URLs are passed as parameters — no hardcoding.
  */
-import { getMintInfo, requestMintQuote, mintTokens as postMint } from '../cashu/client';
+import {
+	getMintInfo,
+	requestMintQuote,
+	mintTokens as postMint,
+	checkMintQuote,
+	pollMintQuoteUntil
+} from '../cashu/client';
 import { fetchAndCacheKeysets, getAllKeysets } from '../cashu/keyset';
 import { blindMessage, unblindSignature, deterministicBlindingFactor } from '../cashu/blind';
 import { getPrivateKey } from './state';
@@ -29,18 +31,41 @@ export interface MintResult {
 	error?: string;
 }
 
+export interface MintRequestResult {
+	success: boolean;
+	quote: string;
+	request: string;  // bolt11 Lightning invoice
+	amount: number;
+	expiry: number;
+	state: string;
+	keysetId: string;
+	error?: string;
+}
+
+export interface MintCompleteResult {
+	success: boolean;
+	proofs: TokenProof[];
+	quote: string;
+	amount: number;
+	error?: string;
+}
+
 // ─── Helpers ─────────────────────────────────────────────────
 
 /**
  * Generate a cryptographically random 32-byte secret for an ecash proof.
+ * TASK-084: Use base64url encoding for Cashu protocol compatibility.
  * Uses crypto.getRandomValues() — never contains the wallet private key.
  */
 function generateSecret(): string {
 	const bytes = new Uint8Array(32);
 	crypto.getRandomValues(bytes);
-	return Array.from(bytes)
-		.map((b) => b.toString(16).padStart(2, '0'))
-		.join('');
+	// Use base64url for Cashu protocol compatibility (most implementations expect it)
+	let binary = '';
+	for (let i = 0; i < bytes.length; i++) {
+		binary += String.fromCharCode(bytes[i]);
+	}
+	return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 /**
@@ -92,21 +117,29 @@ export function decomposeAmount(amount: number): number[] {
 	return result;
 }
 
-// ─── Mint Flow ───────────────────────────────────────────────
+// ─── Phase 1: Request Mint ──────────────────────────────────
 
 /**
- * Mint ecash tokens from a mint by paying a Lightning invoice.
+ * TASK-084: Request a mint quote and return the bolt11 invoice for user payment.
+ *
+ * This is Phase 1 of the two-phase mint flow:
+ * 1. Fetch and validate keysets
+ * 2. Request mint quote from mint → get bolt11 invoice
+ * 3. Return quote ID + invoice for user to pay externally
+ *
+ * After the user pays the invoice, call completeMint().
  *
  * @param mintUrl - The Cashu mint URL
  * @param amount - Amount in sats to mint
- * @returns { success, proofs, quote, amount, error? }
+ * @returns { quote (id), request (bolt11 invoice), keysetId, ... }
  */
-export async function mintFlow(
+export async function requestMint(
 	mintUrl: string,
 	amount: number
-): Promise<MintResult> {
+): Promise<MintRequestResult> {
 	try {
-		const privateKey = getPrivateKey(); // throws if wallet is locked
+		getPrivateKey(); // throws if wallet is locked
+
 		// Step 1: Validate mint and get keysets
 		const keysets = await fetchAndCacheKeysets(mintUrl);
 		const activeKeysets = keysets.filter(k => k.active);
@@ -114,38 +147,112 @@ export async function mintFlow(
 			throw new Error('No active keysets found for this mint');
 		}
 
-		// Use the first active keyset (typically 'sat' unit)
 		const keysetId = activeKeysets[0].id;
 
 		// Step 2: Request mint quote
 		const quote: MintQuote = await requestMintQuote(mintUrl, amount);
 
-		// Step 2.5: Verify quote state before submitting outputs (C04-06)
-		// Only proceed if quote is in UNPAID state; reject PAID (double-mint attempt)
-		// or EXPIRED quotes to prevent invalid mint operations.
-		const quoteState = quote.state ?? 'UNPAID'; // default when state not provided
+		// Step 2.5: Verify quote state (C04-06)
+		// Only proceed if quote is UNPAID; reject PAID (double-mint) or EXPIRED
+		const quoteState = quote.state ?? 'UNPAID';
 		if (quoteState !== 'UNPAID') {
 			throw new Error(`Quote state is ${quoteState} — expected UNPAID before minting (quote: ${quote.quote})`);
 		}
 
-		// Step 3: In real flow, user pays invoice here (quote.request is bolt11 invoice)
-		// For now we return the quote so the caller can handle payment UI
-		// Step 4: Decompose amount into outputs
+		return {
+			success: true,
+			quote: quote.quote,
+			request: quote.request,
+			amount,
+			expiry: quote.expiry,
+			state: quoteState,
+			keysetId
+		};
+	} catch (error) {
+		if (error instanceof TypeError || (error instanceof Error && error.message.includes('fetch'))) {
+			return {
+				success: false,
+				quote: '',
+				request: '',
+				amount: 0,
+				expiry: 0,
+				state: '',
+				keysetId: '',
+				error: `Mint unreachable: ${mintUrl}`
+			};
+		}
+		return {
+			success: false,
+			quote: '',
+			request: '',
+			amount: 0,
+			expiry: 0,
+			state: '',
+			keysetId: '',
+			error: error instanceof Error ? error.message : String(error)
+		};
+	}
+}
+
+// ─── Phase 2: Complete Mint ─────────────────────────────────
+
+/**
+ * TASK-084: Complete the mint after the user has paid the Lightning invoice.
+ *
+ * This is Phase 2 of the two-phase mint flow:
+ * 1. Verify quote is PAID (poll if needed)
+ * 2. Decompose amount into outputs
+ * 3. Create blinded outputs
+ * 4. Submit outputs → get blind signatures → unblind → proofs
+ * 5. Store proofs in IndexedDB
+ *
+ * @param mintUrl - The Cashu mint URL
+ * @param quoteId - The quote ID from requestMint()
+ * @param amount - Amount in sats (must match request)
+ * @param keysetId - Keyset ID from requestMint()
+ * @param waitForPayment - If true, poll until PAID (default: true, max 120s)
+ * @returns { success, proofs, quote, amount, error? }
+ */
+export async function completeMint(
+	mintUrl: string,
+	quoteId: string,
+	amount: number,
+	keysetId: string,
+	waitForPayment: boolean = true
+): Promise<MintCompleteResult> {
+	try {
+		getPrivateKey(); // throws if wallet is locked
+
+		// Step 1: Verify quote is PAID before submitting outputs
+		let quoteState = 'UNPAID';
+		if (waitForPayment) {
+			const paidQuote = await pollMintQuoteUntil(mintUrl, quoteId, 'PAID');
+			quoteState = paidQuote.state ?? 'PAID';
+		} else {
+			const quote = await checkMintQuote(mintUrl, quoteId);
+			quoteState = quote.state ?? 'UNPAID';
+		}
+
+		if (quoteState !== 'PAID') {
+			throw new Error(`Quote ${quoteId} is not PAID (state: ${quoteState}) — cannot mint tokens yet`);
+		}
+
+		// Step 2: Decompose amount into outputs
 		const amounts = decomposeAmount(amount);
 
-		// Step 5: Create blinded outputs
+		// Step 3: Create blinded outputs
 		const outputs = createOutputs(amounts, mintUrl, keysetId);
 
-		// Step 6: Submit outputs to mint
+		// Step 4: Submit outputs to mint
 		const postBody = outputs.map(o => ({
 			amount: o.amount,
 			id: o.id,
 			B_: o.B_
 		}));
 
-		const response = await postMint(mintUrl, quote.quote, postBody);
+		const response = await postMint(mintUrl, quoteId, postBody);
 
-		// Step 7: Unblind signatures → proofs
+		// Step 5: Unblind signatures → proofs
 		const proofs: TokenProof[] = response.signatures.map((sig, i) => {
 			const output = outputs[i];
 			const C = unblindSignature(sig.C_, output.blindingFactor);
@@ -157,17 +264,16 @@ export async function mintFlow(
 			};
 		});
 
-		// Step 8: Store proofs
+		// Step 6: Store proofs
 		await addProofs(proofs, mintUrl, keysetId);
 
 		return {
 			success: true,
 			proofs,
-			quote: quote.quote,
+			quote: quoteId,
 			amount
 		};
 	} catch (error) {
-		// Classify errors
 		if (error instanceof TypeError || (error instanceof Error && error.message.includes('fetch'))) {
 			return {
 				success: false,
@@ -178,6 +284,74 @@ export async function mintFlow(
 			};
 		}
 
+		return {
+			success: false,
+			proofs: [],
+			quote: '',
+			amount: 0,
+			error: error instanceof Error ? error.message : String(error)
+		};
+	}
+}
+
+// ─── Convenience: Combined Mint Flow (backward-compatible) ───
+
+/**
+ * TASK-084: Legacy combined mint flow — request + poll + complete.
+ *
+ * NOTE: For production use, prefer the two-phase flow:
+ *   requestMint() → user pays invoice → completeMint()
+ *
+ * This combined version polls for payment (max 120s) and is suitable
+ * for testing or automated flows where the invoice is paid externally.
+ *
+ * @param mintUrl - The Cashu mint URL
+ * @param amount - Amount in sats to mint
+ * @returns { success, proofs, quote, amount, error? }
+ */
+export async function mintFlow(
+	mintUrl: string,
+	amount: number
+): Promise<MintResult> {
+	try {
+		// Phase 1: Request
+		const reqResult = await requestMint(mintUrl, amount);
+		if (!reqResult.success) {
+			return {
+				success: false,
+				proofs: [],
+				quote: '',
+				amount: 0,
+				error: reqResult.error
+			};
+		}
+
+		// Phase 2: Complete (polls for PAID)
+		const completeResult = await completeMint(
+			mintUrl,
+			reqResult.quote,
+			amount,
+			reqResult.keysetId,
+			true // wait for payment
+		);
+
+		return {
+			success: completeResult.success,
+			proofs: completeResult.proofs,
+			quote: completeResult.quote,
+			amount: completeResult.amount,
+			error: completeResult.error
+		};
+	} catch (error) {
+		if (error instanceof TypeError || (error instanceof Error && error.message.includes('fetch'))) {
+			return {
+				success: false,
+				proofs: [],
+				quote: '',
+				amount: 0,
+				error: `Mint unreachable: ${mintUrl}`
+			};
+		}
 		return {
 			success: false,
 			proofs: [],

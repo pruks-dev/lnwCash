@@ -66,6 +66,9 @@ const STANDARD_PATHS: Record<string, string> = {
 	melt_operation: '/v1/melt/bolt11',
 	check_state: '/v1/checkstate',
 	swap: '/v1/swap',
+	/** TASK-084: quote status check endpoints */
+	mint_quote_check: '/v1/mint/quote/bolt11',
+	melt_quote_check: '/v1/melt/quote/bolt11',
 };
 
 /**
@@ -342,9 +345,10 @@ export async function requestMintQuote(
 	mintInfo?: MintInfo
 ): Promise<MintQuote> {
 	const path = resolveEndpointPath(mintInfo, 'mint_quote');
+	// TASK-084: Nutshell/0.20.1 requires unit field
 	return fetchFromMint<MintQuote>(mintUrl, path, {
 		method: 'POST',
-		body: { amount }
+		body: { amount, unit: 'sat' }
 	});
 }
 
@@ -389,6 +393,79 @@ export async function mintTokens(
 		method: 'POST',
 		body: { quote: quoteId, outputs }
 	});
+}
+
+// ─── Quote Status Check ─────────────────────────────────────
+
+/**
+ * TASK-084: Check the status of a mint quote.
+ * GET /v1/mint/quote/bolt11/<quote_id>
+ *
+ * Returns the quote with its current state (UNPAID, PAID, EXPIRED, ISSUED).
+ * The caller should poll this until state === 'PAID' before calling mintTokens.
+ */
+export async function checkMintQuote(
+	mintUrl: string,
+	quoteId: string,
+): Promise<MintQuote> {
+	const path = `${STANDARD_PATHS.mint_quote_check}/${encodeURIComponent(quoteId)}`;
+	return fetchFromMint<MintQuote>(mintUrl, path, { method: 'GET' });
+}
+
+/**
+ * TASK-084: Check the status of a melt quote.
+ * GET /v1/melt/quote/bolt11/<quote_id>
+ *
+ * Returns the quote with its current state.
+ */
+export async function checkMeltQuote(
+	mintUrl: string,
+	quoteId: string,
+): Promise<MeltQuote> {
+	const path = `${STANDARD_PATHS.melt_quote_check}/${encodeURIComponent(quoteId)}`;
+	return fetchFromMint<MeltQuote>(mintUrl, path, { method: 'GET' });
+}
+
+/**
+ * TASK-084: Poll a mint quote until it reaches a target state.
+ * Uses exponential backoff with configurable retries/timeout.
+ *
+ * @param mintUrl - The Cashu mint URL
+ * @param quoteId - The quote ID to poll
+ * @param targetState - State to wait for (default: 'PAID')
+ * @param maxWaitMs - Maximum total wait time in ms (default: 120000 = 2 min)
+ * @param pollIntervalMs - Initial poll interval in ms (default: 2000)
+ * @returns The quote once it reaches target state
+ * @throws Error if quote expires or times out
+ */
+export async function pollMintQuoteUntil(
+	mintUrl: string,
+	quoteId: string,
+	targetState: string = 'PAID',
+	maxWaitMs: number = 120_000,
+	pollIntervalMs: number = 2_000,
+): Promise<MintQuote> {
+	const startTime = Date.now();
+	let interval = pollIntervalMs;
+
+	while (Date.now() - startTime < maxWaitMs) {
+		const quote = await checkMintQuote(mintUrl, quoteId);
+		const state = quote.state ?? 'UNPAID';
+
+		if (state === targetState) {
+			return quote;
+		}
+
+		if (state === 'EXPIRED') {
+			throw new Error(`Mint quote ${quoteId} has expired`);
+		}
+
+		// Exponential backoff: double the interval up to 30s
+		await new Promise(resolve => setTimeout(resolve, interval));
+		interval = Math.min(interval * 1.5, 30_000);
+	}
+
+	throw new Error(`Mint quote ${quoteId} did not reach state "${targetState}" within ${maxWaitMs}ms`);
 }
 
 // ─── Melt (Spend) ────────────────────────────────────────────
