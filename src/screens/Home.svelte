@@ -316,7 +316,7 @@
 
 	.balance-value {
 		font-family: var(--font-family);
-		font-size: 3.25rem; /* 52px — F-052: Wallet of Satoshi style */
+		font-size: 4.5rem; /* 72px — F-056: dominant wallet-style */
 		font-weight: 800;
 		color: var(--color-primary);
 		line-height: var(--line-height-tight);
@@ -513,12 +513,12 @@
 	}
 
 	/* Responsive */
-	@media (max-width: 480px) {
+	@media (max-width: 767px) {
 		.action-btn {
 			padding: var(--space-md) var(--space-sm);
 		}
 		.balance-value {
-			font-size: clamp(2rem, 8vw, 3.25rem);
+			font-size: 3rem; /* 48px — F-056: mobile scale-down */
 		}
 	}
 

@@ -167,21 +167,9 @@
 				<Setup onWalletReady={handleWalletReady} />
 			</div>
 		{:else}
-			<!-- TASK-079 (F-051): Conditional header — Home/History get full TopAppBar; Send/Receive/Settings get back button only -->
+			<!-- TASK-086 (F-057): Header dedup — Home/History get full TopAppBar; other screens use own headers -->
 			{#if activeScreen === 'home' || activeScreen === 'history'}
 				<TopAppBar screen={activeScreen} showBack={false} onMenuClick={() => navigateTo('settings')} />
-			{:else}
-				<!-- Send/Receive/Settings: inline back button only — no TopAppBar -->
-				<div class="back-header">
-					<button
-						type="button"
-						class="back-btn"
-						onclick={handleBack}
-						aria-label={$_('common.back')}
-					>
-						<ArrowLeft size={24} />
-					</button>
-				</div>
 			{/if}
 
 			<!-- Screen Content -->

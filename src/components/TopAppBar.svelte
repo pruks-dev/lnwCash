@@ -1,7 +1,7 @@
 <script lang="ts">
 /**
  * TopAppBar — TASK-051 (B) → TASK-060 (A) header redesign → TASK-069 hamburger
- * Shows LNWCASH logo (32px) on left, hamburger ☰ on right.
+ * Shows LNWCASH logo (40px) on left, hamburger ☰ on right.
  * Back button only on sub-pages (Send, Receive) — HMR-safe {#if} pattern preserved.
  *
  * TASK-056: {#if} wrap preserved for HMR safety
@@ -66,8 +66,8 @@ let {
 					src="/lnw-logo-144.png"
 					alt="LNWCASH"
 					class="logo"
-					width={32}
-					height={32}
+					width={40}
+					height={40}
 				/>
 				<span class="wordmark">LNWCASH</span>
 			</div>
@@ -92,8 +92,8 @@ let {
 					src="/lnw-logo-144.png"
 					alt="LNWCASH"
 					class="logo"
-					width={32}
-					height={32}
+					width={40}
+					height={40}
 				/>
 				<span class="wordmark">LNWCASH</span>
 			</div>
@@ -131,7 +131,7 @@ let {
 	}
 
 	.logo {
-		height: 32px;
+		height: 40px;
 		width: auto;
 		aspect-ratio: 144 / 144;
 		object-fit: contain;
@@ -147,7 +147,7 @@ let {
 	.wordmark {
 		font-size: 1.25rem;
 		font-weight: 700;
-		color: var(--color-text);
+		color: var(--color-primary);
 	}
 
 	.flex-spacer {

@@ -65,13 +65,15 @@
 
 <div class="settings-screen" role="main" aria-label={$_('screen.settings.title')}>
 
-	<div class="top-bar">
-		<button type="button" class="back-btn" onclick={handleBack} aria-label={$_('common.back')}>
-			<ArrowLeft size={24} />
-		</button>
-		<Heading level="h2" align="center">{$_('screen.settings.title')}</Heading>
-		<div class="top-spacer"></div>
-	</div>
+	{#if !showMintManage}
+		<div class="top-bar">
+			<button type="button" class="back-btn" onclick={handleBack} aria-label={$_('common.back')}>
+				<ArrowLeft size={24} />
+			</button>
+			<Heading level="h2" align="center">{$_('screen.settings.title')}</Heading>
+			<div class="top-spacer"></div>
+		</div>
+	{/if}
 
 	{#if showMintManage}
 		<!-- F-042: Mint Manage sub-view -->

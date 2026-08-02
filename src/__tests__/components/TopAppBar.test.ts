@@ -26,13 +26,13 @@ describe('TopAppBar (TASK-060)', () => {
 		cleanup();
 	});
 
-	it('should render logo image with 32px height', () => {
+	it('should render logo image with 40px height', () => {
 		const { container } = render(TopAppBar, { screen: 'home', showBack: false });
 		const logo = container.querySelector('.logo');
 		expect(logo).toBeTruthy();
 		expect(logo?.tagName).toBe('IMG');
 		expect(logo?.getAttribute('src')).toContain('lnw-logo');
-		expect(logo?.getAttribute('height')).toBe('32');
+		expect(logo?.getAttribute('height')).toBe('40');
 	});
 
 	it('should render hamburger menu icon button', () => {
@@ -92,7 +92,7 @@ describe('TopAppBar (TASK-060)', () => {
 		const { container } = render(TopAppBar, { screen: 'home' });
 		const logo = container.querySelector('.logo') as HTMLImageElement;
 		expect(logo).toBeTruthy();
-		// Logo should be 32px height with object-fit contain
+		// Logo should be 40px height with object-fit contain
 		expect(logo.style.objectFit || getComputedStyle(logo).objectFit).toBeTruthy();
 	});
 });
