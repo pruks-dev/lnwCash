@@ -92,6 +92,11 @@ export async function sendTokens(
 
 	const token = encodeToken(tokenProofs, mintUrl, 'sat', memo);
 
+	// Self-check: verify dleq fields are present
+	const hasDleq = tokenProofs.some(p => p.dleq);
+	const dleqCount = tokenProofs.filter(p => p.dleq).length;
+	console.log('[SEND] proofs:', tokenProofs.length, 'with dleq:', dleqCount, '/', tokenProofs.length);
+
 	// Mark only sent proofs as spent
 	await markSpent(sendProofs.map(p => p.local_id));
 
