@@ -8,6 +8,9 @@
  * All mint URLs are passed as parameters — no hardcoding.
  */
 import { encodeToken, decodeToken, getTokenAmount } from '../cashu/token';
+import { swapProofs } from '../cashu/client';
+import { blindMessage, unblindSignature, blindingFactorToHex } from '../cashu/blind';
+import { fetchAndCacheKeysets, getMintPubkey } from '../cashu/keyset';
 import { getPrivateKey } from './state';
 import { selectProofs, sumProofs } from './proofs';
 import { getUnspentProofsByMint, addProofs, markSpent } from './proofsDb';
@@ -55,24 +58,68 @@ export async function sendTokens(
 	const totalSelected = sumProofs(selected);
 	const excess = totalSelected - amount;
 
-	// F-070: Handle excess with decomposeAmount for proper change outputs
 	let sendProofs = selected;
-	let keepInWallet: typeof selected = [];
-	if (excess > 0 && selected.length > 1) {
+
+	// F-070: If single proof has excess, swap it to get exact amounts
+	if (excess > 0 && selected.length === 1 && !selected[0].amount.toString().startsWith('-')) {
+		try {
+			await fetchAndCacheKeysets(mintUrl);
+			const keysetId = selected[0].id;
+			const pubkey = getMintPubkey(mintUrl, keysetId, selected[0].amount);
+
+			// Create blinded output for the send amount and the change amount
+			const sendSecret = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2,'0')).join('');
+			const changeSecret = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2,'0')).join('');
+			const sendBlind = blindMessage(sendSecret);
+			const changeBlind = blindMessage(changeSecret);
+
+			const outputs = [
+				{ amount, id: keysetId, B_: sendBlind.B_ },
+				{ amount: excess, id: keysetId, B_: changeBlind.B_ }
+			];
+
+			const swapResult = await swapProofs(mintUrl, [selected[0]], outputs);
+
+			// Unblind the returned signatures
+			sendProofs = swapResult.signatures.map((sig, i) => {
+				const bp = i === 0 ? sendBlind : changeBlind;
+				const C = pubkey ? unblindSignature(sig.C_, bp.blindingFactor, pubkey) : sig.C_;
+				const rHex = blindingFactorToHex(bp.blindingFactor);
+				return {
+					local_id: '', id: sig.id, amount: sig.amount,
+					secret: i === 0 ? sendSecret : changeSecret, C,
+					mint_url: mintUrl, keyset_id: keysetId,
+					stored_at: Date.now(), spent: false,
+					dleq: sig.dleq ? { e: sig.dleq.e, s: sig.dleq.s, r: rHex } : undefined
+				};
+			});
+
+			// Mark the original proof as spent
+			await markSpent([selected[0].local_id]);
+
+			// Store change proof back to wallet
+			if (sendProofs.length > 1) {
+				const changeProof = sendProofs[1];
+				await addProofs([{
+					id: changeProof.id, amount: changeProof.amount,
+					secret: changeProof.secret, C: changeProof.C,
+					dleq: changeProof.dleq
+				}], mintUrl, keysetId);
+			}
+
+			// Only send the first proof (matching the requested amount)
+			sendProofs = [sendProofs[0]];
+		} catch {
+			// Swap failed — fall back to sending the entire proof
+		}
+	} else if (excess > 0 && selected.length > 1) {
+		// Multiple proofs: keep excess in wallet (greedy selection already minimized)
 		sendProofs = [];
-		keepInWallet = [];
 		let remaining = amount;
 		for (const p of selected) {
-			if (remaining <= 0) {
-				keepInWallet.push(p);
-			} else if (p.amount > remaining && sendProofs.length === 0) {
-				sendProofs.push(p);
-			} else if (p.amount <= remaining) {
-				sendProofs.push(p);
-				remaining -= p.amount;
-			} else {
-				keepInWallet.push(p);
-			}
+			if (remaining <= 0) break;
+			sendProofs.push(p);
+			remaining -= p.amount;
 		}
 	}
 
