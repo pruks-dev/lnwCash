@@ -88,8 +88,9 @@ export async function rotateKeysets(mintUrl: string): Promise<KeysetCacheEntry[]
  * @param keysetId - The keyset ID
  * @returns The mint's public key as a hex string, or undefined if not found
  */
-export function getMintPubkey(mintUrl: string, keysetId: string): string | undefined {
-	const keyset = getKeysetById(mintUrl, keysetId);
+export function 	getMintPubkey(mintUrl: string, keysetId: string): string | undefined {
+	const fullId = resolveKeysetId(mintUrl, keysetId) || keysetId;
+	const keyset = getKeysetById(mintUrl, fullId);
 	if (!keyset || !keyset.keys) return undefined;
 
 	// Find the lowest denomination key
@@ -98,6 +99,21 @@ export function getMintPubkey(mintUrl: string, keysetId: string): string | undef
 
 	const minAmount = Math.min(...amounts);
 	return keyset.keys[minAmount];
+}
+
+/**
+ * Resolve a short keyset ID (first 8 bytes as hex) to the full keyset ID.
+ */
+export function resolveKeysetId(mintUrl: string, shortId: string): string | undefined {
+	if (shortId.length > 16) return shortId; // Already full ID
+
+	const allKeysets = getAllKeysets(mintUrl);
+	for (const ks of allKeysets) {
+		if (ks.id.startsWith(shortId)) {
+			return ks.id;
+		}
+	}
+	return undefined;
 }
 
 /**

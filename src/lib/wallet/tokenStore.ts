@@ -28,7 +28,7 @@ import { encodeToken, decodeToken, getTokenAmount } from '../cashu/token';
 import { decomposeAmount } from './mint';
 import { checkState, swapProofs } from '../cashu/client';
 import { blindMessage, unblindSignature } from '../cashu/blind';
-import { fetchAndCacheKeysets, getMintPubkey } from '../cashu/keyset';
+import { fetchAndCacheKeysets, getMintPubkey, resolveKeysetId } from '../cashu/keyset';
 import type { TokenProof, DecodedToken } from '../types';
 import { TokenValidationError } from './errors';
 
@@ -281,6 +281,7 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 
 	const mintUrl = decoded.mint;
 	const keysetId = decoded.proofs[0].id;
+	let fullId = keysetId; // Will be resolved to full ID if short form
 
 	// 1. Check if any proof is already spent (double-spend detection)
 	try {
@@ -305,7 +306,8 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 	try {
 		// Fetch mint keys to get public key for this keyset
 		await fetchAndCacheKeysets(mintUrl);
-		const pubkey = getMintPubkey(mintUrl, keysetId);
+		fullId = resolveKeysetId(mintUrl, keysetId) || keysetId;
+		const pubkey = getMintPubkey(mintUrl, fullId);
 
 		// Create blinded outputs (new secrets + blinding)
 		const blindPairs: Array<{ secret: string; B_: string; r: string }> = [];
@@ -318,11 +320,13 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 			).join('');
 			const { B_, blindingFactor } = blindMessage(newSecret);
 			blindPairs.push({ secret: newSecret, B_: B_, r: blindingFactor });
-			outputs.push({ amount: proof.amount, id: proof.id, B_ });
+			outputs.push({ amount: proof.amount, id: fullId, B_ });
 		}
 
 		// Swap: send old proofs as inputs, new blinded messages as outputs
-		const swapResult = await swapProofs(mintUrl, decoded.proofs, outputs);
+		// Use full keyset IDs for both inputs and outputs
+		const swapInputs = decoded.proofs.map(p => ({ ...p, id: fullId }));
+		const swapResult = await swapProofs(mintUrl, swapInputs, outputs);
 
 		// Unblind signatures to get new proofs
 		const newProofs = swapResult.signatures.map((sig, i) => {
@@ -341,7 +345,7 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 			};
 		});
 
-		await addProofs(newProofs, mintUrl, newProofs[0]?.id || keysetId);
+		await addProofs(newProofs, mintUrl, newProofs[0]?.id || fullId);
 
 		const totalAmount = newProofs.reduce((sum, p) => sum + p.amount, 0);
 		const dleqCount = newProofs.filter(p => p.dleq).length;
@@ -359,7 +363,7 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 	}
 
 	// 3. Fallback: store original proofs (swap not supported)
-	await addProofs(decoded.proofs, mintUrl, keysetId);
+	await addProofs(decoded.proofs, mintUrl, fullId);
 
 	const totalAmount = getTokenAmount(decoded);
 	const dleqCount = decoded.proofs.filter(p => p.dleq).length;
