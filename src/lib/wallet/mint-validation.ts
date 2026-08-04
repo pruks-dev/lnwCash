@@ -17,7 +17,10 @@ export async function validateMintUrl(
 ): Promise<MintValidationResult> {
 	try {
 		const normalizedUrl = url.replace(/\/+$/, '');
-		const response = await fetch(`${normalizedUrl}/v1/info`, {
+		const fetchUrl = (typeof window !== 'undefined' && normalizedUrl === 'https://mint.lnw.cash')
+			? '/api/mint/v1/info'
+			: `${normalizedUrl}/v1/info`;
+		const response = await fetch(fetchUrl, {
 			method: 'GET',
 			headers: { 'Accept': 'application/json' },
 			signal: AbortSignal.timeout(5000)
