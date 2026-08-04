@@ -26,8 +26,9 @@ import {
 import { selectProofs, sumProofs } from './proofs';
 import { encodeToken, decodeToken, getTokenAmount } from '../cashu/token';
 import { decomposeAmount } from './mint';
-import { checkState } from '../cashu/client';
-import { swapProofs } from '../cashu/client';
+import { checkState, swapProofs } from '../cashu/client';
+import { blindMessage, unblindSignature } from '../cashu/blind';
+import { fetchAndCacheKeysets, getMintPubkey } from '../cashu/keyset';
 import type { TokenProof, DecodedToken } from '../types';
 import { TokenValidationError } from './errors';
 
@@ -300,24 +301,65 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 		// Mint unreachable — proceed with caution
 	}
 
-	// 2. Swap old proofs for new ones (double-spend protection per NUT-03)
-	let newProofs = decoded.proofs;
+	// 2. Swap old proofs for new ones (NUT-03 double-spend protection)
 	try {
-		const swapResult = await swapProofs(mintUrl, decoded.proofs);
-		const newKeysetId = swapResult.signatures[0]?.id || keysetId;
-		newProofs = swapResult.signatures.map((sig, i) => ({
-			id: sig.id || newKeysetId,
-			amount: sig.amount,
-			secret: decoded.proofs[i]?.secret || '',
-			C: sig.C_,
-			dleq: sig.dleq
-		}));
-	} catch {
-		// Swap failed — store original proofs (mint may not support swap)
+		// Fetch mint keys to get public key for this keyset
+		await fetchAndCacheKeysets(mintUrl);
+		const pubkey = getMintPubkey(mintUrl, keysetId);
+
+		// Create blinded outputs (new secrets + blinding)
+		const blindPairs: Array<{ secret: string; B_: string; r: string }> = [];
+		const outputs: Array<{ amount: number; id: string; B_: string }> = [];
+
+		for (const proof of decoded.proofs) {
+			const newSecret = Array.from(
+				crypto.getRandomValues(new Uint8Array(32)),
+				b => b.toString(16).padStart(2, '0')
+			).join('');
+			const { B_, blindingFactor } = blindMessage(newSecret);
+			blindPairs.push({ secret: newSecret, B_: B_, r: blindingFactor });
+			outputs.push({ amount: proof.amount, id: proof.id, B_ });
+		}
+
+		// Swap: send old proofs as inputs, new blinded messages as outputs
+		const swapResult = await swapProofs(mintUrl, decoded.proofs, outputs);
+
+		// Unblind signatures to get new proofs
+		const newProofs = swapResult.signatures.map((sig, i) => {
+			const bp = blindPairs[i];
+			const C = pubkey ? unblindSignature(sig.C_, bp.r, pubkey) : sig.C_;
+			return {
+				id: sig.id || keysetId,
+				amount: sig.amount,
+				secret: bp.secret,
+				C,
+				dleq: sig.dleq ? {
+					e: sig.dleq.e,
+					s: sig.dleq.s,
+					r: bp.r
+				} : undefined
+			};
+		});
+
+		await addProofs(newProofs, mintUrl, newProofs[0]?.id || keysetId);
+
+		const totalAmount = newProofs.reduce((sum, p) => sum + p.amount, 0);
+		const dleqCount = newProofs.filter(p => p.dleq).length;
+
+		return {
+			amount: totalAmount,
+			mint: mintUrl,
+			unit: decoded.unit,
+			proofCount: newProofs.length,
+			dleqCount: dleqCount > 0 ? dleqCount : undefined
+		};
+	} catch (err) {
+		if (err instanceof TokenValidationError) throw err;
+		// Swap failed — fall back to storing original proofs
 	}
 
-	// 3. Store the (new) proofs
-	await addProofs(newProofs, mintUrl, newProofs[0]?.id || keysetId);
+	// 3. Fallback: store original proofs (swap not supported)
+	await addProofs(decoded.proofs, mintUrl, keysetId);
 
 	const totalAmount = getTokenAmount(decoded);
 	const dleqCount = decoded.proofs.filter(p => p.dleq).length;
@@ -326,7 +368,7 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 		amount: totalAmount,
 		mint: mintUrl,
 		unit: decoded.unit,
-		proofCount: newProofs.length,
+		proofCount: decoded.proofs.length,
 		dleqCount: dleqCount > 0 ? dleqCount : undefined
 	};
 }

@@ -533,17 +533,22 @@ export async function meltTokens(
  */
 export async function swapProofs(
 	mintUrl: string,
-	proofs: Array<{ secret: string; C: string; amount: number; id: string }>
+	proofs: Array<{ secret: string; C: string; amount: number; id: string }>,
+	outputs?: Array<{ amount: number; id: string; B_: string }>
 ): Promise<{
 	signatures: Array<{ id: string; amount: number; C_: string; dleq?: { e: string; s: string } }>;
 }> {
 	const inputs = proofs.map(p => ({ secret: p.secret, C: p.C, amount: p.amount, id: p.id }));
+	const body: Record<string, unknown> = { inputs };
+	if (outputs && outputs.length > 0) {
+		body.outputs = outputs;
+	}
 	const path = STANDARD_PATHS.swap;
 	const response = await fetchFromMint<{
 		signatures?: Array<{ id: string; amount: number; C_: string; dleq?: { e: string; s: string } }>;
 	}>(mintUrl, path, {
 		method: 'POST',
-		body: { inputs }
+		body
 	});
 
 	if (!response.signatures || !Array.isArray(response.signatures)) {
