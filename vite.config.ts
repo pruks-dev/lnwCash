@@ -97,6 +97,14 @@ export default defineConfig({
 		https: {
 			key: fs.readFileSync(resolve(__dirname, 'cert/key.pem')),
 			cert: fs.readFileSync(resolve(__dirname, 'cert/cert.pem'))
+		},
+		proxy: {
+			'/api/mint': {
+				target: 'https://mint.lnw.cash',
+				changeOrigin: true,
+				rewrite: (path) => path.replace(/^\/api\/mint/, ''),
+				secure: false
+			}
 		}
 	},
 	test: {

@@ -214,7 +214,13 @@ async function fetchFromMint<T>(
 	path: string,
 	options: RequestOptions = {}
 ): Promise<T> {
-	const url = `${normalizeMintUrl(mintUrl)}${path}`;
+	// Proxy default mint through Vite dev server to avoid CORS issues
+	let url: string;
+	if (typeof window !== 'undefined' && mintUrl === 'https://mint.lnw.cash') {
+		url = `/api/mint${path}`;
+	} else {
+		url = `${normalizeMintUrl(mintUrl)}${path}`;
+	}
 	const { method = 'GET', body, timeout = 15000 } = options;
 
 	const headers: Record<string, string> = {
