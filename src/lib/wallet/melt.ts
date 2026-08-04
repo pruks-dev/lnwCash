@@ -7,9 +7,9 @@
  *
  * All mint URLs are passed as parameters — no hardcoding.
  */
-import { requestMeltQuote, meltTokens as postMelt, checkState, checkMeltQuote, getMintInfo } from '../cashu/client';
+import { requestMeltQuote, meltTokens as postMelt, checkState, checkMeltQuote } from '../cashu/client';
 import { blindMessage, unblindSignature, deterministicBlindingFactor, blindingFactorToHex } from '../cashu/blind';
-import { fetchAndCacheKeysets, getAllKeysets, getKeysetById } from '../cashu/keyset';
+import { fetchAndCacheKeysets, getAllKeysets, getKeysetById, getMintPubkey } from '../cashu/keyset';
 import { getPrivateKey } from './state';
 import { getUnspentProofsByMint, addProofs, markSpent } from './proofsDb';
 import { selectProofs, sumProofs } from './proofs';
@@ -428,20 +428,12 @@ export async function completeMelt(
 
 		const response = await postMelt(mintUrl, quoteId, inputBodies, outputBodies);
 
-		// Step 5: Unblind change signatures
+		// Step 5: Unblind change signatures (use keyset-specific denomination key)
 		if (response.change && outputs.length > 0) {
-			// Fetch mint info for public key (additive unblinding)
-			let mintPubkey: string | undefined;
-			try {
-				const info = await getMintInfo(mintUrl);
-				mintPubkey = info.pubkey;
-			} catch {
-				// Fallback to multiplicative unblinding
-			}
-
 			changeProofs = response.change.map((sig, i) => {
 				const output = outputs[i];
-				const C = unblindSignature(sig.C_, output.blindingFactor, mintPubkey);
+				const pubkey = getMintPubkey(mintUrl, keysetId, sig.amount);
+				const C = unblindSignature(sig.C_, output.blindingFactor, pubkey);
 				const rHex = blindingFactorToHex(output.blindingFactor);
 				const proof: TokenProof = {
 					id: sig.id,

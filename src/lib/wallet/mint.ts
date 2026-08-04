@@ -8,7 +8,6 @@
  * All mint URLs are passed as parameters — no hardcoding.
  */
 import {
-	getMintInfo,
 	requestMintQuote,
 	mintTokens as postMint,
 	checkMintQuote,
