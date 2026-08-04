@@ -310,8 +310,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-lg);
-		justify-content: center;
-		min-height: 100%;
 	}
 
 	/* A — Balance */

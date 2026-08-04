@@ -8,6 +8,7 @@
  */
 
 import { base64url } from '../util/base64';
+import { cborEncodeToken, cborDecodeToken } from '../util/cbor';
 import type { CashuToken, DecodedToken, TokenProof } from '../types';
 
 /** NUT-00 V4 token prefix (current, default) */
@@ -33,27 +34,28 @@ export function encodeToken(
 	memo?: string,
 	legacy?: boolean
 ): string {
-	const token: CashuToken = {
-		token: [
-			{
-				mint: mintUrl,
-				proofs
-			}
-		],
-		unit
-	};
-
-	if (memo) {
-		token.memo = memo;
+	if (legacy) {
+		// Legacy V3 format: JSON with cashuA prefix
+		const token: CashuToken = {
+			token: [{ mint: mintUrl, proofs }],
+			unit
+		};
+		if (memo) token.memo = memo;
+		const jsonStr = JSON.stringify(token);
+		const jsonBytes = new TextEncoder().encode(jsonStr);
+		return `${TOKEN_PREFIX}${base64url.encode(jsonBytes)}`;
 	}
 
-	const jsonStr = JSON.stringify(token);
-	const encoder = new TextEncoder();
-	const jsonBytes = encoder.encode(jsonStr);
-	const base64 = base64url.encode(jsonBytes);
-
-	const prefix = legacy ? TOKEN_PREFIX : TOKEN_PREFIX_V4;
-	return `${prefix}${base64}`;
+	// V4 format: CBOR with cashuB prefix
+	const cborProofs = proofs.map(p => ({
+		id: p.id,
+		amount: p.amount,
+		secret: p.secret,
+		C: p.C,
+		dleq: p.dleq
+	}));
+	const cborBytes = cborEncodeToken(cborProofs, mintUrl, unit, memo);
+	return `${TOKEN_PREFIX_V4}${base64url.encode(cborBytes)}`;
 }
 
 /**
@@ -70,24 +72,37 @@ export function encodeToken(
  */
 export function decodeToken(token: string): DecodedToken {
 	let encoded: string;
+	let isCbor: boolean;
 
 	if (token.startsWith(TOKEN_PREFIX_V4)) {
 		encoded = token.slice(TOKEN_PREFIX_V4.length);
+		isCbor = true;
 	} else if (token.startsWith(TOKEN_PREFIX)) {
 		encoded = token.slice(TOKEN_PREFIX.length);
+		isCbor = false;
 	} else if (/^cashu[A-Za-z]/.test(token)) {
-		// Unknown cashu prefix (e.g. "cashuC", "cashuX")
 		const match = token.match(/^cashu[A-Za-z]+/);
 		const prefix = match ? match[0] : token.slice(0, 8);
 		throw new Error(`Unknown Cashu token prefix: "${prefix}". Expected "cashuB" (V4) or "cashuA" (legacy).`);
 	} else {
-		// No recognized prefix — try to decode as-is (backward compatibility)
 		encoded = token;
+		isCbor = false;
 	}
 
-	const jsonBytes = base64url.decode(encoded);
-	const decoder = new TextDecoder();
-	const jsonStr = decoder.decode(jsonBytes);
+	const rawBytes = base64url.decode(encoded);
+
+	if (isCbor) {
+		// V4 CBOR format
+		const decoded = cborDecodeToken(rawBytes);
+		return {
+			proofs: decoded.proofs as unknown as TokenProof[],
+			mint: decoded.mint,
+			unit: decoded.unit ?? 'sat'
+		};
+	}
+
+	// Legacy V3 JSON format
+	const jsonStr = new TextDecoder().decode(rawBytes);
 	const parsed = JSON.parse(jsonStr) as CashuToken;
 
 	if (!parsed.token || !Array.isArray(parsed.token) || parsed.token.length === 0) {
@@ -95,7 +110,6 @@ export function decodeToken(token: string): DecodedToken {
 	}
 
 	const firstEntry = parsed.token[0];
-
 	if (!firstEntry.proofs || !Array.isArray(firstEntry.proofs)) {
 		throw new Error('Invalid token format: missing proofs array');
 	}
