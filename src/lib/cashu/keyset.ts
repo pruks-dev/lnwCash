@@ -16,7 +16,13 @@ import type { KeysetCacheEntry } from '../types';
  */
 export async function fetchAndCacheKeysets(mintUrl: string): Promise<KeysetCacheEntry[]> {
 	// Fetch from /v1/keys endpoint (includes keys in response)
-	const url = `${mintUrl.replace(/\/+$/, '')}/v1/keys`;
+	// Use proxy in browser mode to avoid CORS
+	let url: string;
+	if (typeof window !== 'undefined' && mintUrl === 'https://mint.lnw.cash') {
+		url = `/api/mint/v1/keys`;
+	} else {
+		url = `${mintUrl.replace(/\/+$/, '')}/v1/keys`;
+	}
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), 15000);
 	let data: { keysets?: Array<{ id: string; unit: string; active: boolean; input_fee_ppk?: number; keys: Record<number, string> }> };
