@@ -10,7 +10,7 @@
 import { encodeToken, decodeToken, getTokenAmount } from '../cashu/token';
 import { swapProofs } from '../cashu/client';
 import { blindMessage, unblindSignature, blindingFactorToHex } from '../cashu/blind';
-import { fetchAndCacheKeysets, getMintPubkey } from '../cashu/keyset';
+import { fetchAndCacheKeysets, getMintPubkey, resolveKeysetId } from '../cashu/keyset';
 import { getPrivateKey } from './state';
 import { selectProofs, sumProofs } from './proofs';
 import { getUnspentProofsByMint, addProofs, markSpent } from './proofsDb';
@@ -61,11 +61,10 @@ export async function sendTokens(
 	let sendProofs = selected;
 
 	// F-070: If single proof has excess, swap it to get exact amounts
-	if (excess > 0 && selected.length === 1 && !selected[0].amount.toString().startsWith('-')) {
+		if (excess > 0 && selected.length === 1 && !selected[0].amount.toString().startsWith('-')) {
 		try {
 			await fetchAndCacheKeysets(mintUrl);
-			const keysetId = selected[0].id;
-			const pubkey = getMintPubkey(mintUrl, keysetId, selected[0].amount);
+			const keysetId = resolveKeysetId(mintUrl, selected[0].id) || selected[0].id;
 
 			// Create blinded output for the send amount and the change amount
 			const sendSecret = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2,'0')).join('');
@@ -80,9 +79,10 @@ export async function sendTokens(
 
 			const swapResult = await swapProofs(mintUrl, [selected[0]], outputs);
 
-			// Unblind the returned signatures
+			// Unblind the returned signatures — use denomination-specific pubkey per signature
 			sendProofs = swapResult.signatures.map((sig, i) => {
 				const bp = i === 0 ? sendBlind : changeBlind;
+				const pubkey = getMintPubkey(mintUrl, keysetId, sig.amount);
 				const C = pubkey ? unblindSignature(sig.C_, bp.blindingFactor, pubkey) : sig.C_;
 				const rHex = blindingFactorToHex(bp.blindingFactor);
 				return {
