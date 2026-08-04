@@ -18,7 +18,7 @@
 	import { receiveTokens, type ReceiveResult } from '$lib/wallet/tokenStore';
 	import { isCashuToken, getTokenAmount, decodeToken } from '$lib/cashu/token';
 	import { requestMintQuote, mintTokens, CashuError } from '$lib/cashu/client';
-	import { fetchAndCacheKeysets } from '$lib/cashu/keyset';
+	import { fetchAndCacheKeysets, getMintPubkey } from '$lib/cashu/keyset';
 	import { blindMessage, unblindSignature, deterministicBlindingFactor, blindingFactorToHex } from '$lib/cashu/blind';
 	import { addProofs } from '$lib/wallet/proofsDb';
 	import { getBalance } from '$lib/wallet/balance';
@@ -344,20 +344,11 @@
 			const postBody = outputs.map(o => ({ amount: o.amount, id: o.id, B_: o.B_ }));
 			const response = await mintTokens(mintUrlClean, pendingQuoteId, postBody);
 
-			// Fetch mint info for public key (additive unblinding)
-			let mintPubkey: string | undefined;
-			try {
-				const { getMintInfo } = await import('$lib/cashu/client');
-				const info = await getMintInfo(mintUrlClean);
-				mintPubkey = info.pubkey;
-			} catch {
-				// Fallback to multiplicative unblinding
-			}
-
-			// Step 5: Unblind signatures → proofs
+			// Step 5: Unblind signatures → proofs (use keyset-specific denomination key)
 			const proofs = response.signatures.map((sig, i) => {
 				const output = outputs[i];
-				const C = unblindSignature(sig.C_, output.blindingFactor, mintPubkey);
+				const pubkey = getMintPubkey(mintUrlClean, keysetId, sig.amount);
+				const C = unblindSignature(sig.C_, output.blindingFactor, pubkey);
 				const rHex = blindingFactorToHex(output.blindingFactor);
 				const proof: { id: string; amount: number; secret: string; C: string; dleq?: { e: string; s: string; r: string } } = {
 					id: sig.id, amount: sig.amount, secret: output.secret, C
