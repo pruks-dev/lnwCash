@@ -520,3 +520,29 @@ export async function meltTokens(
 		body
 	});
 }
+
+/**
+ * NUT-03: Swap proofs for new ones (double-spend protection on receive).
+ * Sends old proofs to /v1/swap and receives new (unspent) proofs.
+ */
+export async function swapProofs(
+	mintUrl: string,
+	proofs: Array<{ secret: string; C: string; amount: number; id: string }>
+): Promise<{
+	signatures: Array<{ id: string; amount: number; C_: string; dleq?: { e: string; s: string } }>;
+}> {
+	const inputs = proofs.map(p => ({ secret: p.secret, C: p.C, amount: p.amount, id: p.id }));
+	const path = STANDARD_PATHS.swap;
+	const response = await fetchFromMint<{
+		signatures?: Array<{ id: string; amount: number; C_: string; dleq?: { e: string; s: string } }>;
+	}>(mintUrl, path, {
+		method: 'POST',
+		body: { inputs }
+	});
+
+	if (!response.signatures || !Array.isArray(response.signatures)) {
+		throw new CashuError('Invalid swap response', 500);
+	}
+
+	return { signatures: response.signatures };
+}

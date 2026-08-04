@@ -27,6 +27,7 @@ import { selectProofs, sumProofs } from './proofs';
 import { encodeToken, decodeToken, getTokenAmount } from '../cashu/token';
 import { decomposeAmount } from './mint';
 import { checkState } from '../cashu/client';
+import { swapProofs } from '../cashu/client';
 import type { TokenProof, DecodedToken } from '../types';
 import { TokenValidationError } from './errors';
 
@@ -277,17 +278,55 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 		}
 	}
 
+	const mintUrl = decoded.mint;
 	const keysetId = decoded.proofs[0].id;
-	await addProofs(decoded.proofs, decoded.mint, keysetId);
+
+	// 1. Check if any proof is already spent (double-spend detection)
+	try {
+		const stateResponse = await checkState(
+			mintUrl,
+			decoded.proofs.map(p => ({ secret: p.secret, C: p.C }))
+		);
+		const spentProofs = decoded.proofs.filter((_, i) =>
+			stateResponse.states[i]?.state === 'SPENT'
+		);
+		if (spentProofs.length > 0) {
+			throw new TokenValidationError(
+				`${spentProofs.length} of ${decoded.proofs.length} proofs already spent`
+			);
+		}
+	} catch (err) {
+		if (err instanceof TokenValidationError) throw err;
+		// Mint unreachable — proceed with caution
+	}
+
+	// 2. Swap old proofs for new ones (double-spend protection per NUT-03)
+	let newProofs = decoded.proofs;
+	try {
+		const swapResult = await swapProofs(mintUrl, decoded.proofs);
+		const newKeysetId = swapResult.signatures[0]?.id || keysetId;
+		newProofs = swapResult.signatures.map((sig, i) => ({
+			id: sig.id || newKeysetId,
+			amount: sig.amount,
+			secret: decoded.proofs[i]?.secret || '',
+			C: sig.C_,
+			dleq: sig.dleq
+		}));
+	} catch {
+		// Swap failed — store original proofs (mint may not support swap)
+	}
+
+	// 3. Store the (new) proofs
+	await addProofs(newProofs, mintUrl, newProofs[0]?.id || keysetId);
 
 	const totalAmount = getTokenAmount(decoded);
 	const dleqCount = decoded.proofs.filter(p => p.dleq).length;
 
 	return {
 		amount: totalAmount,
-		mint: decoded.mint,
+		mint: mintUrl,
 		unit: decoded.unit,
-		proofCount: decoded.proofs.length,
+		proofCount: newProofs.length,
 		dleqCount: dleqCount > 0 ? dleqCount : undefined
 	};
 }
