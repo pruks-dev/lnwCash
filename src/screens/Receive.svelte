@@ -22,7 +22,9 @@
 	import { blindMessage, unblindSignature, deterministicBlindingFactor } from '$lib/cashu/blind';
 	import { addProofs } from '$lib/wallet/proofsDb';
 	import { getBalance } from '$lib/wallet/balance';
-	import { getPrivateKey } from '$lib/wallet/state';
+	import { getPrivateKey, storeSessionPin, unlockWallet } from '$lib/wallet/state';
+	import { WalletLockedError } from '$lib/wallet/errors';
+	import { getMintConfig } from '$lib/wallet/store';
 	import { navigateTo } from '$lib/router';
 
 	import Card from '$lib/components/ui/Card.svelte';
@@ -32,6 +34,7 @@
 	import Toast from '$lib/components/ui/Toast.svelte';
 	import Numpad from '$lib/components/Numpad.svelte';
 	import QRDisplay from '$lib/components/QRDisplay.svelte';
+	import UnlockPrompt from '../components/UnlockPrompt.svelte';
 
 	import Copy from '$lib/components/icons/Copy.svelte';
 	import Check from '$lib/components/icons/Check.svelte';
@@ -84,8 +87,46 @@
 	let toastType: 'info' | 'success' | 'error' = $state('info');
 	let toastVisible: boolean = $state(false);
 
+	// TASK-092 (F-061): Unlock prompt state for wallet lock fallback
+	let showUnlockPrompt: boolean = $state(false);
+	let unlockPendingOp: (() => Promise<void>) | null = $state(null);
+
+	function handleUnlockSuccess() {
+		showUnlockPrompt = false;
+		if (unlockPendingOp) {
+			const retry = unlockPendingOp;
+			unlockPendingOp = null;
+			retry();
+		}
+	}
+
+	function handleUnlockCancel() {
+		showUnlockPrompt = false;
+		unlockPendingOp = null;
+		// Reset states so UI isn't stuck
+		if (lightningState === 'loading') {
+			lightningState = 'idle';
+		}
+		if (cashuState === 'loading') {
+			cashuState = 'idle';
+		}
+	}
+
+	// F-066: Reactive mint URL subscription — propagates from App.svelte via props.
+	// The old `!mintUrl` guard has been REMOVED. Now mintUrl always follows
+	// defaultMintUrl so that Mint Settings switch immediately updates Receive.
 	$effect(() => {
-		if (defaultMintUrl && !mintUrl) {
+		if (defaultMintUrl) {
+			if (mintUrl && mintUrl !== defaultMintUrl) {
+				// Show toast on mint switch
+				try {
+					const config = getMintConfig(defaultMintUrl);
+					const name = config?.name || defaultMintUrl;
+					showToast(`Switched to mint: ${name}`, 'info');
+				} catch {
+					showToast(`Switched to mint: ${defaultMintUrl}`, 'info');
+				}
+			}
 			mintUrl = defaultMintUrl;
 		}
 	});
@@ -324,6 +365,13 @@
 			animateBalance(0, pendingAmount);
 			showToast($_('screen.receive.success_received'), 'success');
 		} catch (e) {
+			// TASK-092 (F-061): Wallet lock fallback — show unlock prompt + retry
+			if (e instanceof WalletLockedError) {
+				lightningState = 'idle';
+				unlockPendingOp = () => completeMintAfterPayment();
+				showUnlockPrompt = true;
+				return;
+			}
 			lightningError = mapMintError(e);
 			lightningState = 'error';
 			showToast(lightningError, 'error');
@@ -439,6 +487,13 @@
 			cashuState = 'success';
 			showToast($_('screen.receive.token_received'), 'success');
 		} catch (e) {
+			// TASK-092 (F-061): Wallet lock fallback — show unlock prompt + retry
+			if (e instanceof WalletLockedError) {
+				cashuState = 'idle';
+				unlockPendingOp = () => handleReceiveToken();
+				showUnlockPrompt = true;
+				return;
+			}
 			cashuError = e instanceof Error ? e.message : $_('screen.receive.error_receive_token');
 			cashuState = 'error';
 			showToast(cashuError, 'error');
@@ -697,6 +752,13 @@
 			{/if}
 		</div>
 	{/if}
+
+	<!-- TASK-092 (F-061): Unlock Prompt — shown when wallet lock detected -->
+	<UnlockPrompt
+		open={showUnlockPrompt}
+		onunlock={handleUnlockSuccess}
+		oncancel={handleUnlockCancel}
+	/>
 
 	<!-- Toast -->
 	<div class="toast-container">

@@ -7,12 +7,13 @@
 	 * Svelte 5 runes: $state, $derived, $effect
 	 */
 	import { _ } from 'svelte-i18n';
-	import { getBalance } from '$lib/wallet/balance';
+	import { getBalanceByMint } from '$lib/wallet/balance';
 	import { getTransactions } from '$lib/storage/db';
 	import type { Transaction, TransactionType, TransactionStatus } from '$lib/types';
 	import { isOnline, onConnectivityChange } from '$lib/wallet/offline';
 	import { navigateTo } from '$lib/router';
 	import type { ScreenKey } from '$lib/router';
+	import { activeMintStore, getActiveMintUrl } from '$lib/wallet/store';
 
 	// TASK-050 Design System Components
 	import Card from '$lib/components/ui/Card.svelte';
@@ -39,12 +40,27 @@
 	let recentTxs: Transaction[] = $state([]);
 	let refreshing: boolean = $state(false);
 
+	// F-068: Track active mint URL for reactive balance display
+	let currentMintUrl: string = $state(getActiveMintUrl());
+
 	$effect(() => {
-		const cleanup = onConnectivityChange((status: boolean) => {
+		const cleanupConnectivity = onConnectivityChange((status: boolean) => {
 			online = status;
 		});
+
+		const unsubMint = activeMintStore.subscribe((url: string) => {
+			if (url && url !== currentMintUrl) {
+				currentMintUrl = url;
+				loadBalance();
+			}
+		});
+
 		loadAll();
-		return cleanup;
+
+		return () => {
+			cleanupConnectivity();
+			unsubMint();
+		};
 	});
 
 	async function loadAll() {
@@ -58,8 +74,9 @@
 	async function loadBalance() {
 		error = '';
 		try {
-			const balance = await getBalance();
-			totalBalance = balance.total;
+			// F-068: Home balance = active mint balance (not total all mints)
+			const mintUrl = getActiveMintUrl();
+			totalBalance = await getBalanceByMint(mintUrl);
 		} catch (e) {
 			error = e instanceof Error ? e.message : $_('common.error');
 		}
@@ -186,7 +203,6 @@
 
 		<!-- B — Quick Actions -->
 		<div class="quick-actions">
-			<Heading level="h3">{$_('screen.home.quick_actions')}</Heading>
 			<div class="action-buttons-row">
 				<!-- F-053/D-013: Receive ซ้าย, Send ขวา -->
 				<button type="button" class="action-btn action-receive"
@@ -284,6 +300,8 @@
 		overflow-x: hidden;
 		-webkit-overflow-scrolling: touch;
 		overscroll-behavior-y: contain;
+		display: flex;
+		flex-direction: column;
 	}
 
 	.home-content {
@@ -291,6 +309,8 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-lg);
+		justify-content: center;
+		min-height: 100%;
 	}
 
 	/* A — Balance */

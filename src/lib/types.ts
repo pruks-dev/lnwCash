@@ -14,6 +14,7 @@ export interface Transaction {
 	mint_url: string;
 	timestamp: number;
 	token_hash: string | null;
+	invoice?: string | null;
 	status: TransactionStatus;
 }
 

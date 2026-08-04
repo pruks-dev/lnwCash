@@ -2,6 +2,7 @@
 	import { _ } from 'svelte-i18n';
 	import { createWallet, getWalletStatus, type WalletState } from '$lib/wallet/state';
 	import { fetchAndCacheKeysets } from '$lib/cashu/keyset';
+	import { setActiveMintUrl } from '$lib/wallet/store';
 
 	interface Props {
 		pin: string;
@@ -78,6 +79,9 @@
 		loading = true;
 		try {
 			const result = await createWallet(pin, walletName.trim());
+			// F-067: Set active mint on wallet creation — uses first mint URL
+			// so App.svelte's reactive store picks it up for Receive/Send
+			setActiveMintUrl(mintUrls[0]);
 			onCreated?.(getWalletStatus());
 		} catch (e) {
 			error = e instanceof Error ? e.message : $_('common.error');

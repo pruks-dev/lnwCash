@@ -1,5 +1,6 @@
 /**
  * Test: Send.svelte — TASK-066 Redesigned Send screen
+ *      + TASK-091 (F-066) reactive mint URL propagation
  * Tests: Tab rendering, invoice input, fee check, confirmation dialog, Cashu token creation
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -27,7 +28,19 @@ vi.mock('$lib/router', () => ({
 	onRouteChange: () => () => {}
 }));
 
-describe('Send (TASK-066)', () => {
+// Mock getMintConfig for mint name resolution in toast
+const mockGetMintConfig = vi.fn().mockReturnValue({ name: 'Test Mint', url: 'https://test.mint' });
+vi.mock('$lib/wallet/store', () => ({
+	getMintConfig: (url: string) => mockGetMintConfig(url),
+	getActiveMintUrl: () => 'https://mint.lnw.cash',
+	setActiveMintUrl: vi.fn(),
+	activeMintStore: {
+		subscribe: vi.fn(() => () => {}),
+		set: vi.fn()
+	}
+}));
+
+describe('Send (TASK-066 + TASK-091)', () => {
 	beforeEach(() => { localStorage.clear(); vi.clearAllMocks(); });
 	afterEach(() => { cleanup(); });
 
@@ -125,5 +138,22 @@ describe('Send (TASK-066)', () => {
 		render(Send, {});
 		const backBtn = document.querySelector('[aria-label="common.back"]');
 		expect(backBtn).toBeTruthy();
+	});
+
+	// ════════════════════════════════════════════════════
+	// TASK-091 (F-066): Reactive mint URL propagation
+	// ════════════════════════════════════════════════════
+
+	it('should not crash when defaultMintUrl changes (reactive prop)', () => {
+		const { unmount } = render(Send, { defaultMintUrl: 'https://mint1.example.com' });
+		unmount();
+		// Simulate prop change (re-render with new prop after cleanup)
+		render(Send, { defaultMintUrl: 'https://mint2.example.com' });
+		expect(screen.getByText('screen.send.title')).toBeTruthy();
+	});
+
+	it('should accept defaultMintUrl prop and render without crash', () => {
+		render(Send, { defaultMintUrl: 'https://reactive-test.mint' });
+		expect(screen.getByText('screen.send.title')).toBeTruthy();
 	});
 });

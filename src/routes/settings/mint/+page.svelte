@@ -7,7 +7,7 @@
 	 * and TASK-050 (design system components).
 	 */
 	import { _ } from 'svelte-i18n';
-	import { discoverMintEndpoints, type DiscoveryResult } from '$lib/wallet/discovery';
+	import { discoverMintEndpoints } from '$lib/wallet/discovery';
 	import {
 		getAllMintConfigs,
 		removeMintConfig,
@@ -18,6 +18,7 @@
 		setActiveMintUrl
 	} from '$lib/wallet/store';
 	import { DEFAULT_MINT_CONFIG, type MintConfig } from '$lib/wallet/config';
+	import { validateMintUrl } from '$lib/wallet/mint-validation';
 	import Input from '$lib/components/ui/Input.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
@@ -104,68 +105,26 @@
 		validateError = '';
 	}
 
-	function isValidUrl(url: string): boolean {
-		try {
-			const u = new URL(url);
-			return u.protocol === 'https:' || u.protocol === 'http:';
-		} catch {
-			return false;
-		}
-	}
-
-	function cleanUrl(url: string): string {
-		return url.trim().replace(/\/+$/, '');
-	}
-
 	async function handleValidate(): Promise<void> {
-		const cleaned = cleanUrl(addUrl);
-
-		if (!cleaned) {
-			addUrlError = $_('common.error_mint_url_required');
-			return;
-		}
-
-		if (!isValidUrl(cleaned)) {
-			addUrlError = $_('mint.settings.errorFetch');
-			return;
-		}
+		addUrlError = '';
+		validateError = '';
+		validatedConfig = null;
+		validatedNuts = [];
 
 		validating = true;
-		validateError = '';
-		addUrlError = '';
 
-		// F-044: /v1/info validation via discoverMintEndpoints with 5s timeout
-		const TIMEOUT_MS = 5000;
-		const timeoutPromise = new Promise<never>((_, reject) => {
-			setTimeout(() => reject(new DOMException('Validation timeout', 'AbortError')), TIMEOUT_MS);
-		});
+		// TASK-096: Use shared validateMintUrl() — prevents drift with Setup.svelte
+		const result = await validateMintUrl(addUrl);
 
-		try {
-			const result: DiscoveryResult = await Promise.race([
-				discoverMintEndpoints(cleaned),
-				timeoutPromise
-			]);
-
-			if (!result.success) {
-				validateError = result.error ?? 'ไม่พบ mint — ตรวจสอบ URL';
-				validatedConfig = null;
-				validatedNuts = [];
-				return;
-			}
-
-			validatedConfig = result.config;
-			validatedNuts = result.config.supported_nuts;
-		} catch (e) {
-			if (e instanceof DOMException && e.name === 'AbortError') {
-				validateError = 'ไม่พบ mint — ตรวจสอบ URL (หมดเวลา 5 วินาที)';
-			} else {
-				validateError = e instanceof Error ? e.message : 'ไม่พบ mint — ตรวจสอบ URL';
-			}
-			validatedConfig = null;
-			validatedNuts = [];
-		} finally {
+		if (!result.success) {
+			validateError = result.error || '';
 			validating = false;
+			return;
 		}
+
+		validatedConfig = result.config!;
+		validatedNuts = result.nuts || [];
+		validating = false;
 	}
 
 	async function handleSaveMint(): Promise<void> {
@@ -370,7 +329,7 @@
 	{#snippet children()}
 		<div class="add-mint-form">
 			<Input
-				type="url"
+				type="text"
 				label={$_('mint.settings.url')}
 				placeholder="https://..."
 				value={addUrl}

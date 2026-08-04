@@ -18,7 +18,8 @@ import { fetchAndCacheKeysets, getAllKeysets } from '../cashu/keyset';
 import { blindMessage, unblindSignature, deterministicBlindingFactor } from '../cashu/blind';
 import { getPrivateKey } from './state';
 import { addProofs } from './proofsDb';
-import type { TokenProof, MintQuote } from '../types';
+import { addTransaction } from '../storage/db';
+import type { TokenProof, MintQuote, Transaction } from '../types';
 import { MintUnreachableError, QuoteExpiredError } from './errors';
 
 // ─── Types ───────────────────────────────────────────────────
@@ -266,6 +267,22 @@ export async function completeMint(
 
 		// Step 6: Store proofs
 		await addProofs(proofs, mintUrl, keysetId);
+
+		// Step 7: Record transaction (F-063) — non-blocking, best-effort
+		try {
+			await addTransaction({
+				id: `mint-${quoteId}`,
+				type: 'mint',
+				amount,
+				mint_url: mintUrl,
+				timestamp: Date.now(),
+				token_hash: null,
+				invoice: null,
+				status: 'confirmed'
+			} as Transaction);
+		} catch {
+			// IndexedDB may be unavailable — transaction recording is best-effort
+		}
 
 		return {
 			success: true,

@@ -8,6 +8,7 @@
  *
  * All data is stored in localStorage under a single JSON key.
  */
+import { writable } from 'svelte/store';
 import type { MintConfig } from './config';
 import { DEFAULT_MINT_CONFIG, createPlaceholderConfig } from './config';
 
@@ -178,14 +179,29 @@ export function getActiveMintUrl(): string {
 	return getDefaultMintUrl();
 }
 
+// ─── Reactive Active Mint Store (F-066 multi-mint reactivity) ──
+
 /**
- * Persist the active mint URL to localStorage.
+ * Svelte writable store for the active mint URL.
+ *
+ * Subscribers (App.svelte, Receive.svelte, Send.svelte) use this
+ * to reactively track mint switches without page reload.
+ *
+ * Initialized from localStorage on module load; updated whenever
+ * setActiveMintUrl() is called (from Settings pages or Setup flow).
+ */
+export const activeMintStore = writable<string>(getActiveMintUrl());
+
+/**
+ * Persist the active mint URL to localStorage AND notify reactive store.
  * Used by Mint Settings page and Setup flow.
  */
 export function setActiveMintUrl(url: string): void {
 	try {
 		localStorage.setItem(ACTIVE_MINT_KEY, url);
 	} catch { /* ignore — localStorage unavailable */ }
+	// F-066: Notify reactive store so App.svelte + Receive/Send auto-update
+	activeMintStore.set(url);
 }
 
 /**

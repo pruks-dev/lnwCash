@@ -6,11 +6,12 @@
 	 * Uses TASK-050: Card, Button, Input, Heading, Body, Icons
 	 */
 	import { _ } from 'svelte-i18n';
-	import { createWallet, unlockWallet, getWalletStatus, type WalletState } from '$lib/wallet/state';
+	import { createWallet, unlockWallet, getWalletStatus, storeSessionPin, type WalletState } from '$lib/wallet/state';
 	import { WalletNotInitializedError, InvalidPinError } from '$lib/wallet/errors';
-	import { getSettings, setSettings } from '$lib/storage/local';
-	import { fetchAndCacheKeysets } from '$lib/cashu/keyset';
 	import { DEFAULT_MINT_CONFIG } from '$lib/wallet/config';
+	import { setActiveMintUrl } from '$lib/wallet/store';
+	import { validateMintUrl } from '$lib/wallet/mint-validation';
+	import type { MintConfig } from '$lib/wallet/config';
 
 	// TASK-050 Design System Components
 	import Card from '$lib/components/ui/Card.svelte';
@@ -68,6 +69,8 @@
 			error = $_('screen.register.error_mismatch');
 			return;
 		}
+		// TASK-092 (F-061): Store PIN in sessionStorage for auto-unlock on refresh
+		storeSessionPin(pin);
 		step = 'create-wallet';
 	}
 
@@ -82,6 +85,8 @@
 		loading = true;
 		try {
 			const result = await unlockWallet(pin);
+			// TASK-092 (F-061): Store PIN in sessionStorage for auto-unlock on refresh
+			storeSessionPin(pin);
 			onWalletReady?.(result);
 		} catch (e) {
 			if (e instanceof InvalidPinError) {
@@ -117,21 +122,39 @@
 	}
 
 	// ─── Wallet Creation ─────────────────────────────────
-	function addMint() {
+	async function addMint() {
+		clearError();
 		const url = newMintUrl.trim();
 		if (!url) return;
-		if (!url.startsWith('https://') && !url.startsWith('http://')) {
-			error = $_('common.error_invalid_url');
-			return;
+
+		// F-060: /v1/info validation via shared validateMintUrl()
+		loading = true;
+		try {
+			const result = await validateMintUrl(url, mintUrls);
+			if (!result.success) {
+				error = result.error || 'Mint URL ไม่ตอบสนอง — ตรวจสอบอีกครั้ง';
+				return;
+			}
+
+			// Validation passed — add mint with info from /v1/info
+			const validatedConfig = result.config!;
+			mintUrls = [...mintUrls, validatedConfig.url];
+			newMintUrl = '';
+			error = '';
+
+			// Display mint info (name, version) from /v1/info
+			mintInfoMap = {
+				...mintInfoMap,
+				[validatedConfig.url]: {
+					name: validatedConfig.name || validatedConfig.url,
+					keysets: validatedConfig.supported_nuts
+				}
+			};
+		} catch (e) {
+			error = 'Mint URL ไม่ตอบสนอง — ตรวจสอบอีกครั้ง';
+		} finally {
+			loading = false;
 		}
-		if (mintUrls.includes(url)) {
-			error = $_('screen.wallet.error_duplicate_mint');
-			return;
-		}
-		mintUrls = [...mintUrls, url];
-		newMintUrl = '';
-		error = '';
-		fetchMintInfo(url);
 	}
 
 	function removeMint(url: string) {
@@ -141,27 +164,12 @@
 		mintInfoMap = newMap;
 	}
 
-	async function fetchMintInfo(url: string) {
-		try {
-			const keysets = await fetchAndCacheKeysets(url);
-			const active = keysets.filter((k: { active: boolean }) => k.active);
-			mintInfoMap = {
-				...mintInfoMap,
-				[url]: { name: url, keysets: active.map((k: { id: string }) => k.id) }
-			};
-		} catch {
-			mintInfoMap = {
-				...mintInfoMap,
-				[url]: { name: url, keysets: [] }
-			};
-		}
-	}
-
 	async function handleCreateWallet() {
 		error = '';
 		// F-045: walletName optional — default to 'LNWCASH Wallet'
 		const effectiveName = walletName.trim() || 'LNWCASH Wallet';
-		if (mintUrls.length < 2) {
+		// F-060: Allow setup with 1 mint minimum (previously required 2)
+		if (mintUrls.length < 1) {
 			error = $_('screen.wallet.error_no_mint');
 			return;
 		}
@@ -173,6 +181,9 @@
 		loading = true;
 		try {
 			await createWallet(pin, effectiveName);
+			// F-067: Set active mint on wallet creation — uses first mint URL
+			// so App.svelte's reactive store picks it up for Receive/Send
+			setActiveMintUrl(mintUrls[0]);
 			// After creating, unlock immediately
 			await unlockWallet(pin);
 			onWalletReady?.(getWalletStatus());
@@ -184,8 +195,8 @@
 	}
 
 	let stepTitle = $derived(
-		step === 'unlock' ? $_('screen.register.unlock_title') :
-		step === 'create-wallet' ? $_('screen.wallet.create_title') :
+		(step as string) === 'unlock' ? $_('screen.register.unlock_title') :
+		(step as string) === 'create-wallet' ? $_('screen.wallet.create_title') :
 		$_('screen.register.title')
 	);
 </script>
@@ -332,7 +343,7 @@
 						size="lg"
 						loading={loading}
 						onclick={handleCreateWallet}
-						disabled={loading || mintUrls.length < 2}
+						disabled={loading || mintUrls.length < 1}
 					>
 						{#snippet children()}{$_('screen.wallet.create_button')}{/snippet}
 					</Button>

@@ -1,11 +1,18 @@
 /**
- * Cashu V4 token encode/decode utilities.
- * Format: base64url-encoded JSON with "cashuA" prefix.
+ * Cashu V4 token encode/decode utilities (NUT-00 V4).
+ *
+ * Supports both legacy cashuA (V3) and current cashuB (V4) token formats.
+ * Default encoding uses cashuB prefix; fallback to legacy cashuA available.
+ *
+ * Format: base64url-encoded JSON with "cashuB" (V4) or "cashuA" (V3 legacy) prefix.
  */
 
 import { base64url } from '../util/base64';
 import type { CashuToken, DecodedToken, TokenProof } from '../types';
 
+/** NUT-00 V4 token prefix (current, default) */
+export const TOKEN_PREFIX_V4 = 'cashuB';
+/** NUT-00 V3 legacy token prefix (backward compatible) */
 export const TOKEN_PREFIX = 'cashuA';
 const TOKEN_VERSION = 'A';
 
@@ -16,13 +23,15 @@ const TOKEN_VERSION = 'A';
  * @param mintUrl - The mint URL for these proofs
  * @param unit - Optional unit (default: "sat")
  * @param memo - Optional memo note
- * @returns Cashu token string (e.g. "cashuAeyJ0b2tlbiI6...")
+ * @param legacy - Use legacy cashuA prefix instead of cashuB (default: false)
+ * @returns Cashu token string (e.g. "cashuBeyJ0b2tlbiI6..." or "cashuAeyJ0b2tlbiI6...")
  */
 export function encodeToken(
 	proofs: TokenProof[],
 	mintUrl: string,
 	unit: string = 'sat',
-	memo?: string
+	memo?: string,
+	legacy?: boolean
 ): string {
 	const token: CashuToken = {
 		token: [
@@ -43,22 +52,36 @@ export function encodeToken(
 	const jsonBytes = encoder.encode(jsonStr);
 	const base64 = base64url.encode(jsonBytes);
 
-	return `${TOKEN_PREFIX}${base64}`;
+	const prefix = legacy ? TOKEN_PREFIX : TOKEN_PREFIX_V4;
+	return `${prefix}${base64}`;
 }
 
 /**
  * Decode a Cashu V4 token string back into its components.
  *
- * @param token - Cashu token string (e.g. "cashuAeyJ0b2tlbiI6...")
+ * Auto-detects token prefix:
+ *   - cashuB → decode as V4 token
+ *   - cashuA → decode as legacy V3 token
+ *   - other cashu* prefix → throws error (unknown format)
+ *   - no prefix → attempt decode as-is (backward compatibility)
+ *
+ * @param token - Cashu token string (e.g. "cashuBeyJ0b2tlbiI6..." or "cashuA...")
  * @returns DecodedToken with proofs, mint URL, and unit
  */
 export function decodeToken(token: string): DecodedToken {
 	let encoded: string;
 
-	if (token.startsWith(TOKEN_PREFIX)) {
+	if (token.startsWith(TOKEN_PREFIX_V4)) {
+		encoded = token.slice(TOKEN_PREFIX_V4.length);
+	} else if (token.startsWith(TOKEN_PREFIX)) {
 		encoded = token.slice(TOKEN_PREFIX.length);
+	} else if (/^cashu[A-Za-z]/.test(token)) {
+		// Unknown cashu prefix (e.g. "cashuC", "cashuX")
+		const match = token.match(/^cashu[A-Za-z]+/);
+		const prefix = match ? match[0] : token.slice(0, 8);
+		throw new Error(`Unknown Cashu token prefix: "${prefix}". Expected "cashuB" (V4) or "cashuA" (legacy).`);
 	} else {
-		// Try without prefix (some implementations omit it)
+		// No recognized prefix — try to decode as-is (backward compatibility)
 		encoded = token;
 	}
 
@@ -105,3 +128,6 @@ export function getTokenAmount(token: DecodedToken): number {
 
 /** @internal — exposed for testing */
 export const __TOKEN_VERSION = TOKEN_VERSION;
+
+/** @internal — exposed for testing: valid token prefixes */
+export const VALID_TOKEN_PREFIXES = [TOKEN_PREFIX_V4, TOKEN_PREFIX];

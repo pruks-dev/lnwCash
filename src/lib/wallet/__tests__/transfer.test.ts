@@ -46,7 +46,7 @@ describe('Transfer', () => {
 	describe('sendTokens', () => {
 		it('should create a valid V4 token', async () => {
 			const result = await sendTokens(10, MINT_URL);
-			expect(result.token).toMatch(/^cashuA/);
+			expect(result.token).toMatch(/^cashu[AB]/);
 			expect(result.amount).toBeGreaterThanOrEqual(10);
 			expect(result.mint).toBe(MINT_URL);
 		});
@@ -86,7 +86,7 @@ describe('Transfer', () => {
 			const token = createTokenForDisplay(tokenProofs, MINT_URL);
 			const balanceAfter = await getTotalBalance();
 
-			expect(token).toMatch(/^cashuA/);
+			expect(token).toMatch(/^cashu[AB]/);
 			expect(balanceAfter).toBe(balanceBefore); // No change
 		});
 	});

@@ -31,6 +31,8 @@
 		max?: number;
 		/** Step (for number type) */
 		step?: number;
+		/** Max length */
+		maxlength?: number;
 		/** Leading icon snippet */
 		leading?: import('svelte').Snippet;
 		/** Trailing action snippet */
@@ -59,6 +61,7 @@
 		min = undefined,
 		max = undefined,
 		step = undefined,
+		maxlength = undefined,
 		leading,
 		trailing,
 		oninput,
@@ -99,6 +102,7 @@
 			{min}
 			{max}
 			{step}
+			maxlength={maxlength}
 			value={value}
 			class="input-field"
 			class:input-has-leading={!!leading}

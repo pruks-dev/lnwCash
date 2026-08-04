@@ -140,6 +140,7 @@ export function lockWallet(): WalletState {
  */
 export async function deleteWallet(): Promise<void> {
 	unlockedPrivateKey = null;
+	clearSessionPin();
 	await clearAllWalletData();
 }
 
@@ -186,3 +187,51 @@ export function isUnlocked(): boolean {
 // ─── Re-export storage functions needed by other modules ─────
 
 export { getEncryptedKey, getPinHash, getWalletState, setWalletState };
+
+// ─── TASK-092 (F-061): Session PIN for auto-unlock ───────────
+
+const SESSION_PIN_KEY = 'lnw_session_pin';
+
+/** Store PIN in sessionStorage for auto-unlock on page refresh */
+export function storeSessionPin(pin: string): void {
+	try {
+		sessionStorage.setItem(SESSION_PIN_KEY, pin);
+	} catch {
+		// sessionStorage unavailable (e.g., private browsing)
+	}
+}
+
+/** Read PIN from sessionStorage */
+export function getSessionPin(): string | null {
+	try {
+		return sessionStorage.getItem(SESSION_PIN_KEY);
+	} catch {
+		return null;
+	}
+}
+
+/** Clear PIN from sessionStorage */
+export function clearSessionPin(): void {
+	try {
+		sessionStorage.removeItem(SESSION_PIN_KEY);
+	} catch {
+		// ignore
+	}
+}
+
+/**
+ * Try to auto-unlock wallet using stored session PIN.
+ * Returns true if unlock succeeded, false otherwise.
+ */
+export async function tryAutoUnlock(): Promise<boolean> {
+	const pin = getSessionPin();
+	if (!pin) return false;
+
+	try {
+		await unlockWallet(pin);
+		return true;
+	} catch {
+		clearSessionPin(); // clear invalid PIN
+		return false;
+	}
+}

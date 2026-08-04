@@ -16,7 +16,7 @@ import {
 import { selectProofs, sumProofs } from './proofs';
 import { createTokenForDisplay } from './transfer';
 import { getTransactions } from '../storage/db';
-import { decodeToken, getTokenAmount } from '../cashu/token';
+import { decodeToken, getTokenAmount, TOKEN_PREFIX, TOKEN_PREFIX_V4 } from '../cashu/token';
 import type { Transaction, TokenProof, DecodedToken } from '../types';
 import { InsufficientFundsError } from './errors';
 
@@ -109,7 +109,7 @@ export interface SemiVerifyResult {
  * Does NOT verify signatures with the mint (no network).
  *
  * Checks:
- * - Valid V4 token format (cashuA prefix, valid JSON)
+ * - Valid V4 token format (cashuA or cashuB prefix, valid JSON)
  * - Proofs have required fields (id, amount, secret, C)
  * - All amounts are positive integers
  * - At least one proof
@@ -119,9 +119,11 @@ export interface SemiVerifyResult {
 export function semiVerifyRedeem(tokenString: string): SemiVerifyResult {
 	const issues: string[] = [];
 
-	// Check prefix
-	if (!tokenString.startsWith('cashuA')) {
-		issues.push('Missing cashuA prefix');
+	// Check prefix — accept both V4 (cashuB) and legacy (cashuA)
+	const validPrefixes = [TOKEN_PREFIX_V4, TOKEN_PREFIX];
+	const hasValidPrefix = validPrefixes.some(p => tokenString.startsWith(p));
+	if (!hasValidPrefix) {
+		issues.push('Missing cashuA or cashuB prefix');
 	}
 
 	// Try to decode

@@ -13,7 +13,8 @@ import { fetchAndCacheKeysets, getAllKeysets, getKeysetById } from '../cashu/key
 import { getPrivateKey } from './state';
 import { getUnspentProofsByMint, addProofs, markSpent } from './proofsDb';
 import { selectProofs, sumProofs } from './proofs';
-import type { TokenProof, MeltQuote } from '../types';
+import { addTransaction } from '../storage/db';
+import type { TokenProof, MeltQuote, Transaction } from '../types';
 import { InsufficientFundsError, QuoteExpiredError, MintUnreachableError } from './errors';
 
 // ─── Types ───────────────────────────────────────────────────
@@ -61,6 +62,8 @@ export interface MeltCompleteResult {
 	feeReserve?: number;
 	inputFeePpk?: number;
 	calculatedFee?: number;
+	/** F-063: Transaction recording status for UI feedback */
+	txStatus?: string;
 	error?: string;
 }
 
@@ -78,6 +81,106 @@ function generateChangeSecret(): string {
 		binary += String.fromCharCode(bytes[i]);
 	}
 	return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// ─── F-072: Error message extraction ─────────────────────────
+
+/**
+ * TASK-101 (F-072): Extract a human-readable error message from any error shape.
+ *
+ * Handles:
+ * - Error instances → error.message
+ * - CashuError (with HTTP status + detail) → preserved as-is
+ * - Plain objects → JSON.stringify for debugging, NOT "[object Object]"
+ * - Network/fetch errors → friendly message
+ * - Unknown → generic fallback
+ */
+function humanErrorMessage(error: unknown): string {
+	if (!error) return 'Unknown melt error';
+
+	// Duck-type check: use .message or .detail regardless of prototype chain
+	const maybe = error as Record<string, unknown>;
+
+	// CashuError-alike: has status and message
+	if (typeof maybe.message === 'string' && maybe.message.length > 0) {
+		// If the message is just "[object Object]", it was poorly stringified — reconstruct
+		if (maybe.message === '[object Object]') {
+			if (typeof maybe.detail === 'string') return maybe.detail;
+			if (typeof maybe.error === 'string') return maybe.error;
+			try { return JSON.stringify(error); } catch { return 'Unknown melt error'; }
+		}
+		return maybe.message as string;
+	}
+
+	// Plain object with detail/error fields (raw fetch response.json() body)
+	if (typeof maybe.detail === 'string' && maybe.detail.length > 0) return maybe.detail;
+	if (typeof maybe.error === 'string' && maybe.error.length > 0) return maybe.error;
+	if (typeof maybe.detail === 'object' && maybe.detail !== null) {
+		const d = maybe.detail as Record<string, unknown>;
+		if (typeof d.message === 'string') return d.message;
+		try { return JSON.stringify(maybe.detail); } catch { /* fall through */ }
+	}
+
+	// Fallback: JSON stringify (never return "[object Object]")
+	try {
+		return JSON.stringify(error);
+	} catch {
+		return 'Unknown melt error';
+	}
+}
+
+/**
+ * TASK-101 (F-072): Verify proofs belong to the active mint by cross-checking
+ * each proof's keyset_id against the mint's known keysets.
+ *
+ * Proofs stored with incorrect mint_url could still appear as "unspent" for
+ * this mint even though they were issued by a different mint. Filtering by
+ * known keyset IDs prevents sending foreign proofs to checkState/melt
+ * which would cause 422 "proof ownership mismatch" errors.
+ *
+ * @param proofs - Selected unspent proofs (from getUnspentProofsByMint)
+ * @param mintUrl - Active mint URL
+ * @returns Filtered proofs that belong to this mint
+ */
+async function verifyProofsMintOwnership(
+	proofs: { local_id: string; keyset_id: string; mint_url: string; amount: number; id: string; secret: string; C: string }[],
+	mintUrl: string
+): Promise<{ verified: typeof proofs; orphaned: typeof proofs }> {
+	if (proofs.length === 0) return { verified: [], orphaned: [] };
+
+	let cachedKeysets = getAllKeysets(mintUrl);
+	if (cachedKeysets.length === 0) {
+		try {
+			cachedKeysets = await fetchAndCacheKeysets(mintUrl);
+		} catch {
+			// Can't fetch keysets — return all proofs unfiltered (best-effort)
+			return { verified: proofs, orphaned: [] };
+		}
+	}
+
+	const activeKeysetIds = new Set(
+		cachedKeysets.filter(k => k.active !== false).map(k => k.id)
+	);
+
+	// Also accept inactive keysets (proofs from deactivated keysets are still valid)
+	const allKeysetIds = new Set(cachedKeysets.map(k => k.id));
+
+	const verified: typeof proofs = [];
+	const orphaned: typeof proofs = [];
+
+	for (const p of proofs) {
+		if (allKeysetIds.has(p.keyset_id)) {
+			verified.push(p);
+		} else {
+			orphaned.push(p);
+			console.warn(
+				`[melt] F-072: Orphaned proof ${p.local_id} — keyset ${p.keyset_id} not found at mint ${mintUrl}. ` +
+				`Skipping to prevent 422 checkState error.`
+			);
+		}
+	}
+
+	return { verified, orphaned };
 }
 
 // ─── Phase 1: Request Melt ───────────────────────────────────
@@ -107,6 +210,38 @@ export async function requestMelt(
 		const allProofs = await getUnspentProofsByMint(mintUrl);
 		const selectedProofs = selectProofs(allProofs, amount);
 
+		// F-072 (TASK-101): Verify proofs actually belong to this mint
+		// Cross-check keyset_id against the mint's known keysets to prevent
+		// sending foreign proofs that would cause 422 "proof ownership mismatch"
+		const { verified, orphaned } = await verifyProofsMintOwnership(
+			selectedProofs.map(p => ({
+				local_id: p.local_id,
+				keyset_id: p.keyset_id,
+				mint_url: p.mint_url,
+				amount: p.amount,
+				id: p.id,
+				secret: p.secret,
+				C: p.C
+			})),
+			mintUrl
+		);
+
+		if (verified.length === 0 && orphaned.length > 0) {
+			throw new Error(
+				`All ${orphaned.length} selected proofs belong to a different mint. ` +
+				`Cannot melt — proofs were stored with wrong mint_url or are orphaned.`
+			);
+		}
+
+		// Use only verified proofs; orphaned proofs are excluded
+		const meltProofs = verified.length > 0 ? verified : orphaned;
+		if (orphaned.length > 0) {
+			console.warn(
+				`[melt] F-072: Excluded ${orphaned.length} orphaned proof(s) from melt selection. ` +
+				`Using ${verified.length} verified proof(s).`
+			);
+		}
+
 		// Step 1.5: Calculate fee from keyset input_fee_ppk (C05-05)
 		let inputFeePpk = 0;
 		let calculatedFee = 0;
@@ -114,16 +249,16 @@ export async function requestMelt(
 		if (cachedKeysets.length === 0) {
 			cachedKeysets = await fetchAndCacheKeysets(mintUrl);
 		}
-		const proofKeysetId = selectedProofs[0].keyset_id;
+		const proofKeysetId = meltProofs[0].id;
 		const proofKeyset = cachedKeysets.find(k => k.id === proofKeysetId);
 		if (proofKeyset) {
 			inputFeePpk = proofKeyset.input_fee_ppk ?? 0;
-			calculatedFee = inputFeePpk * selectedProofs.length;
+			calculatedFee = inputFeePpk * meltProofs.length;
 		}
 
 		// Step 1.6: Verify proof state with mint before melting (C07-02)
 		const stateCheck = await checkState(mintUrl,
-			selectedProofs.map(p => ({ secret: p.secret, C: p.C }))
+			meltProofs.map(p => ({ secret: p.secret, C: p.C }))
 		);
 		for (const ps of stateCheck.states) {
 			if (ps.state === 'SPENT') {
@@ -134,7 +269,7 @@ export async function requestMelt(
 		// Step 2: Request melt quote
 		const quote: MeltQuote = await requestMeltQuote(mintUrl, invoice, amount);
 
-		const proofInfos: SelectedProofInfo[] = selectedProofs.map(p => ({
+		const proofInfos: SelectedProofInfo[] = meltProofs.map(p => ({
 			local_id: p.local_id,
 			amount: p.amount,
 			id: p.id,
@@ -156,8 +291,8 @@ export async function requestMelt(
 			mintUrl
 		};
 	} catch (error) {
-		const msg = error instanceof Error ? error.message : String(error);
-		if (msg.includes('fetch') || msg.includes('Network') || msg.includes('unreachable')) {
+		const msg = humanErrorMessage(error);
+		if (msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('network') || msg.toLowerCase().includes('unreachable')) {
 			return {
 				success: false,
 				quote: '',
@@ -287,16 +422,36 @@ export async function completeMelt(
 			await addProofs(changeProofs, mintUrl, inputs[0].id);
 		}
 
+		// Step 7: Record transaction (F-063) — no silent swallowing
+		let txStatus = 'Recording failed ⚠️';
+		try {
+			await addTransaction({
+				id: `melt-${quoteId}`,
+				type: 'melt',
+				amount,
+				mint_url: mintUrl,
+				timestamp: Date.now(),
+				token_hash: null,
+				invoice,
+				status: 'confirmed'
+			} as Transaction);
+			txStatus = 'Transaction recorded: ✅';
+			console.log('[melt]', txStatus);
+		} catch (err) {
+			console.error('[melt] Recording failed ⚠️', err);
+		}
+
 		return {
 			success: true,
 			change: changeProofs,
 			preimage: response.preimage,
 			spentAmount: spentTotal,
-			feeReserve
+			feeReserve,
+			txStatus
 		};
 	} catch (error) {
-		const msg = error instanceof Error ? error.message : String(error);
-		if (msg.includes('fetch') || msg.includes('Network') || msg.includes('unreachable')) {
+		const msg = humanErrorMessage(error);
+		if (msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('network') || msg.toLowerCase().includes('unreachable')) {
 			return {
 				success: false,
 				change: [],
@@ -370,8 +525,8 @@ export async function meltFlow(
 			error: completeResult.error
 		};
 	} catch (error) {
-		const msg = error instanceof Error ? error.message : String(error);
-		if (msg.includes('fetch') || msg.includes('Network') || msg.includes('unreachable')) {
+		const msg = humanErrorMessage(error);
+		if (msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('network') || msg.toLowerCase().includes('unreachable')) {
 			return {
 				success: false,
 				change: [],

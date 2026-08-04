@@ -1,14 +1,15 @@
 <script lang="ts">
 	import { _ } from 'svelte-i18n';
-	import { getWalletStatus, type WalletState } from '$lib/wallet/state';
+	import { getWalletStatus, tryAutoUnlock, type WalletState } from '$lib/wallet/state';
 	import type { ScreenKey } from '$lib/router';
 	import { getCurrentScreen, navigateTo, onRouteChange } from '$lib/router';
 	import { initPwaInstall } from '$lib/pwa-install';
 	import { trackWasOffline } from '$lib/offline-indicator';
 
-	// TASK-076 (F-041): Import getActiveMintUrl for mint URL propagation
-	// to Receive/Send screens — reads lnwcash_active_mint from localStorage
-	import { getActiveMintUrl } from '$lib/wallet/store';
+	// TASK-076 (F-041) / TASK-091 (F-066): Import reactive activeMintStore
+	// for mint URL propagation to Receive/Send screens.
+	// Uses Svelte writable store — auto-reacts on mint switch (no page reload).
+	import { activeMintStore } from '$lib/wallet/store';
 
 	// TASK-067: Theme reactivity — $effect subscribes to themeMode store
 	// and applies data-theme attribute to document.documentElement reactively.
@@ -43,9 +44,6 @@
 	let appView: AppView = $state('splash');
 	let showQRScan: boolean = $state(false);
 
-	// TASK-076 (F-041): Active mint URL for propagation to Receive/Send
-	let activeMintUrl: string = $state('');
-
 	// ─── Initialize on mount ──────────────────────────────────
 	$effect(() => {
 		const pwaCleanup = initPwaInstall();
@@ -56,29 +54,55 @@
 			showQRScan = false;
 		});
 
-		// Check wallet state
+		// TASK-092 (F-061): Wallet state + auto-unlock via sessionStorage PIN
+		// Sync check: determine tentative view. Auto-unlock (async below)
+		// will restore in-memory private key from sessionStorage PIN after refresh.
+		let tentativeView: AppView = 'setup';
 		try {
 			const status = getWalletStatus();
 			walletStatus = status;
 			if (status.state === 'UNINITIALIZED') {
-				appView = 'setup';
+				tentativeView = 'setup';
 			} else if (status.state === 'LOCKED') {
-				appView = 'setup';
+				tentativeView = 'setup';
 			} else {
-				appView = 'main';
+				// UNLOCKED in localStorage — tentative main,
+				// but auto-unlock will verify/fix private key availability
+				tentativeView = 'main';
 			}
 		} catch {
-			appView = 'setup';
+			tentativeView = 'setup';
 		}
+		appView = tentativeView;
 
-		// TASK-076 (F-041): Read active mint URL from localStorage
-		// Falls back to DEFAULT_MINT_CONFIG.url when no mint configured
-		try {
-			activeMintUrl = getActiveMintUrl();
-		} catch {
-			// If localStorage is completely broken, rely on derived fallback
-			activeMintUrl = '';
-		}
+		// TASK-092 (F-061): Async auto-unlock attempt.
+		// Restores in-memory private key from sessionStorage PIN after page refresh.
+		// If tentativeView was 'main' but private key is missing, downgrades to 'setup'.
+		(async () => {
+			const status = getWalletStatus();
+			if (status.state === 'UNINITIALIZED') return; // nothing to unlock
+
+			try {
+				const didUnlock = await tryAutoUnlock();
+				if (didUnlock) {
+					walletStatus = getWalletStatus();
+					appView = 'main';
+				} else if (tentativeView === 'main') {
+					// UNLOCKED in localStorage but private key missing
+					// and no valid session PIN → force unlock screen
+					appView = 'setup';
+				}
+			} catch {
+				// Auto-unlock failed — keep tentative view or downgrade
+				if (tentativeView === 'main') {
+					appView = 'setup';
+				}
+			}
+		})();
+
+		// TASK-091 (F-066): reactiveMintStore auto-initialized from localStorage
+		// on module load — no manual read needed. $activeMintStore in template
+		// auto-subscribes and reactively propagates to Receive/Send props.
 
 		return () => {
 			pwaCleanup();
@@ -137,13 +161,13 @@
 	}
 
 	// Determine if back button should show (only on Send/Receive sub-pages per TASK-060)
-	let showBack = $derived(activeScreen === 'send' || activeScreen === 'receive');
+	let showBack = $derived((activeScreen as string) === 'send' || (activeScreen as string) === 'receive');
 	let isMainNavScreen = $derived(
-		activeScreen === 'home' ||
-		activeScreen === 'receive' ||
-		activeScreen === 'send' ||
-		activeScreen === 'history' ||
-		activeScreen === 'settings'
+		(activeScreen as string) === 'home' ||
+		(activeScreen as string) === 'receive' ||
+		(activeScreen as string) === 'send' ||
+		(activeScreen as string) === 'history' ||
+		(activeScreen as string) === 'settings'
 	);
 
 </script>
@@ -168,21 +192,21 @@
 			</div>
 		{:else}
 			<!-- TASK-086 (F-057): Header dedup — Home/History get full TopAppBar; other screens use own headers -->
-			{#if activeScreen === 'home' || activeScreen === 'history'}
+			{#if (activeScreen as string) === 'home' || (activeScreen as string) === 'history'}
 				<TopAppBar screen={activeScreen} showBack={false} onMenuClick={() => navigateTo('settings')} />
 			{/if}
 
 			<!-- Screen Content -->
 			<div class="main-content">
-				{#if activeScreen === 'home'}
+				{#if (activeScreen as string) === 'home'}
 					<Home onQRScan={handleQRScanRequest} />
-				{:else if activeScreen === 'receive'}
-					<Receive onQRScan={handleQRScanRequest} defaultMintUrl={activeMintUrl} />
-				{:else if activeScreen === 'send'}
-					<Send onQRScan={handleQRScanRequest} defaultMintUrl={activeMintUrl} />
-				{:else if activeScreen === 'history'}
+				{:else if (activeScreen as string) === 'receive'}
+					<Receive onQRScan={handleQRScanRequest} defaultMintUrl={$activeMintStore} />
+				{:else if (activeScreen as string) === 'send'}
+					<Send onQRScan={handleQRScanRequest} defaultMintUrl={$activeMintStore} />
+				{:else if (activeScreen as string) === 'history'}
 					<History />
-				{:else if activeScreen === 'settings'}
+				{:else if (activeScreen as string) === 'settings'}
 					<Settings onBack={handleBack} />
 				{/if}
 			</div>

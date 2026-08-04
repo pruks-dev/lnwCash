@@ -32,7 +32,15 @@ export {
 	getBalanceByMint as getTotalBalanceBreakdown,
 	getProofCount,
 	clearProofs,
-	type StoredProof
+	migrateProofs,
+	getOrphanedProofs,
+	clearOrphaned,
+	needsMigration,
+	updateProofMintUrl,
+	markOrphaned,
+	type StoredProof,
+	type KnownMintInfo,
+	type MigrationResult
 } from './proofsDb';
 
 export {

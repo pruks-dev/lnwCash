@@ -18,10 +18,12 @@
 	import { _ } from 'svelte-i18n';
 	import { meltFlow, type MeltResult } from '$lib/wallet/melt';
 	import { sendTokens, type SendResult } from '$lib/wallet/transfer';
-	import { InsufficientFundsError } from '$lib/wallet/errors';
+	import { InsufficientFundsError, WalletLockedError } from '$lib/wallet/errors';
 	import { requestMeltQuote, CashuError } from '$lib/cashu/client';
 	import { getBalance, getBalanceByMint } from '$lib/wallet/balance';
 	import { navigateTo } from '$lib/router';
+	import { getMintConfig } from '$lib/wallet/store';
+	import { decodeBolt11, isValidBolt11, type Bolt11Decoded, type Bolt11Error } from '$lib/wallet/bolt11';
 
 	import Card from '$lib/components/ui/Card.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
@@ -31,6 +33,7 @@
 	import Toast from '$lib/components/ui/Toast.svelte';
 	import Numpad from '$lib/components/Numpad.svelte';
 	import QRDisplay from '$lib/components/QRDisplay.svelte';
+	import UnlockPrompt from '../components/UnlockPrompt.svelte';
 
 	import SendIcon from '$lib/components/icons/Send.svelte';
 	import Copy from '$lib/components/icons/Copy.svelte';
@@ -86,8 +89,47 @@
 	let toastType: 'info' | 'success' | 'error' = $state('info');
 	let toastVisible: boolean = $state(false);
 
+	// TASK-092 (F-061): Unlock prompt state for wallet lock fallback
+	let showUnlockPrompt: boolean = $state(false);
+	let unlockPendingOp: (() => Promise<void>) | null = $state(null);
+
+	function handleUnlockSuccess() {
+		showUnlockPrompt = false;
+		if (unlockPendingOp) {
+			const retry = unlockPendingOp;
+			unlockPendingOp = null;
+			retry();
+		}
+	}
+
+	function handleUnlockCancel() {
+		showUnlockPrompt = false;
+		unlockPendingOp = null;
+		// Reset sending states so UI isn't stuck
+		if (lightningState === 'sending') {
+			lightningState = 'idle';
+			showConfirmDialog = false;
+		}
+		if (cashuState === 'loading') {
+			cashuState = 'idle';
+		}
+	}
+
+	// F-066: Reactive mint URL subscription — propagates from App.svelte via props.
+	// The old `!mintUrl` guard has been REMOVED. Now mintUrl always follows
+	// defaultMintUrl so that Mint Settings switch immediately updates Send.
 	$effect(() => {
-		if (defaultMintUrl && !mintUrl) {
+		if (defaultMintUrl) {
+			if (mintUrl && mintUrl !== defaultMintUrl) {
+				// Show toast on mint switch
+				try {
+					const config = getMintConfig(defaultMintUrl);
+					const name = config?.name || defaultMintUrl;
+					showToast(`Switched to mint: ${name}`, 'info');
+				} catch {
+					showToast(`Switched to mint: ${defaultMintUrl}`, 'info');
+				}
+			}
 			mintUrl = defaultMintUrl;
 		}
 	});
@@ -172,46 +214,48 @@
 		lightningError = '';
 		lightningState = 'idle';
 
-		// Auto-validate on input
+		// Auto-validate on input — only try bolt11 invoices
 		const text = lightningInvoiceInput.trim();
 		if (text.startsWith('lnbc') || text.startsWith('lntb') || text.startsWith('lnbcrt')) {
 			validateInvoiceSimple(text);
 		}
 	}
 
+	/**
+	 * F-062: Validate bolt11 invoice using full bech32 decoder.
+	 * Validates checksum, extracts amount, description, and payment hash.
+	 * Rejects invalid invoices early before melt flow.
+	 */
 	function validateInvoiceSimple(invoice: string) {
 		lightningState = 'validating';
 
-		try {
-			// Basic bolt11 validation — extract amount from human-readable part
-			const hrp = invoice.split('1')[0];
-			let amount = 0;
+		const result = decodeBolt11(invoice);
 
-			// Parse amount from HRP (e.g., "lnbc2500u" → 250000000msat → 2500 sat)
-			const amountMatch = hrp.match(/lnbc(?:rt)?(\d+)?([munp])?/);
-			if (amountMatch) {
-				const digits = amountMatch[1] || '';
-				const multiplier = amountMatch[2] || '';
-				if (digits) {
-					let num = parseInt(digits, 10);
-					switch (multiplier) {
-						case 'm': num *= 100000; break;   // milli
-						case 'u': num *= 100; break;      // micro
-						case 'n': num /= 10; break;       // nano
-						case 'p': num /= 10000; break;    // pico
-					}
-					amount = num;
-				}
-			}
-
-			lightningInvoiceAmount = amount;
-			lightningInvoiceDesc = `Invoice ${invoice.substring(0, 20)}...`;
-			lightningInvoiceValid = true;
-			lightningState = 'idle';
-		} catch {
+		if ('code' in result) {
+			// Invalid invoice — reject
 			lightningError = $_('screen.send.error_invalid_invoice');
 			lightningState = 'error';
+			lightningInvoiceValid = false;
+			return;
 		}
+
+		// Valid invoice — extract details
+		lightningInvoiceAmount = result.amountSat;
+		lightningInvoiceDesc = result.description || formatBolt11Summary(result);
+		lightningInvoiceValid = true;
+		lightningState = 'idle';
+	}
+
+	/** Format a brief summary from bolt11 decoded data */
+	function formatBolt11Summary(decoded: Bolt11Decoded): string {
+		const parts: string[] = [];
+		if (decoded.amountSat > 0) {
+			parts.push(`${formatSat(decoded.amountSat)} sat`);
+		}
+		if (decoded.paymentHash) {
+			parts.push(`hash: ${decoded.paymentHash.substring(0, 8)}...`);
+		}
+		return parts.length > 0 ? parts.join(' — ') : decoded.hrp;
 	}
 
 	async function handlePasteInvoice() {
@@ -297,6 +341,14 @@
 				showToast(lightningError, 'error');
 			}
 		} catch (e) {
+			// TASK-092 (F-061): Wallet lock fallback — show unlock prompt + retry
+			if (e instanceof WalletLockedError) {
+				lightningState = 'idle';
+				showConfirmDialog = false;
+				unlockPendingOp = () => executeLightningSend();
+				showUnlockPrompt = true;
+				return;
+			}
 			lightningError = mapMeltError(e);
 			lightningState = 'error';
 			showToast(lightningError, 'error');
@@ -373,6 +425,13 @@
 			cashuState = 'success';
 			showToast($_('screen.send.token_created'), 'success');
 		} catch (e) {
+			// TASK-092 (F-061): Wallet lock fallback — show unlock prompt + retry
+			if (e instanceof WalletLockedError) {
+				cashuState = 'idle';
+				unlockPendingOp = () => handleCreateToken();
+				showUnlockPrompt = true;
+				return;
+			}
 			cashuError = mapMeltError(e);
 			cashuState = 'error';
 			showToast(cashuError, 'error');
@@ -716,6 +775,13 @@
 			</div>
 		{/snippet}
 	</Modal>
+
+	<!-- TASK-092 (F-061): Unlock Prompt — shown when wallet lock detected -->
+	<UnlockPrompt
+		open={showUnlockPrompt}
+		onunlock={handleUnlockSuccess}
+		oncancel={handleUnlockCancel}
+	/>
 
 	<!-- Toast -->
 	<div class="toast-container">

@@ -116,8 +116,7 @@ describe('Offline operations', () => {
 			await addProofs([makeProof('a', 32)], MINT_URL, KEYSET_ID);
 
 			const token = await sendEcashP2P(10, MINT_URL);
-			expect(token).toMatch(/^cashuA/);
-
+			expect(token).toMatch(/^cashu[AB]/);
 			const decoded = decodeToken(token);
 			expect(decoded.mint).toBe(MINT_URL);
 			expect(decoded.proofs.length).toBeGreaterThan(0);
@@ -144,10 +143,10 @@ describe('Offline operations', () => {
 			expect(result.unit).toBe('sat');
 		});
 
-		it('should detect missing cashuA prefix', () => {
+		it('should detect missing cashuA or cashuB prefix', () => {
 			const result = semiVerifyRedeem('not-a-token');
 			expect(result.plausiblyValid).toBe(false);
-			expect(result.issues).toContain('Missing cashuA prefix');
+			expect(result.issues).toContain('Missing cashuA or cashuB prefix');
 		});
 
 		it('should detect invalid base64', () => {

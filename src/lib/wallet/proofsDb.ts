@@ -17,6 +17,13 @@ export interface StoredProof extends TokenProof {
 	stored_at: number;
 	/** Whether the proof is still available (not spent) */
 	spent: boolean;
+	/**
+	 * TASK-101 (F-072): Orphaned flag — true when the proof's keyset_id
+	 * does not match any known keyset at any registered mint.
+	 * Orphaned proofs are excluded from melt/spend operations and must be
+	 * manually reviewed or deleted.
+	 */
+	orphaned?: boolean;
 }
 
 // ─── DB Setup ────────────────────────────────────────────────
@@ -113,7 +120,7 @@ export async function getAllProofs(): Promise<StoredProof[]> {
 export async function getUnspentProofs(): Promise<StoredProof[]> {
 	const db = await getDB();
 	const all = await db.getAll(STORE_NAME);
-	return all.filter(p => !p.spent);
+	return all.filter(p => !p.spent && !p.orphaned);
 }
 
 export async function getProofsByMint(mintUrl: string): Promise<StoredProof[]> {
@@ -124,7 +131,7 @@ export async function getProofsByMint(mintUrl: string): Promise<StoredProof[]> {
 
 export async function getUnspentProofsByMint(mintUrl: string): Promise<StoredProof[]> {
 	const proofs = await getProofsByMint(mintUrl);
-	return proofs.filter(p => !p.spent);
+	return proofs.filter(p => !p.spent && !p.orphaned);
 }
 
 export async function getProofById(localId: string): Promise<StoredProof | undefined> {
@@ -171,7 +178,7 @@ export async function getProofCount(): Promise<number> {
 
 /**
  * Get total balance across all stored proofs.
- * Only counts unspent proofs.
+ * Only counts unspent, non-orphaned proofs.
  */
 export async function getTotalBalance(): Promise<number> {
 	const unspent = await getUnspentProofs();
@@ -190,4 +197,195 @@ export async function getBalanceByMint(): Promise<Record<string, number>> {
 	}
 
 	return breakdown;
+}
+
+// ─── TASK-101 (F-072): Proof Migration ────────────────────────
+
+/**
+ * Information about a known mint for proof migration.
+ * Used to cross-check proofs' keyset_id against registered mints.
+ */
+export interface KnownMintInfo {
+	/** Normalized mint URL (no trailing slash) */
+	url: string;
+	/** All known keyset IDs for this mint (active + inactive) */
+	keysetIds: string[];
+}
+
+/**
+ * Migration result — counts of what happened during migration.
+ */
+export interface MigrationResult {
+	/** Proofs that were already correctly tagged */
+	unchanged: number;
+	/** Proofs re-tagged (mint_url updated) to correct mint */
+	retagged: number;
+	/** Proofs flagged as orphaned (keyset doesn't match any known mint) */
+	orphaned: number;
+	/** Total proofs scanned */
+	total: number;
+}
+
+/**
+ * TASK-101 (F-072): Update a proof's mint_url field.
+ *
+ * Used during proof migration when a proof's keyset_id matches a different
+ * mint than its stored mint_url — re-tags the proof so it appears under
+ * the correct mint's unspent balance.
+ */
+export async function updateProofMintUrl(
+	localId: string,
+	newMintUrl: string
+): Promise<void> {
+	const db = await getDB();
+	const tx = db.transaction(STORE_NAME, 'readwrite');
+	const stored = await tx.store.get(localId);
+	if (stored) {
+		stored.mint_url = newMintUrl;
+		await tx.store.put(stored);
+	}
+	await tx.done;
+}
+
+/**
+ * TASK-101 (F-072): Mark a proof as orphaned (keyset doesn't match any known mint).
+ *
+ * Orphaned proofs are excluded from melt/spend operations.
+ * They remain in the database for manual review rather than being deleted.
+ */
+export async function markOrphaned(localId: string): Promise<void> {
+	const db = await getDB();
+	const tx = db.transaction(STORE_NAME, 'readwrite');
+	const stored = await tx.store.get(localId);
+	if (stored) {
+		stored.orphaned = true;
+		await tx.store.put(stored);
+	}
+	await tx.done;
+}
+
+/**
+ * TASK-101 (F-072): Scan all proofs and migrate/re-tag based on known mint keysets.
+ *
+ * For each proof in the database:
+ *  1. Look up its keyset_id against all known mints' keysets
+ *  2. If keyset matches a different mint than stored mint_url → re-tag (update mint_url)
+ *  3. If keyset doesn't match ANY known mint → flag as orphaned
+ *  4. If keyset matches the stored mint_url → leave unchanged
+ *
+ * Call this once on app load (in App.svelte onMount) to clean up proofs
+ * that were stored with incorrect mint_url due to mint URL changes or
+ * copy-paste errors.
+ *
+ * @param knownMints - Array of registered mints with their known keyset IDs
+ * @param dryRun - If true, only reports what would change without applying changes
+ * @returns MigrationResult with counts
+ */
+export async function migrateProofs(
+	knownMints: KnownMintInfo[],
+	dryRun: boolean = false
+): Promise<MigrationResult> {
+	const result: MigrationResult = {
+		unchanged: 0,
+		retagged: 0,
+		orphaned: 0,
+		total: 0
+	};
+
+	// Build lookup: keyset_id → mint_url
+	const keysetToMint = new Map<string, string>();
+	for (const mint of knownMints) {
+		for (const ksId of mint.keysetIds) {
+			// If a keyset appears in multiple mints, skip — ambiguous
+			if (keysetToMint.has(ksId)) {
+				keysetToMint.set(ksId, '__AMBIGUOUS__');
+			} else {
+				keysetToMint.set(ksId, mint.url);
+			}
+		}
+	}
+
+	const db = await getDB();
+	const allProofs = await db.getAll(STORE_NAME);
+	result.total = allProofs.length;
+
+	for (const proof of allProofs) {
+		// Skip already-spent proofs
+		if (proof.spent) {
+			result.unchanged++;
+			continue;
+		}
+
+		const matchedMint = keysetToMint.get(proof.keyset_id);
+
+		if (!matchedMint) {
+			// Keyset not found in any known mint → orphaned
+			result.orphaned++;
+			if (!dryRun) {
+				await markOrphaned(proof.local_id);
+				console.warn(
+					`[proofsDb] F-072: Orphaned proof ${proof.local_id} — ` +
+					`keyset ${proof.keyset_id} not found in any known mint.`
+				);
+			}
+		} else if (matchedMint === '__AMBIGUOUS__') {
+			// Keyset appears in multiple mints — can't determine owner
+			result.orphaned++;
+			if (!dryRun) {
+				await markOrphaned(proof.local_id);
+				console.warn(
+					`[proofsDb] F-072: Ambiguous proof ${proof.local_id} — ` +
+					`keyset ${proof.keyset_id} found in multiple mints. Flagged as orphaned.`
+				);
+			}
+		} else if (matchedMint !== proof.mint_url) {
+			// Keyset matches a different mint → re-tag
+			result.retagged++;
+			if (!dryRun) {
+				await updateProofMintUrl(proof.local_id, matchedMint);
+				console.info(
+					`[proofsDb] F-072: Re-tagged proof ${proof.local_id}: ` +
+					`${proof.mint_url} → ${matchedMint} (keyset match)`
+				);
+			}
+		} else {
+			// Already correct
+			result.unchanged++;
+		}
+	}
+
+	return result;
+}
+
+/**
+ * TASK-101 (F-072): Get all orphaned proofs (for UI display/manual review).
+ */
+export async function getOrphanedProofs(): Promise<StoredProof[]> {
+	const db = await getDB();
+	const all = await db.getAll(STORE_NAME);
+	return all.filter(p => p.orphaned === true && !p.spent);
+}
+
+/**
+ * TASK-101 (F-072): Remove the orphaned flag from a proof (un-orphan).
+ * Used when user confirms a proof is valid or when keyset is later discovered.
+ */
+export async function clearOrphaned(localId: string): Promise<void> {
+	const db = await getDB();
+	const tx = db.transaction(STORE_NAME, 'readwrite');
+	const stored = await tx.store.get(localId);
+	if (stored) {
+		stored.orphaned = false;
+		await tx.store.put(stored);
+	}
+	await tx.done;
+}
+
+/**
+ * TASK-101 (F-072): Check if migration is needed (any proofs with mismatch exist).
+ * Quick check before running full migration — returns true if migration needed.
+ */
+export async function needsMigration(knownMints: KnownMintInfo[]): Promise<boolean> {
+	const dryRunResult = await migrateProofs(knownMints, true);
+	return dryRunResult.retagged > 0 || dryRunResult.orphaned > 0;
 }
