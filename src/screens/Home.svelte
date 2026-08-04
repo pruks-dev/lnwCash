@@ -319,6 +319,10 @@
 		border-radius: 0;
 		padding: var(--space-lg);
 		box-shadow: none;
+		height: calc(100dvh - 56px - 80px);
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
 	}
 
 	.balance-section {

@@ -3,7 +3,6 @@
  * Uses localStorage for caching (via storage/local.ts).
  */
 
-import { getKeysets as fetchKeysetsFromMint } from './client';
 import { setKeysetCache, getKeysetCache, clearKeysetCache } from '../storage/local';
 import type { KeysetCacheEntry } from '../types';
 
@@ -12,18 +11,36 @@ import type { KeysetCacheEntry } from '../types';
 /**
  * Fetch keysets from mint API and cache them in localStorage.
  * Each mint's keysets are stored separately by mint URL.
+ *
+ * Calls /v1/keys to get keysets with their keys included.
  */
 export async function fetchAndCacheKeysets(mintUrl: string): Promise<KeysetCacheEntry[]> {
-	// Fetch from mint API
-	const mintKeysets = await fetchKeysetsFromMint(mintUrl);
+	// Fetch from /v1/keys endpoint (includes keys in response)
+	const url = `${mintUrl.replace(/\/+$/, '')}/v1/keys`;
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), 15000);
+	let data: { keysets?: Array<{ id: string; unit: string; active: boolean; input_fee_ppk?: number; keys: Record<number, string> }> };
+	try {
+		const res = await fetch(url, {
+			headers: { 'Accept': 'application/json' },
+			signal: controller.signal
+		});
+		if (!res.ok) {
+			throw new Error(`HTTP ${res.status}: Failed to fetch keys`);
+		}
+		data = await res.json();
+	} finally {
+		clearTimeout(timeout);
+	}
 
-	// Convert to cache entries
+	// Convert to cache entries with keys populated
+	const mintKeysets = data?.keysets ?? [];
 	const cache: KeysetCacheEntry[] = mintKeysets.map(ks => ({
 		id: ks.id,
 		unit: ks.unit,
 		active: ks.active,
 		input_fee_ppk: ks.input_fee_ppk ?? 0,
-		keys: {},
+		keys: ks.keys ?? {},
 		last_updated: Date.now()
 	}));
 

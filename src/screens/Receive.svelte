@@ -340,10 +340,20 @@
 			const postBody = outputs.map(o => ({ amount: o.amount, id: o.id, B_: o.B_ }));
 			const response = await mintTokens(mintUrlClean, pendingQuoteId, postBody);
 
+			// Fetch mint info for public key (additive unblinding)
+			let mintPubkey: string | undefined;
+			try {
+				const { getMintInfo } = await import('$lib/cashu/client');
+				const info = await getMintInfo(mintUrlClean);
+				mintPubkey = info.pubkey;
+			} catch {
+				// Fallback to multiplicative unblinding
+			}
+
 			// Step 5: Unblind signatures → proofs
 			const proofs = response.signatures.map((sig, i) => {
 				const output = outputs[i];
-				const C = unblindSignature(sig.C_, output.blindingFactor);
+				const C = unblindSignature(sig.C_, output.blindingFactor, mintPubkey);
 				return { id: sig.id, amount: sig.amount, secret: output.secret, C };
 			});
 
@@ -743,6 +753,12 @@
 								<Body size="sm" color="secondary">{$_('screen.receive.proof_count')}</Body>
 								<Body size="sm" weight="semibold">{cashuReceiveResult.proofCount}</Body>
 							</div>
+							{#if cashuReceiveResult.dleqCount !== undefined && cashuReceiveResult.dleqCount > 0}
+								<div class="detail-row">
+									<Body size="sm" color="secondary">DLEQ</Body>
+									<Body size="sm" weight="semibold">{cashuReceiveResult.dleqCount} verified</Body>
+								</div>
+							{/if}
 						</div>
 						<Button variant="primary" onclick={resetCashu}>
 							{#snippet children()}{$_('common.ok')}{/snippet}

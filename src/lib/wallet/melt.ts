@@ -7,7 +7,7 @@
  *
  * All mint URLs are passed as parameters — no hardcoding.
  */
-import { requestMeltQuote, meltTokens as postMelt, checkState, checkMeltQuote } from '../cashu/client';
+import { requestMeltQuote, meltTokens as postMelt, checkState, checkMeltQuote, getMintInfo } from '../cashu/client';
 import { blindMessage, unblindSignature, deterministicBlindingFactor } from '../cashu/blind';
 import { fetchAndCacheKeysets, getAllKeysets, getKeysetById } from '../cashu/keyset';
 import { getPrivateKey } from './state';
@@ -269,7 +269,34 @@ export async function requestMelt(
 		// Step 2: Request melt quote
 		const quote: MeltQuote = await requestMeltQuote(mintUrl, invoice, amount);
 
-		const proofInfos: SelectedProofInfo[] = meltProofs.map(p => ({
+		// F-069: Account for fee_reserve in proof selection
+		const totalNeeded = amount + quote.fee_reserve;
+		const selectedSum = sumProofs(meltProofs.map(p => ({ ...p, spent: false })));
+		let finalProofs = meltProofs;
+		if (selectedSum < totalNeeded) {
+			const reselected = selectProofs(allProofs, totalNeeded);
+			const { verified: reverified, orphaned: reorphaned } = await verifyProofsMintOwnership(
+				reselected.map(p => ({
+					local_id: p.local_id,
+					keyset_id: p.keyset_id,
+					mint_url: p.mint_url,
+					amount: p.amount,
+					id: p.id,
+					secret: p.secret,
+					C: p.C
+				})),
+				mintUrl
+			);
+			if (reverified.length === 0 && reorphaned.length > 0) {
+				throw new Error(
+					`All ${reorphaned.length} reselected proofs belong to a different mint. ` +
+					`Cannot melt — proofs were stored with wrong mint_url or are orphaned.`
+				);
+			}
+			finalProofs = reverified.length > 0 ? reverified : reorphaned;
+		}
+
+		const proofInfos: SelectedProofInfo[] = finalProofs.map(p => ({
 			local_id: p.local_id,
 			amount: p.amount,
 			id: p.id,
@@ -403,15 +430,28 @@ export async function completeMelt(
 
 		// Step 5: Unblind change signatures
 		if (response.change && outputs.length > 0) {
+			// Fetch mint info for public key (additive unblinding)
+			let mintPubkey: string | undefined;
+			try {
+				const info = await getMintInfo(mintUrl);
+				mintPubkey = info.pubkey;
+			} catch {
+				// Fallback to multiplicative unblinding
+			}
+
 			changeProofs = response.change.map((sig, i) => {
 				const output = outputs[i];
-				const C = unblindSignature(sig.C_, output.blindingFactor);
-				return {
+				const C = unblindSignature(sig.C_, output.blindingFactor, mintPubkey);
+				const proof: TokenProof = {
 					id: sig.id,
 					amount: sig.amount,
 					secret: output.secret,
 					C
 				};
+				if (sig.dleq) {
+					proof.dleq = sig.dleq;
+				}
+				return proof;
 			});
 		}
 
@@ -441,11 +481,13 @@ export async function completeMelt(
 			console.error('[melt] Recording failed ⚠️', err);
 		}
 
+		const netSpent = amount + feeReserve;
+
 		return {
 			success: true,
 			change: changeProofs,
 			preimage: response.preimage,
-			spentAmount: spentTotal,
+			spentAmount: netSpent,
 			feeReserve,
 			txStatus
 		};

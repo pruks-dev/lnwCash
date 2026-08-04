@@ -236,9 +236,6 @@
 		<Chip variant={activeFilter === 'melt' ? 'active' : 'default'} onclick={() => setFilter('melt')}>
 			{$_('screen.history.filter_send')}
 		</Chip>
-		<Chip variant={activeFilter === 'transfer' ? 'active' : 'default'} onclick={() => setFilter('transfer')}>
-			{$_('screen.history.filter_transfer')}
-		</Chip>
 	</div>
 
 	<Divider />

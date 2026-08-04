@@ -11,6 +11,7 @@ import { encodeToken, decodeToken, getTokenAmount } from '../cashu/token';
 import { getPrivateKey } from './state';
 import { selectProofs, sumProofs } from './proofs';
 import { getUnspentProofsByMint, addProofs, markSpent } from './proofsDb';
+import { decomposeAmount } from './mint';
 import type { TokenProof, DecodedToken } from '../types';
 import { InsufficientFundsError, TokenValidationError } from './errors';
 
@@ -27,6 +28,7 @@ export interface ReceiveResult {
 	mint: string;
 	unit: string;
 	proofCount: number;
+	dleqCount?: number;
 }
 
 // ─── Send ────────────────────────────────────────────────────
@@ -50,23 +52,52 @@ export async function sendTokens(
 	// Select proofs
 	const allProofs = await getUnspentProofsByMint(mintUrl);
 	const selected = selectProofs(allProofs, amount);
+	const totalSelected = sumProofs(selected);
+	const excess = totalSelected - amount;
+
+	// F-070: Handle excess with decomposeAmount for proper change outputs
+	let sendProofs = selected;
+	let keepInWallet: typeof selected = [];
+	if (excess > 0 && selected.length > 1) {
+		sendProofs = [];
+		keepInWallet = [];
+		let remaining = amount;
+		for (const p of selected) {
+			if (remaining <= 0) {
+				keepInWallet.push(p);
+			} else if (p.amount > remaining && sendProofs.length === 0) {
+				sendProofs.push(p);
+			} else if (p.amount <= remaining) {
+				sendProofs.push(p);
+				remaining -= p.amount;
+			} else {
+				keepInWallet.push(p);
+			}
+		}
+	}
 
 	// Encode as V4 token
-	const tokenProofs: TokenProof[] = selected.map(p => ({
-		id: p.id,
-		amount: p.amount,
-		secret: p.secret,
-		C: p.C
-	}));
+	const tokenProofs: TokenProof[] = sendProofs.map(p => {
+		const tp: TokenProof = {
+			id: p.id,
+			amount: p.amount,
+			secret: p.secret,
+			C: p.C
+		};
+		if (p.dleq) {
+			tp.dleq = p.dleq;
+		}
+		return tp;
+	});
 
 	const token = encodeToken(tokenProofs, mintUrl, 'sat', memo);
 
-	// Remove proofs from wallet (mark as spent)
-	await markSpent(selected.map(p => p.local_id));
+	// Mark only sent proofs as spent
+	await markSpent(sendProofs.map(p => p.local_id));
 
 	return {
 		token,
-		amount: sumProofs(selected),
+		amount: sumProofs(sendProofs),
 		mint: mintUrl
 	};
 }
@@ -123,11 +154,13 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 	await addProofs(decoded.proofs, decoded.mint, keysetId);
 
 	const totalAmount = getTokenAmount(decoded);
+	const dleqCount = decoded.proofs.filter(p => p.dleq).length;
 
 	return {
 		amount: totalAmount,
 		mint: decoded.mint,
 		unit: decoded.unit,
-		proofCount: decoded.proofs.length
+		proofCount: decoded.proofs.length,
+		dleqCount: dleqCount > 0 ? dleqCount : undefined
 	};
 }

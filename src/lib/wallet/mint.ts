@@ -253,16 +253,29 @@ export async function completeMint(
 
 		const response = await postMint(mintUrl, quoteId, postBody);
 
+		// Fetch mint info for public key (additive unblinding)
+		let mintPubkey: string | undefined;
+		try {
+			const info = await getMintInfo(mintUrl);
+			mintPubkey = info.pubkey;
+		} catch {
+			// Fallback to multiplicative unblinding if mint info unavailable
+		}
+
 		// Step 5: Unblind signatures → proofs
 		const proofs: TokenProof[] = response.signatures.map((sig, i) => {
 			const output = outputs[i];
-			const C = unblindSignature(sig.C_, output.blindingFactor);
-			return {
+			const C = unblindSignature(sig.C_, output.blindingFactor, mintPubkey);
+			const proof: TokenProof = {
 				id: sig.id,
 				amount: sig.amount,
 				secret: output.secret,
 				C
 			};
+			if (sig.dleq) {
+				proof.dleq = sig.dleq;
+			}
+			return proof;
 		});
 
 		// Step 6: Store proofs

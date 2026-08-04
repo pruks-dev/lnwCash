@@ -70,6 +70,8 @@
 	let lightningResult: MeltResult | null = $state(null);
 	let showConfirmDialog: boolean = $state(false);
 	let displaySpentAmount: number = $state(0);
+	let paidInvoiceAmount: number = $state(0);
+	let paidFee: number = $state(0);
 	let mintUrl: string = $state('');
 
 	// ─── Cashu state ─────────────────────────────────────────
@@ -333,6 +335,8 @@
 				await refreshBalance();
 				lightningState = 'success';
 				displaySpentAmount = res.spentAmount;
+				paidInvoiceAmount = lightningInvoiceAmount || 1;
+				paidFee = res.feeReserve ?? 0;
 				animateBalance(0, res.spentAmount);
 				showToast($_('screen.send.success_payment'), 'success');
 			} else {
@@ -384,6 +388,8 @@
 		lightningResult = null;
 		showConfirmDialog = false;
 		displaySpentAmount = 0;
+		paidInvoiceAmount = 0;
+		paidFee = 0;
 	}
 
 	// ─── Cashu tab handlers ──────────────────────────────────
@@ -620,6 +626,22 @@
 						<Body size="sm" color="secondary">
 							{$_('screen.send.amount_sent', { values: { amount: formatSat(displaySpentAmount) } })}
 						</Body>
+						<div class="payment-breakdown">
+							<div class="detail-row">
+								<Body size="sm" color="secondary">{$_('screen.send.amount')}</Body>
+								<Body size="sm" weight="semibold">{formatSat(paidInvoiceAmount)} {$_('screen.balance.sats')}</Body>
+							</div>
+							{#if paidFee > 0}
+								<div class="detail-row">
+									<Body size="sm" color="secondary">{$_('screen.send.fee')}</Body>
+									<Body size="sm" weight="semibold">{formatSat(paidFee)} {$_('screen.balance.sats')}</Body>
+								</div>
+								<div class="detail-row detail-row-total">
+									<Body size="md" weight="semibold">{$_('screen.send.total')}</Body>
+									<Body size="md" weight="bold">{formatSat(paidInvoiceAmount + paidFee)} {$_('screen.balance.sats')}</Body>
+								</div>
+							{/if}
+						</div>
 						{#if lightningResult?.preimage}
 							<div class="detail-row">
 								<Body size="sm" color="secondary">Preimage</Body>
@@ -1145,6 +1167,17 @@
 
 	.text-error-warning {
 		color: var(--color-error);
+	}
+
+	/* ─── Payment Breakdown ──────────── */
+	.payment-breakdown {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+		width: 100%;
+		padding-top: var(--space-sm);
+		margin-top: var(--space-xs);
+		border-top: 1px solid var(--color-border);
 	}
 
 	/* ─── Token Output ────────────────── */

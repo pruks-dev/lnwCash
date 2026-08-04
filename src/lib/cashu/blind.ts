@@ -4,10 +4,10 @@
  * Uses secp256k1 (via @noble/curves) for:
  * - Deterministic blinding factors from secrets
  * - hash_to_curve: message → point on secp256k1 (try-and-increment)
- * - Message blinding (multiplicative) and signature unblinding
+ * - Message blinding (additive) and signature unblinding
  *
  * Nut-00 compatible: implements hash_to_curve per Cashu reference spec,
- * uses multiplicative BDHKE blinding.
+ * uses additive BDHKE blinding.
  */
 
 import { secp256k1 } from '@noble/curves/secp256k1.js';
@@ -50,35 +50,28 @@ function bigIntToBytes(value: bigint, length: number): Uint8Array {
 
 // ─── hash_to_curve ───────────────────────────────────────────
 
+const DOMAIN_SEPARATOR = 'Secp256k1_HashToCurve_Cashu_';
+const dsEncoder = new TextEncoder();
+const DS_BYTES = dsEncoder.encode(DOMAIN_SEPARATOR);
+
 /**
  * Map a message (bytes) to a point on secp256k1 using try-and-increment.
  *
  * TASK-084 FIX: Try BOTH 02 and 03 prefixes for maximum compatibility.
  *
  * Algorithm (Cashu reference / Nut-00):
- *   1. Hash the message with SHA-256
- *   2. Try to interpret the hash + 0x02 prefix as a compressed secp256k1 point
- *   3. If that fails, try 0x03 prefix
- *   4. If both fail, re-hash (hash = SHA-256(previous_hash)) and try again
- *
- * This matches the Python Cashu reference implementation with both prefix attempts:
- *   def hash_to_curve(message: bytes) -> PublicKey:
- *       point = None
- *       msg_to_hash = message
- *       while point is None:
- *           _hash = hashlib.sha256(msg_to_hash).digest()
- *           for prefix in (b'\x02', b'\x03'):
- *               try:
- *                   point = PublicKey.from_bytes(prefix + _hash, raw=True)
- *                   break
- *               except Exception:
- *                   continue
- *           if point is None:
- *               msg_to_hash = _hash
- *       return point
+ *   1. Prepend domain separator to message
+ *   2. Hash the message with SHA-256
+ *   3. Try to interpret the hash + 0x02 prefix as a compressed secp256k1 point
+ *   4. If that fails, try 0x03 prefix
+ *   5. If both fail, re-hash (hash = SHA-256(previous_hash)) and try again
  */
 export function hash_to_curve(message: Uint8Array): typeof BASE {
-	let msgToHash = message;
+	// Prepend domain separator
+	const prefixed = new Uint8Array(DS_BYTES.length + message.length);
+	prefixed.set(DS_BYTES, 0);
+	prefixed.set(message, DS_BYTES.length);
+	let msgToHash: Uint8Array = prefixed;
 	while (true) {
 		const hash = sha256(msgToHash);
 		// TASK-084: Try both 02 (even y) and 03 (odd y) prefixes
@@ -114,12 +107,12 @@ export function deterministicBlindingFactor(secret: string): bigint {
 // ─── Blinding ────────────────────────────────────────────────
 
 /**
- * Blind a message using multiplicative BDHKE.
+ * Blind a message using additive BDHKE.
  *
  * Process (Nut-00 §Blind Diffie-Hellman Key Exchange):
  *   1. Y = hash_to_curve(message) — map message to a point
  *   2. Generate (or use provided) blinding factor r
- *   3. B_ = Y * r — multiplicative blinding
+ *   3. B_ = Y + r*G — additive blinding
  *
  * Returns the blinded public key point (B_) and the blinding factor (r).
  */
@@ -131,8 +124,8 @@ export function blindMessage(message: string, blindingFactor?: bigint): BlindPai
 	// Step 1: hash_to_curve — map message to a point on secp256k1
 	const Y = hash_to_curve(encoder.encode(message));
 
-	// Step 2: B_ = Y * r (multiplicative BDHKE blinding)
-	const B_point = Y.multiply(r);
+	// Step 2: B_ = Y + r*G (additive BDHKE blinding)
+	const B_point = Y.add(BASE.multiply(r));
 
 	// Serialize to hex (compressed)
 	const B_ = B_point.toHex(true);
@@ -149,25 +142,28 @@ export function blindMessage(message: string, blindingFactor?: bigint): BlindPai
 /**
  * Unblind a blind signature to recover the raw (unblinded) signature.
  *
- * C = C_ * r^{-1} mod n
+ * C = C_ - r*A
  * where C_ is the blind signature (a point on the curve),
- * r is the blinding factor.
+ * r is the blinding factor, A is the mint's public key.
  */
-export function unblindSignature(blindSignature: string, blindingFactor: string): string {
+export function unblindSignature(blindSignature: string, blindingFactor: string, mintPublicKey?: string): string {
 	// Decode the blinding factor
 	const rBytes = base64url.decode(blindingFactor);
 	const r = bytesToBigInt(rBytes);
 
-	// Compute modular inverse of r
-	const rInv = Fn.inv(r);
-
 	// Parse the blind signature as a point
 	const C_ = secp256k1.Point.fromHex(blindSignature);
 
-	// Unblind: C = C_ * r^{-1}
-	const C = C_.multiply(rInv);
+	if (mintPublicKey) {
+		// Additive unblinding: C = C_ - r*A
+		const A = secp256k1.Point.fromHex(mintPublicKey);
+		const C = C_.subtract(A.multiply(r));
+		return C.toHex(true);
+	}
 
-	// Return hex-encoded unblinded signature
+	// Fallback: multiplicative unblinding (legacy)
+	const rInv = Fn.inv(r);
+	const C = C_.multiply(rInv);
 	return C.toHex(true);
 }
 

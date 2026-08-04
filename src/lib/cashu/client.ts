@@ -289,10 +289,10 @@ export async function getMintInfo(mintUrl: string): Promise<MintInfo> {
 // ─── Keysets ─────────────────────────────────────────────────
 
 /**
- * GET /v1/keysets — get available keysets
+ * GET /v1/keys — get available keysets with keys
  */
 export async function getKeysets(mintUrl: string): Promise<MintKeyset[]> {
-	const data = await fetchFromMint<MintKeys>(mintUrl, '/v1/keysets');
+	const data = await fetchFromMint<MintKeys>(mintUrl, '/v1/keys');
 	// The API returns { keysets: [...] }
 	if (data && Array.isArray(data.keysets)) {
 		// Check if array contains strings (keyset IDs) or objects
@@ -372,7 +372,7 @@ export async function checkState(
 	const path = STANDARD_PATHS.check_state;
 	return fetchFromMint<CheckStateResponse>(mintUrl, path, {
 		method: 'POST',
-		body: { proofs }
+		body: { Ys: proofs.map(p => p.C!) }
 	});
 }
 
@@ -482,7 +482,7 @@ export async function requestMeltQuote(
 	amount?: number,
 	mintInfo?: MintInfo
 ): Promise<MeltQuote> {
-	const body: Record<string, unknown> = { request: invoice };
+	const body: Record<string, unknown> = { request: invoice, unit: 'sat' };
 	if (amount !== undefined) body.amount = amount;
 	const path = resolveEndpointPath(mintInfo, 'melt_quote');
 	return fetchFromMint<MeltQuote>(mintUrl, path, {

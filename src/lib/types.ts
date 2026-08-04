@@ -177,6 +177,7 @@ export interface PostMintResponse {
 		id: string;
 		amount: number;
 		C_: string; // blind signature
+		dleq?: DleqProof;
 	}>;
 }
 
@@ -187,6 +188,7 @@ export interface PostMeltResponse {
 		id: string;
 		amount: number;
 		C_: string;
+		dleq?: DleqProof;
 	}>;
 }
 
@@ -209,11 +211,18 @@ export interface CheckStateResponse {
 
 // ─── Cashu Token Types ───────────────────────────────────────
 
+export interface DleqProof {
+	e: string;  // challenge (hex)
+	s: string;  // response (hex)
+	r?: string; // commitment (hex, computed after unblinding)
+}
+
 export interface TokenProof {
 	id: string;
 	amount: number;
 	secret: string;
 	C: string;
+	dleq?: DleqProof;
 	script?: {
 		type: string;
 		key?: string;
