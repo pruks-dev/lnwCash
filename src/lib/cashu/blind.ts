@@ -69,24 +69,28 @@ const DS_BYTES = dsEncoder.encode(DOMAIN_SEPARATOR);
  *   5. If both fail, re-hash (hash = SHA-256(previous_hash)) and try again
  */
 export function hash_to_curve(message: Uint8Array): typeof BASE {
-	// Prepend domain separator
+	// NUT-00: msg_hash = SHA256(DOMAIN_SEPARATOR || x)
 	const prefixed = new Uint8Array(DS_BYTES.length + message.length);
 	prefixed.set(DS_BYTES, 0);
 	prefixed.set(message, DS_BYTES.length);
-	let msgToHash: Uint8Array = prefixed;
-	while (true) {
-		const hash = sha256(msgToHash);
-		// TASK-084: Try both 02 (even y) and 03 (odd y) prefixes
-		for (const prefix of ['02', '03']) {
-			try {
-				return secp256k1.Point.fromHex(prefix + bytesToHex(hash));
-			} catch {
-				// Point not valid with this prefix — try next prefix
-			}
+	const msgHash = sha256(prefixed);
+
+	// Try-and-increment: counter from 0, little-endian uint32
+	for (let counter = 0; counter < 10000; counter++) {
+		const counterBytes = new Uint8Array(4);
+		new DataView(counterBytes.buffer).setUint32(0, counter, true); // little-endian
+		const hashInput = new Uint8Array(msgHash.length + 4);
+		hashInput.set(msgHash, 0);
+		hashInput.set(counterBytes, msgHash.length);
+		const hash = sha256(hashInput);
+		// NUT-00: Y = PublicKey('02' || hash)
+		try {
+			return secp256k1.Point.fromHex('02' + bytesToHex(hash));
+		} catch {
+			// Point not on curve — increment counter and try again
 		}
-		// Neither prefix produced a valid point — re-hash and try again
-		msgToHash = hash;
 	}
+	throw new Error('hash_to_curve: failed to find valid point after 10000 attempts');
 }
 
 // ─── Deterministic Blinding Factor ───────────────────────────
