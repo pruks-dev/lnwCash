@@ -61,41 +61,44 @@ export async function sendTokens(
 	let sendProofs = selected;
 
 	// If there's excess, find best proof to swap for exact amount
+	let swapProof: StoredProof | undefined;
 	if (excess > 0) {
 		// Pick the smallest proof that covers the amount (minimize excess)
-		let bestProof = [...selected].sort((a, b) => a.amount - b.amount).find(p => p.amount >= amount);
-		// If no single proof covers amount, use the largest proof and swap it down
-		if (!bestProof) {
-			bestProof = [...selected].sort((a, b) => b.amount - a.amount)[0];
-		}
-		if (bestProof) {
-			selected.length = 0;
-			selected.push(bestProof);
+		swapProof = [...selected].sort((a, b) => a.amount - b.amount).find(p => p.amount >= amount);
+		// If no single proof covers, swap the largest one to break it down
+		if (!swapProof) {
+			swapProof = [...selected].sort((a, b) => b.amount - a.amount)[0];
 		}
 	}
 
-	// Single-proof swap: split proof into exact send amount + change
-	const singleExcess = sumProofs(selected) - amount;
-	if (singleExcess > 0 && selected.length === 1) {
+	// Swap the chosen proof to get exact send amount + change
+	if (swapProof && excess > 0) {
+		const swapAmount = swapProof.amount;
+		// Amount needed from this proof to reach total target
+		const otherSum = sumProofs(selected) - swapAmount;
+		const needFromSwap = amount - otherSum;
+		const swapExcess = swapAmount - needFromSwap;
+
+		if (swapExcess > 0 && needFromSwap > 0) {
 		try {
 			await fetchAndCacheKeysets(mintUrl);
-			const keysetId = resolveKeysetId(mintUrl, selected[0].id) || selected[0].id;
+			const keysetId = resolveKeysetId(mintUrl, swapProof.id) || swapProof.id;
 
-			// Create blinded output for the send amount and the change amount
+			// Create blinded outputs: exact need + change
 			const sendSecret = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2,'0')).join('');
 			const changeSecret = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2,'0')).join('');
 			const sendBlind = blindMessage(sendSecret);
 			const changeBlind = blindMessage(changeSecret);
 
 			const outputs = [
-				{ amount, id: keysetId, B_: sendBlind.B_ },
-				{ amount: singleExcess, id: keysetId, B_: changeBlind.B_ }
+				{ amount: needFromSwap, id: keysetId, B_: sendBlind.B_ },
+				{ amount: swapExcess, id: keysetId, B_: changeBlind.B_ }
 			];
 
-			const swapResult = await swapProofs(mintUrl, [selected[0]], outputs);
+			const swapResult = await swapProofs(mintUrl, [swapProof], outputs);
 
-			// Unblind the returned signatures — use denomination-specific pubkey per signature
-			sendProofs = swapResult.signatures.map((sig, i) => {
+			// Unblind — use denomination-specific pubkey per signature
+			const swappedProofs = swapResult.signatures.map((sig, i) => {
 				const bp = i === 0 ? sendBlind : changeBlind;
 				const pubkey = getMintPubkey(mintUrl, keysetId, sig.amount);
 				const C = pubkey ? unblindSignature(sig.C_, bp.blindingFactor, pubkey) : sig.C_;
@@ -109,23 +112,22 @@ export async function sendTokens(
 				};
 			});
 
-			// Mark the original proof as spent
-			await markSpent([selected[0].local_id]);
+			await markSpent([swapProof.local_id]);
 
-			// Store change proof back to wallet
-			if (sendProofs.length > 1) {
-				const changeProof = sendProofs[1];
+			// Replace swapProof in selected with the split pieces
+			sendProofs = selected.filter(p => p.local_id !== swapProof.local_id);
+			sendProofs.push(swappedProofs[0]); // the needFromSwap piece
+			// Store change back
+			if (swappedProofs.length > 1) {
 				await addProofs([{
-					id: changeProof.id, amount: changeProof.amount,
-					secret: changeProof.secret, C: changeProof.C,
-					dleq: changeProof.dleq
+					id: swappedProofs[1].id, amount: swappedProofs[1].amount,
+					secret: swappedProofs[1].secret, C: swappedProofs[1].C,
+					dleq: swappedProofs[1].dleq
 				}], mintUrl, keysetId);
 			}
-
-			// Only send the first proof (matching the requested amount)
-			sendProofs = [sendProofs[0]];
 		} catch {
-			// Swap failed — fall back to sending the entire proof
+			// Swap failed — fall back
+		}
 		}
 	}
 
