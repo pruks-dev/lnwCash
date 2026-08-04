@@ -1,467 +1,439 @@
 /**
- * Minimal CBOR encode/decode for Cashu token secrets.
+ * CBOR encode/decode for Cashu V4 tokens (NUT-00).
  *
- * The secret field should be stored as CBOR text string (major type 3),
- * not as raw bytes (major type 2). This ensures interop with wallets
- * that use CBOR-encoded token format (Cashu V4).
+ * V4 token format: cashuB[base64url_cbor]
  *
- * Supports:
- *  - Major type 3: text string encoding/decoding
- *  - Basic major type 0/1: unsigned/negative int
- *  - Major type 2: byte string (for binary data fields like C, dleq)
- *  - Major type 4: array
- *  - Major type 5: map
- */
-
-const MAJOR_TEXT = 3 << 5; // 0x60
-const MAJOR_BYTES = 2 << 5; // 0x40
-const MAJOR_UINT = 0 << 5; // 0x00
-const MAJOR_ARRAY = 4 << 5; // 0x80
-const MAJOR_MAP = 5 << 5; // 0xa0
-
-function encodeCBORHeader(major: number, value: number): Uint8Array {
-	if (value < 24) {
-		return new Uint8Array([major | value]);
-	}
-	if (value < 256) {
-		return new Uint8Array([major | 24, value]);
-	}
-	return new Uint8Array([major | 25, (value >> 8) & 0xff, value & 0xff]);
-}
-
-function decodeCBORHeader(bytes: Uint8Array): { major: number; value: number; offset: number } {
-	const first = bytes[0];
-	const major = first & 0xe0;
-	const info = first & 0x1f;
-
-	if (info < 24) {
-		return { major, value: info, offset: 1 };
-	}
-	if (info === 24) {
-		return { major, value: bytes[1], offset: 2 };
-	}
-	if (info === 25) {
-		return { major, value: (bytes[1] << 8) | bytes[2], offset: 3 };
-	}
-	throw new Error(`Unsupported CBOR additional info: ${info}`);
-}
-
-/**
- * Encode a secret string as CBOR text string (major type 3).
- * This is the correct format for Cashu token secrets in CBOR mode.
- */
-export function cborEncodeSecret(secret: string): Uint8Array {
-	const encoder = new TextEncoder();
-	const encoded = encoder.encode(secret);
-	const header = encodeCBORHeader(MAJOR_TEXT, encoded.length);
-	const result = new Uint8Array(header.length + encoded.length);
-	result.set(header, 0);
-	result.set(encoded, header.length);
-	return result;
-}
-
-/**
- * Encode a byte array as CBOR byte string (major type 2).
- */
-export function cborEncodeBytes(data: Uint8Array): Uint8Array {
-	const header = encodeCBORHeader(MAJOR_BYTES, data.length);
-	const result = new Uint8Array(header.length + data.length);
-	result.set(header, 0);
-	result.set(data, header.length);
-	return result;
-}
-
-/**
- * Encode a uint value as CBOR unsigned int (major type 0).
- */
-export function cborEncodeUint(value: number): Uint8Array {
-	return encodeCBORHeader(MAJOR_UINT, value);
-}
-
-/**
- * Encode a CBOR map with integer keys.
- * Returns the serialized map bytes (flat encoding of key-value pairs followed by break).
- */
-function cborEncodeMap(entries: Array<[number, Uint8Array]>): Uint8Array {
-	const parts: Uint8Array[] = [];
-	for (const [key, value] of entries) {
-		parts.push(cborEncodeUint(key));
-		parts.push(value);
-	}
-	const totalLen = parts.reduce((sum, p) => sum + p.length, 0);
-	// Map header: 0xbf = map with indefinite length (break-terminated)
-	// Actually use definite-length map: 0xa0 | length
-	const header = encodeCBORHeader(MAJOR_MAP, entries.length);
-	const result = new Uint8Array(header.length + totalLen);
-	let offset = 0;
-	result.set(header, offset); offset += header.length;
-	for (const p of parts) {
-		result.set(p, offset); offset += p.length;
-	}
-	return result;
-}
-
-// ─── Token encode/decode (NUT-00 V4 CBOR format) ─────────────
-
-/**
- * Token proof shape for CBOR encoding.
- */
-export interface CborTokenProof {
-	amount: number;
-	id: string;
-	secret: string;
-	C: string;
-	dleq?: { e: string; s: string; r?: string };
-}
-
-/**
- * Encode a list of token proofs into a CBOR-encoded token.
- *
- * NUT-00 V4 CBOR format:
- *   Map {
- *     token: Array [
- *       Map {
- *         mint: text,
- *         proofs: Array [
- *           Map {
- *             amount: uint,
- *             id: text,
- *             secret: text (NOT bytes),
- *             C: bytes,
- *             dleq?: Map { e: text, s: text, r?: text }
+ * CBOR structure (text keys, single-char):
+ *   {
+ *     "m": mint_url (text),
+ *     "u": unit (text),
+ *     "d"?: memo (text, optional),
+ *     "t": [
+ *       {
+ *         "i": keyset_id (bytes, short form = first 8 bytes),
+ *         "p": [
+ *           {
+ *             "a": amount (uint),
+ *             "s": secret (text),
+ *             "c": C (bytes, 33-byte compressed pubkey),
+ *             "d"?: { "e": bytes, "s": bytes, "r": bytes } (DLEQ, optional)
  *           }
  *         ]
  *       }
- *     ],
- *     unit?: text,
- *     memo?: text
+ *     ]
  *   }
- *
- * Secrets are encoded as CBOR text strings (major type 3) using 78 40 prefix
- * for 64-byte text secrets, NOT as raw bytes (major type 2).
  */
-export function cborEncodeToken(proofs: CborTokenProof[], mintUrl: string, unit?: string, memo?: string): Uint8Array {
-	const encoder = new TextEncoder();
 
-	function encodeField(key: number, value: Uint8Array): Array<[number, Uint8Array]> {
-		return [[key, value]];
-	}
+const MAJOR_TEXT = 3 << 5;   // 0x60
+const MAJOR_BYTES = 2 << 5;  // 0x40
+const MAJOR_UINT = 0 << 5;   // 0x00
+const MAJOR_ARRAY = 4 << 5;  // 0x80
+const MAJOR_MAP = 5 << 5;    // 0xa0
 
-	function encodeText(s: string): Uint8Array {
-		const bytes = encoder.encode(s);
-		const header = encodeCBORHeader(MAJOR_TEXT, bytes.length);
-		const result = new Uint8Array(header.length + bytes.length);
-		result.set(header, 0);
-		result.set(bytes, header.length);
-		return result;
-	}
+// ─── CBOR helpers ─────────────────────────────────────────
 
-	function encodeHexBytes(hex: string): Uint8Array {
-		const bytes = new Uint8Array(hex.length / 2);
-		for (let i = 0; i < hex.length; i += 2) {
-			bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
-		}
-		const header = encodeCBORHeader(MAJOR_BYTES, bytes.length);
-		const result = new Uint8Array(header.length + bytes.length);
-		result.set(header, 0);
-		result.set(bytes, header.length);
-		return result;
-	}
-
-	// Encode each proof
-	const proofArrays = proofs.map(p => {
-		const fields: Array<[number, Uint8Array]> = [];
-		fields.push([0, cborEncodeUint(p.amount)]);      // amount
-		fields.push([1, encodeText(p.id)]);              // id
-		fields.push([2, encodeText(p.secret)]);          // secret (TEXT, not bytes)
-		fields.push([3, encodeHexBytes(p.C)]);            // C (bytes)
-		if (p.dleq) {
-			const dleqFields: Array<[number, Uint8Array]> = [];
-			dleqFields.push([0, encodeText(p.dleq.e)]);
-			dleqFields.push([1, encodeText(p.dleq.s)]);
-			if (p.dleq.r) {
-				dleqFields.push([2, encodeText(p.dleq.r)]);
-			}
-			fields.push([4, cborEncodeMap(dleqFields)]);
-		}
-		return cborEncodeMap(fields);
-	});
-
-	// proofs array
-	let proofsArrayLen = 0;
-	for (const pa of proofArrays) {
-		proofsArrayLen += pa.length;
-	}
-	const proofsArrayHeader = encodeCBORHeader(MAJOR_ARRAY, proofArrays.length);
-	const proofsArray = new Uint8Array(proofsArrayHeader.length + proofsArrayLen);
-	let offset = 0;
-	proofsArray.set(proofsArrayHeader, offset); offset += proofsArrayHeader.length;
-	for (const pa of proofArrays) {
-		proofsArray.set(pa, offset); offset += pa.length;
-	}
-
-	// token entry: Map { mint: text, proofs: array }
-	const mintBytes = encodeText(mintUrl);
-	const tokenEntryHeader = encodeCBORHeader(MAJOR_MAP, 2);
-	const tokenEntry = new Uint8Array(
-		tokenEntryHeader.length +
-		1 + mintBytes.length +               // key 0: mint
-		cborEncodeUint(1).length + proofsArray.length // key 1: proofs
-	);
-	offset = 0;
-	tokenEntry.set(tokenEntryHeader, offset); offset += tokenEntryHeader.length;
-	// key 0
-	const key0 = cborEncodeUint(0);
-	tokenEntry.set(key0, offset); offset += key0.length;
-	tokenEntry.set(mintBytes, offset); offset += mintBytes.length;
-	// key 1
-	const key1 = cborEncodeUint(1);
-	tokenEntry.set(key1, offset); offset += key1.length;
-	tokenEntry.set(proofsArray, offset); offset += proofsArray.length;
-
-	// token array
-	const tokenArrayHeader = encodeCBORHeader(MAJOR_ARRAY, 1);
-	const tokenBytes = new Uint8Array(tokenArrayHeader.length + tokenEntry.length);
-	tokenBytes.set(tokenArrayHeader, 0);
-	tokenBytes.set(tokenEntry, tokenArrayHeader.length);
-
-	// Top-level map
-	const topFields: Array<[number, Uint8Array]> = [];
-	topFields.push([0, tokenBytes]); // token
-	if (unit) {
-		topFields.push([1, encodeText(unit)]);
-	}
-	if (memo) {
-		topFields.push([2, encodeText(memo)]);
-	}
-	return cborEncodeMap(topFields);
+function headerLen(value: number): number {
+	if (value < 24) return 1;
+	if (value < 256) return 2;
+	if (value < 65536) return 3;
+	if (value < 4294967296) return 5;
+	return 9;
 }
 
-/**
- * Decode a CBOR-encoded token back to its components.
- *
- * Reads the CBOR byte sequence and extracts:
- * - mint URL (text string)
- * - proofs (array of maps with amount, id, secret, C, dleq)
- * - unit (optional)
- * - memo (optional)
- */
+function writeHeader(out: number[], major: number, value: number): void {
+	if (value < 24) {
+		out.push(major | value);
+	} else if (value < 256) {
+		out.push(major | 24, value);
+	} else if (value < 65536) {
+		out.push(major | 25, (value >> 8) & 0xff, value & 0xff);
+	} else if (value < 4294967296) {
+		out.push(major | 26, (value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff);
+	} else {
+		throw new Error('CBOR value too large');
+	}
+}
+
+function writeText(out: number[], s: string): void {
+	const encoded = new TextEncoder().encode(s);
+	writeHeader(out, MAJOR_TEXT, encoded.length);
+	for (let i = 0; i < encoded.length; i++) out.push(encoded[i]);
+}
+
+function writeBytes(out: number[], data: Uint8Array): void {
+	writeHeader(out, MAJOR_BYTES, data.length);
+	for (let i = 0; i < data.length; i++) out.push(data[i]);
+}
+
+function writeUint(out: number[], n: number): void {
+	writeHeader(out, MAJOR_UINT, n);
+}
+
+function hexToBytes(hex: string): Uint8Array {
+	const len = hex.length / 2;
+	const bytes = new Uint8Array(len);
+	for (let i = 0; i < len; i++) {
+		bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+	}
+	return bytes;
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+	return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// ─── Decoder state ────────────────────────────────────────
+
+class CborReader {
+	data: Uint8Array;
+	offset: number;
+
+	constructor(data: Uint8Array) {
+		this.data = data;
+		this.offset = 0;
+	}
+
+	readHeader(): { major: number; value: number } {
+		const first = this.data[this.offset++];
+		const major = first & 0xe0;
+		const info = first & 0x1f;
+
+		let value: number;
+		if (info < 24) {
+			value = info;
+		} else if (info === 24) {
+			value = this.data[this.offset++];
+		} else if (info === 25) {
+			value = (this.data[this.offset++] << 8) | this.data[this.offset++];
+		} else if (info === 26) {
+			value = (this.data[this.offset++] << 24) | (this.data[this.offset++] << 16)
+				| (this.data[this.offset++] << 8) | this.data[this.offset++];
+		} else {
+			throw new Error(`Unsupported CBOR info: ${info}`);
+		}
+		return { major, value };
+	}
+
+	readBytes(len: number): Uint8Array {
+		const slice = this.data.slice(this.offset, this.offset + len);
+		this.offset += len;
+		return slice;
+	}
+
+	readText(): string {
+		const { major, value: len } = this.readHeader();
+		const raw = this.readBytes(len);
+		if (major === MAJOR_TEXT) {
+			return new TextDecoder().decode(raw);
+		}
+		if (major === MAJOR_BYTES) {
+			return new TextDecoder().decode(raw);
+		}
+		throw new Error(`Expected text, got major ${major >> 5}`);
+	}
+
+	readByteString(): Uint8Array {
+		const { major, value: len } = this.readHeader();
+		if (major !== MAJOR_BYTES) throw new Error(`Expected bytes, got major ${major >> 5}`);
+		return this.readBytes(len);
+	}
+
+	readUint(): number {
+		const { major, value } = this.readHeader();
+		if (major !== MAJOR_UINT) throw new Error(`Expected uint, got major ${major >> 5}`);
+		return value;
+	}
+
+	skipValue(): void {
+		const { major, value } = this.readHeader();
+		if (major === MAJOR_UINT) return;
+		if (major === MAJOR_TEXT || major === MAJOR_BYTES) {
+			this.offset += value;
+			return;
+		}
+		if (major === MAJOR_ARRAY) {
+			for (let i = 0; i < value; i++) this.skipValue();
+			return;
+		}
+		if (major === MAJOR_MAP) {
+			for (let i = 0; i < value; i++) {
+				this.skipValue(); // key
+				this.skipValue(); // value
+			}
+			return;
+		}
+	}
+
+	readTextKeyedMap<T>(handlers: Record<string, (r: CborReader) => void>, target: T): T {
+		const { major, value: mapLen } = this.readHeader();
+		if (major !== MAJOR_MAP) throw new Error(`Expected map, got major ${major >> 5}`);
+		for (let i = 0; i < mapLen; i++) {
+			const key = this.readText();
+			if (handlers[key]) {
+				handlers[key](this);
+			} else {
+				this.skipValue();
+			}
+		}
+		return target;
+	}
+}
+
+// ─── Public API ───────────────────────────────────────────
+
+export interface CborTokenProof {
+	id: string;     // keyset ID (hex)
+	amount: number;
+	secret: string;
+	C: string;      // hex
+	dleq?: { e: string; s: string; r?: string };
+}
+
+export function cborEncodeToken(
+	proofs: CborTokenProof[],
+	mintUrl: string,
+	unit?: string,
+	memo?: string
+): Uint8Array {
+	const out: number[] = [];
+
+	// Group proofs by keyset ID
+	const grouped = new Map<string, { id: string; proofs: CborTokenProof[] }>();
+	for (const p of proofs) {
+		const g = grouped.get(p.id);
+		if (g) {
+			g.proofs.push(p);
+		} else {
+			grouped.set(p.id, { id: p.id, proofs: [p] });
+		}
+	}
+
+	// Count total map entries
+	let mapEntries = 2; // "m", "t"
+	if (unit) mapEntries++;
+	if (memo) mapEntries++;
+
+	writeHeader(out, MAJOR_MAP, mapEntries);
+
+	// "m": mint URL
+	writeText(out, 'm');
+	writeText(out, mintUrl);
+
+	// "t": token entries
+	writeText(out, 't');
+	writeHeader(out, MAJOR_ARRAY, grouped.size);
+
+	for (const [, group] of grouped) {
+		writeHeader(out, MAJOR_MAP, 2); // "i", "p"
+
+		// "i": keyset ID (short form, first 8 bytes)
+		writeText(out, 'i');
+		const idBytes = hexToBytes(group.id);
+		writeBytes(out, idBytes.slice(0, 8));
+
+		// "p": proofs array
+		writeText(out, 'p');
+		writeHeader(out, MAJOR_ARRAY, group.proofs.length);
+
+		for (const p of group.proofs) {
+			const hasDleq = !!(p.dleq && p.dleq.e && p.dleq.s);
+			const proofEntries = hasDleq ? 4 : 3;
+			writeHeader(out, MAJOR_MAP, proofEntries);
+
+			// "a": amount
+			writeText(out, 'a');
+			writeUint(out, p.amount);
+
+			// "s": secret
+			writeText(out, 's');
+			writeText(out, p.secret);
+
+			// "c": C (bytes, 33-byte compressed pubkey)
+			writeText(out, 'c');
+			writeBytes(out, hexToBytes(p.C));
+
+			// "d": DLEQ (optional)
+			if (hasDleq) {
+				writeText(out, 'd');
+				const dleq = p.dleq!;
+				const dleqEntries = dleq.r ? 3 : 2;
+				writeHeader(out, MAJOR_MAP, dleqEntries);
+
+				writeText(out, 'e');
+				writeBytes(out, hexToBytes(dleq.e));
+
+				writeText(out, 's');
+				writeBytes(out, hexToBytes(dleq.s));
+
+				if (dleq.r) {
+					writeText(out, 'r');
+					writeBytes(out, hexToBytes(dleq.r));
+				}
+			}
+		}
+	}
+
+	// "u": unit (optional)
+	if (unit) {
+		writeText(out, 'u');
+		writeText(out, unit);
+	}
+
+	// "d": memo (optional)
+	if (memo) {
+		writeText(out, 'd');
+		writeText(out, memo);
+	}
+
+	return new Uint8Array(out);
+}
+
 export function cborDecodeToken(data: Uint8Array): {
 	mint: string;
 	proofs: CborTokenProof[];
 	unit?: string;
 	memo?: string;
 } {
-	const decoder = new TextDecoder();
-	let offset = 0;
+	const r = new CborReader(data);
 
-	function readHeader(): { major: number; value: number } {
-		const { major, value, offset: off } = decodeCBORHeader(data.slice(offset));
-		offset += off;
-		return { major, value };
-	}
+	let mint = '';
+	const proofs: CborTokenProof[] = [];
+	let unit: string | undefined;
+	let memo: string | undefined;
 
-	function readBytes(len: number): Uint8Array {
-		const slice = data.slice(offset, offset + len);
-		offset += len;
-		return slice;
-	}
+	// Top-level map
+	const topMajor = r.readHeader();
+	if (topMajor.major !== MAJOR_MAP) throw new Error('Expected top-level CBOR map');
 
-	function readText(): string {
-		const { major, value: len } = readHeader();
-		const raw = readBytes(len);
-		if (major === MAJOR_TEXT || major === MAJOR_BYTES) {
-			return decoder.decode(raw);
-		}
-		throw new Error(`Expected text or bytes, got major type ${major >> 5}`);
-	}
+	const topLen = topMajor.value;
+	for (let i = 0; i < topLen; i++) {
+		const key = r.readText();
 
-	function readBytesValue(): Uint8Array {
-		const { major, value: len } = readHeader();
-		if (major === MAJOR_BYTES) {
-			return readBytes(len);
-		}
-		throw new Error(`Expected bytes, got major type ${major >> 5}`);
-	}
+		switch (key) {
+			case 'm':
+				mint = r.readText();
+				break;
 
-	function readHexBytes(): string {
-		const bytes = readBytesValue();
-		return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
-	}
+			case 'u':
+				unit = r.readText();
+				break;
 
-	function readUint(): number {
-		const { major, value } = readHeader();
-		if (major !== MAJOR_UINT) {
-			throw new Error(`Expected unsigned int, got major type ${major >> 5}`);
-		}
-		return value;
-	}
+			case 'd':
+				memo = r.readText();
+				break;
 
-	function readMap(expectedKeys?: number[]): Record<number, unknown> {
-		const { major, value: mapLen } = readHeader();
-		if (major !== MAJOR_MAP) {
-			throw new Error(`Expected map, got major type ${major >> 5}`);
-		}
-		const result: Record<number, unknown> = {};
-		for (let i = 0; i < mapLen; i++) {
-			const key = readUint();
-			if (expectedKeys && !expectedKeys.includes(key)) {
-				// Unknown key — skip its value
-				readNextValue();
-				continue;
-			}
-			result[key] = readNextValue(key);
-		}
-		return result;
-	}
+			case 't': {
+				// Token entries array
+				const tHeader = r.readHeader();
+				if (tHeader.major !== MAJOR_ARRAY) throw new Error('Expected token array');
+				const tLen = tHeader.value;
 
-	function readNextValue(contextKey?: number): unknown {
-		const { major, value: val } = readHeader();
-		switch (major) {
-			case MAJOR_UINT:
-				return val;
-			case MAJOR_TEXT:
-				offset += val;
-				return val; // caller needs to decode
-			case MAJOR_BYTES:
-				offset += val;
-				return val;
-			case MAJOR_ARRAY:
-				return val; // array length
-			case MAJOR_MAP:
-				offset -= 1; // rewind to re-read the map header in readMap
-				// Need to know original major/value
-				offset -= ('offset' in readHeader ? 0 : 0);
-				return readMap();
-			default:
-				throw new Error(`Unexpected major type ${major >> 5}`);
-		}
-	}
+				for (let ti = 0; ti < tLen; ti++) {
+					const eHeader = r.readHeader();
+					if (eHeader.major !== MAJOR_MAP) {
+						r.skipValue();
+						continue;
+					}
+					const eLen = eHeader.value;
 
-	// Actually, the readNextValue approach is complex. Let me do iterative parsing.
+					let keysetId = '';
 
-	// Start over with a simple parser
-	offset = 0;
+					for (let ei = 0; ei < eLen; ei++) {
+						const ek = r.readText();
 
-	function parse(): { mint: string; proofs: CborTokenProof[]; unit?: string; memo?: string } {
-		// Top-level map
-		let { major: topMajor } = decodeCBORHeader(data.slice(offset));
-		if (topMajor !== MAJOR_MAP) throw new Error('Expected top-level CBOR map');
+						if (ek === 'i') {
+							// keyset ID (bytes → hex, could be short or long form)
+							const idBytes = r.readByteString();
+							keysetId = bytesToHex(idBytes);
+						} else if (ek === 'p') {
+							// Proofs array
+							const pHdr = r.readHeader();
+							if (pHdr.major !== MAJOR_ARRAY) throw new Error('Expected proofs array');
+							const pLen = pHdr.value;
 
-		// Read map-length
-		const topHeader = decodeCBORHeader(data.slice(offset));
-		offset += topHeader.offset;
-		const topLen = topHeader.value;
-
-		let mint = '';
-		const proofs: CborTokenProof[] = [];
-		let unit: string | undefined;
-		let memo: string | undefined;
-
-		for (let i = 0; i < topLen; i++) {
-			const key = readUint();
-			switch (key) {
-				case 0: { // token
-					const tokenArrHeader = decodeCBORHeader(data.slice(offset));
-					offset += tokenArrHeader.offset;
-					const tokenArrLen = tokenArrHeader.value;
-					if (tokenArrHeader.major !== MAJOR_ARRAY) throw new Error('Expected token array');
-					for (let t = 0; t < tokenArrLen; t++) {
-						const entryMapHeader = decodeCBORHeader(data.slice(offset));
-						offset += entryMapHeader.offset;
-						const entryMapLen = entryMapHeader.value;
-						if (entryMapHeader.major !== MAJOR_MAP) continue;
-						for (let e = 0; e < entryMapLen; e++) {
-							const ek = readUint();
-							if (ek === 0) mint = readText();
-							else if (ek === 1) {
-								// Proofs array
-								const proofsHeader = decodeCBORHeader(data.slice(offset));
-								offset += proofsHeader.offset;
-								const proofsLen = proofsHeader.value;
-								if (proofsHeader.major !== MAJOR_ARRAY) continue;
-								for (let p = 0; p < proofsLen; p++) {
-									const proof = readProofMap();
-									if (proof) proofs.push(proof);
+							for (let pi = 0; pi < pLen; pi++) {
+								const proofHdr = r.readHeader();
+								if (proofHdr.major !== MAJOR_MAP) {
+									r.skipValue();
+									continue;
 								}
-							} else {
-								skipNextValue();
+								const proofLen = proofHdr.value;
+
+								const proof: Partial<CborTokenProof> = { id: keysetId };
+								for (let pki = 0; pki < proofLen; pki++) {
+									const pk = r.readText();
+									switch (pk) {
+										case 'a':
+											proof.amount = r.readUint();
+											break;
+										case 's':
+											proof.secret = r.readText();
+											break;
+										case 'c':
+											proof.C = bytesToHex(r.readByteString());
+											break;
+										case 'd': {
+											const dHdr = r.readHeader();
+											if (dHdr.major !== MAJOR_MAP) {
+												r.skipValue();
+												break;
+											}
+											const dLen = dHdr.value;
+											const dleq: { e: string; s: string; r?: string } = { e: '', s: '' };
+											for (let di = 0; di < dLen; di++) {
+												const dk = r.readText();
+												if (dk === 'e') dleq.e = bytesToHex(r.readByteString());
+												else if (dk === 's') dleq.s = bytesToHex(r.readByteString());
+												else if (dk === 'r') dleq.r = bytesToHex(r.readByteString());
+												else r.skipValue();
+											}
+											proof.dleq = dleq;
+											break;
+										}
+										case 'w':
+											// Optional witness — skip
+											r.skipValue();
+											break;
+										default:
+											r.skipValue();
+									}
+								}
+
+								if (proof.amount != null && proof.secret && proof.C) {
+									proofs.push(proof as CborTokenProof);
+								}
 							}
+						} else {
+							r.skipValue();
 						}
 					}
-					break;
 				}
-				case 1: unit = readText(); break;
-				case 2: memo = readText(); break;
-				default: skipNextValue(); break;
+				break;
 			}
-		}
-		return { mint, proofs, unit, memo };
-	}
 
-	function readProofMap(): CborTokenProof | null {
-		const header = decodeCBORHeader(data.slice(offset));
-		offset += header.offset;
-		const mapLen = header.value;
-		if (header.major !== MAJOR_MAP) {
-			skipByteString(mapLen);
-			return null;
-		}
-		const proof: Partial<CborTokenProof> = {};
-		for (let i = 0; i < mapLen; i++) {
-			const key = readUint();
-			switch (key) {
-				case 0: proof.amount = readUint(); break;
-				case 1: proof.id = readText(); break;
-				case 2: proof.secret = readText(); break;
-				case 3: proof.C = readHexBytes(); break;
-				case 4: {
-					// DLEQ map
-					const dleqHdr = decodeCBORHeader(data.slice(offset));
-					offset += dleqHdr.offset;
-					const dleqLen = dleqHdr.value;
-					const dleq: { e: string; s: string; r?: string } = { e: '', s: '' };
-					for (let d = 0; d < dleqLen; d++) {
-						const dk = readUint();
-						const val = readText();
-						if (dk === 0) dleq.e = val;
-						else if (dk === 1) dleq.s = val;
-						else if (dk === 2) dleq.r = val;
-					}
-					proof.dleq = dleq;
-					break;
-				}
-				default: skipNextValue(); break;
-			}
-		}
-		if (!proof.amount || !proof.id || !proof.secret || !proof.C) return null;
-		return proof as CborTokenProof;
-	}
-
-	function skipNextValue(): void {
-		// Peek and skip
-		const { major, value } = decodeCBORHeader(data.slice(offset));
-		offset += decodeCBORHeader(data.slice(offset)).offset;
-		if (major === MAJOR_UINT || major === MAJOR_UINT - (1 << 5)) {
-			return;
-		}
-		if (major === MAJOR_TEXT || major === MAJOR_BYTES) {
-			offset += value;
-			return;
-		}
-		if (major === MAJOR_ARRAY) {
-			for (let i = 0; i < value; i++) skipNextValue();
-			return;
-		}
-		if (major === MAJOR_MAP) {
-			for (let i = 0; i < value * 2; i++) skipNextValue();
-			return;
+			default:
+				r.skipValue();
 		}
 	}
 
-	function skipByteString(len: number): void {
-		offset += len;
-	}
+	return { mint, proofs, unit, memo };
+}
 
-	return parse();
+// Legacy helpers (kept for backward compat)
+export function cborEncodeSecret(secret: string): Uint8Array {
+	const out: number[] = [];
+	writeText(out, secret);
+	return new Uint8Array(out);
+}
+
+export function cborEncodeBytes(data: Uint8Array): Uint8Array {
+	const out: number[] = [];
+	writeBytes(out, data);
+	return new Uint8Array(out);
+}
+
+export function cborEncodeUint(value: number): Uint8Array {
+	const out: number[] = [];
+	writeUint(out, value);
+	return new Uint8Array(out);
 }
