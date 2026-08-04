@@ -81,7 +81,7 @@ define(['./workbox-6d4f622d'], (function (workbox) { 'use strict';
     "revision": "3ca0b8505b4bec776b69afdba2768812"
   }, {
     "url": "index.html",
-    "revision": "0.qmblhe428jg"
+    "revision": "0.o03e02r3jhg"
   }], {});
   workbox.cleanupOutdatedCaches();
   workbox.registerRoute(new workbox.NavigationRoute(workbox.createHandlerBoundToURL("index.html"), {
@@ -100,25 +100,6 @@ define(['./workbox-6d4f622d'], (function (workbox) { 'use strict';
     plugins: [new workbox.ExpirationPlugin({
       maxEntries: 100,
       maxAgeSeconds: 604800
-    })]
-  }), 'GET');
-  workbox.registerRoute(/\/v1\/(mint|melt|swap|check|keys|keysets|info)/i, new workbox.StaleWhileRevalidate({
-    "cacheName": "mint-api",
-    plugins: [new workbox.ExpirationPlugin({
-      maxEntries: 50,
-      maxAgeSeconds: 300
-    })]
-  }), 'GET');
-  workbox.registerRoute(({
-    url
-  }) => {
-    return url.pathname.startsWith("/api/") || url.pathname.startsWith("/v1/");
-  }, new workbox.NetworkFirst({
-    "cacheName": "api-cache",
-    "networkTimeoutSeconds": 10,
-    plugins: [new workbox.ExpirationPlugin({
-      maxEntries: 30,
-      maxAgeSeconds: 60
     })]
   }), 'GET');
 

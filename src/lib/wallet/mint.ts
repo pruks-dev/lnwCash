@@ -61,12 +61,8 @@ export interface MintCompleteResult {
 function generateSecret(): string {
 	const bytes = new Uint8Array(32);
 	crypto.getRandomValues(bytes);
-	// Use base64url for Cashu protocol compatibility (most implementations expect it)
-	let binary = '';
-	for (let i = 0; i < bytes.length; i++) {
-		binary += String.fromCharCode(bytes[i]);
-	}
-	return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+	// NUT-00 recommends 64-char hex string from 32 random bytes
+	return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 }
 
 /**
