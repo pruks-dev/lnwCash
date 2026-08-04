@@ -27,7 +27,7 @@ import { selectProofs, sumProofs } from './proofs';
 import { encodeToken, decodeToken, getTokenAmount } from '../cashu/token';
 import { decomposeAmount } from './mint';
 import { checkState, swapProofs } from '../cashu/client';
-import { blindMessage, unblindSignature } from '../cashu/blind';
+import { blindMessage, unblindSignature, blindingFactorToHex } from '../cashu/blind';
 import { fetchAndCacheKeysets, getMintPubkey, resolveKeysetId } from '../cashu/keyset';
 import type { TokenProof, DecodedToken } from '../types';
 import { TokenValidationError } from './errors';
@@ -340,7 +340,7 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 				dleq: sig.dleq ? {
 					e: sig.dleq.e,
 					s: sig.dleq.s,
-					r: bp.r
+					r: blindingFactorToHex(bp.r)
 				} : undefined
 			};
 		});
