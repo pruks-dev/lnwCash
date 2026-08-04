@@ -149,7 +149,9 @@
 	 * Uses the resolveEndpointPath for NUT-19 cache compatibility.
 	 */
 	async function requestMintQuoteWithUnit(mintUrl: string, amount: number): Promise<{ quote: string; request: string; state: string }> {
-		const url = `${mintUrl.replace(/\/+$/, '')}/v1/mint/quote/bolt11`;
+		const url = mintUrl === 'https://mint.lnw.cash'
+			? '/api/mint/v1/mint/quote/bolt11'
+			: `${mintUrl.replace(/\/+$/, '')}/v1/mint/quote/bolt11`;
 		const controller = new AbortController();
 		const timeout = setTimeout(() => controller.abort(), 15_000);
 		try {
@@ -174,7 +176,9 @@
 	 * Returns the quote state string: UNPAID | PAID | ISSUED | EXPIRED
 	 */
 	async function getMintQuoteState(mintUrl: string, quoteId: string): Promise<string> {
-		const url = `${mintUrl.replace(/\/+$/, '')}/v1/mint/quote/bolt11/${encodeURIComponent(quoteId)}`;
+		const url = mintUrl === 'https://mint.lnw.cash'
+			? `/api/mint/v1/mint/quote/bolt11/${encodeURIComponent(quoteId)}`
+			: `${mintUrl.replace(/\/+$/, '')}/v1/mint/quote/bolt11/${encodeURIComponent(quoteId)}`;
 		const controller = new AbortController();
 		const timeout = setTimeout(() => controller.abort(), 10_000);
 		try {

@@ -147,7 +147,9 @@
 	 * Thin wrapper over requestMeltQuote — includes `unit: "sat"` required by Nutshell.
 	 */
 	async function requestMeltQuoteWithUnit(mintUrl: string, invoice: string, amount?: number): Promise<{ quote: string; amount: number; fee_reserve: number; state: string }> {
-		const url = `${mintUrl.replace(/\/+$/, '')}/v1/melt/quote/bolt11`;
+		const url = mintUrl === 'https://mint.lnw.cash'
+			? '/api/mint/v1/melt/quote/bolt11'
+			: `${mintUrl.replace(/\/+$/, '')}/v1/melt/quote/bolt11`;
 		const body: Record<string, unknown> = { request: invoice, unit: 'sat' };
 		if (amount !== undefined) body.amount = amount;
 		const controller = new AbortController();
