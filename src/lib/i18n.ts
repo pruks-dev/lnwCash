@@ -6,9 +6,9 @@ register('en', () => import('../locales/en.json'));
 
 export async function setupI18n(): Promise<void> {
 	const savedLocale = getSettings().language;
-	const locale = savedLocale || getLocaleFromNavigator() || 'th';
+	const locale = savedLocale || getLocaleFromNavigator() || 'en';
 	init({
-		fallbackLocale: 'th',
+		fallbackLocale: 'en',
 		initialLocale: locale
 	});
 	await waitLocale(locale);

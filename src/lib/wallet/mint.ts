@@ -15,7 +15,7 @@ import {
 	pollMintQuoteUntil
 } from '../cashu/client';
 import { fetchAndCacheKeysets, getAllKeysets } from '../cashu/keyset';
-import { blindMessage, unblindSignature, deterministicBlindingFactor } from '../cashu/blind';
+import { blindMessage, unblindSignature, deterministicBlindingFactor, blindingFactorToHex } from '../cashu/blind';
 import { getPrivateKey } from './state';
 import { addProofs } from './proofsDb';
 import { addTransaction } from '../storage/db';
@@ -266,6 +266,7 @@ export async function completeMint(
 		const proofs: TokenProof[] = response.signatures.map((sig, i) => {
 			const output = outputs[i];
 			const C = unblindSignature(sig.C_, output.blindingFactor, mintPubkey);
+			const rHex = blindingFactorToHex(output.blindingFactor);
 			const proof: TokenProof = {
 				id: sig.id,
 				amount: sig.amount,
@@ -273,7 +274,7 @@ export async function completeMint(
 				C
 			};
 			if (sig.dleq) {
-				proof.dleq = sig.dleq;
+				proof.dleq = { e: sig.dleq.e, s: sig.dleq.s, r: rHex };
 			}
 			return proof;
 		});

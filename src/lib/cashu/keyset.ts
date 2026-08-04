@@ -78,6 +78,29 @@ export async function rotateKeysets(mintUrl: string): Promise<KeysetCacheEntry[]
 }
 
 /**
+ * Get the mint's public key for a given keyset ID.
+ *
+ * The mint key A is the public key used to sign outputs for a specific
+ * denomination in this keyset. Returns the key for the lowest available
+ * denomination (which is the mint's signing key).
+ *
+ * @param mintUrl - The Cashu mint URL
+ * @param keysetId - The keyset ID
+ * @returns The mint's public key as a hex string, or undefined if not found
+ */
+export function getMintPubkey(mintUrl: string, keysetId: string): string | undefined {
+	const keyset = getKeysetById(mintUrl, keysetId);
+	if (!keyset || !keyset.keys) return undefined;
+
+	// Find the lowest denomination key
+	const amounts = Object.keys(keyset.keys).map(Number).filter(n => !isNaN(n));
+	if (amounts.length === 0) return undefined;
+
+	const minAmount = Math.min(...amounts);
+	return keyset.keys[minAmount];
+}
+
+/**
  * Check if keyset cache is stale (older than maxAge ms).
  */
 export function isCacheStale(mintUrl: string, maxAge: number = 3600000): boolean {

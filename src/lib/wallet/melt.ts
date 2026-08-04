@@ -8,7 +8,7 @@
  * All mint URLs are passed as parameters — no hardcoding.
  */
 import { requestMeltQuote, meltTokens as postMelt, checkState, checkMeltQuote, getMintInfo } from '../cashu/client';
-import { blindMessage, unblindSignature, deterministicBlindingFactor } from '../cashu/blind';
+import { blindMessage, unblindSignature, deterministicBlindingFactor, blindingFactorToHex } from '../cashu/blind';
 import { fetchAndCacheKeysets, getAllKeysets, getKeysetById } from '../cashu/keyset';
 import { getPrivateKey } from './state';
 import { getUnspentProofsByMint, addProofs, markSpent } from './proofsDb';
@@ -442,6 +442,7 @@ export async function completeMelt(
 			changeProofs = response.change.map((sig, i) => {
 				const output = outputs[i];
 				const C = unblindSignature(sig.C_, output.blindingFactor, mintPubkey);
+				const rHex = blindingFactorToHex(output.blindingFactor);
 				const proof: TokenProof = {
 					id: sig.id,
 					amount: sig.amount,
@@ -449,7 +450,7 @@ export async function completeMelt(
 					C
 				};
 				if (sig.dleq) {
-					proof.dleq = sig.dleq;
+					proof.dleq = { e: sig.dleq.e, s: sig.dleq.s, r: rHex };
 				}
 				return proof;
 			});

@@ -289,7 +289,15 @@ export async function getMintInfo(mintUrl: string): Promise<MintInfo> {
 // ─── Keysets ─────────────────────────────────────────────────
 
 /**
- * GET /v1/keys — get available keysets with keys
+ * GET /v1/keys — get all available keysets with their keys.
+ */
+export async function getAllKeys(mintUrl: string): Promise<{ keysets: Array<{ id: string; unit: string; active: boolean; input_fee_ppk?: number; keys: Record<number, string> }> }> {
+	const data = await fetchFromMint<{ keysets: Array<{ id: string; unit: string; active: boolean; input_fee_ppk?: number; keys: Record<number, string> }> }>(mintUrl, '/v1/keys');
+	return data;
+}
+
+/**
+ * GET /v1/keys — get available keysets with keys (legacy alias for getAllKeys).
  */
 export async function getKeysets(mintUrl: string): Promise<MintKeyset[]> {
 	const data = await fetchFromMint<MintKeys>(mintUrl, '/v1/keys');

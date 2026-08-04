@@ -15,6 +15,8 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { base64url } from '../util/base64';
 
+export { bytesToHex };
+
 // ─── Types ───────────────────────────────────────────────────
 
 export interface BlindPair {
@@ -165,6 +167,15 @@ export function unblindSignature(blindSignature: string, blindingFactor: string,
 	const rInv = Fn.inv(r);
 	const C = C_.multiply(rInv);
 	return C.toHex(true);
+}
+
+/**
+ * Decode a base64url-encoded blinding factor to its hex scalar representation.
+ * Used to populate the DLEQ proof `r` field (hex of the 32-byte scalar).
+ */
+export function blindingFactorToHex(blindingFactor: string): string {
+	const rBytes = base64url.decode(blindingFactor);
+	return bytesToHex(rBytes);
 }
 
 // ─── Signature Verification (integration testing) ────────────

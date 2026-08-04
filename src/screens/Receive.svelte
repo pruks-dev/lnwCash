@@ -15,11 +15,11 @@
 	 */
 	import { _ } from 'svelte-i18n';
 	import { mintFlow, decomposeAmount, type MintResult } from '$lib/wallet/mint';
-	import { receiveTokens, type ReceiveResult } from '$lib/wallet/transfer';
+	import { receiveTokens, type ReceiveResult } from '$lib/wallet/tokenStore';
 	import { isCashuToken, getTokenAmount, decodeToken } from '$lib/cashu/token';
 	import { requestMintQuote, mintTokens, CashuError } from '$lib/cashu/client';
 	import { fetchAndCacheKeysets } from '$lib/cashu/keyset';
-	import { blindMessage, unblindSignature, deterministicBlindingFactor } from '$lib/cashu/blind';
+	import { blindMessage, unblindSignature, deterministicBlindingFactor, blindingFactorToHex } from '$lib/cashu/blind';
 	import { addProofs } from '$lib/wallet/proofsDb';
 	import { getBalance } from '$lib/wallet/balance';
 	import { getPrivateKey, storeSessionPin, unlockWallet } from '$lib/wallet/state';
@@ -354,7 +354,14 @@
 			const proofs = response.signatures.map((sig, i) => {
 				const output = outputs[i];
 				const C = unblindSignature(sig.C_, output.blindingFactor, mintPubkey);
-				return { id: sig.id, amount: sig.amount, secret: output.secret, C };
+				const rHex = blindingFactorToHex(output.blindingFactor);
+				const proof: { id: string; amount: number; secret: string; C: string; dleq?: { e: string; s: string; r: string } } = {
+					id: sig.id, amount: sig.amount, secret: output.secret, C
+				};
+				if (sig.dleq) {
+					proof.dleq = { e: sig.dleq.e, s: sig.dleq.s, r: rHex };
+				}
+				return proof;
 			});
 
 			// Step 6: Store proofs in IndexedDB

@@ -23,8 +23,12 @@ import {
 	clearProofs,
 	type StoredProof
 } from './proofsDb';
+import { selectProofs, sumProofs } from './proofs';
+import { encodeToken, decodeToken, getTokenAmount } from '../cashu/token';
+import { decomposeAmount } from './mint';
 import { checkState } from '../cashu/client';
-import type { TokenProof } from '../types';
+import type { TokenProof, DecodedToken } from '../types';
+import { TokenValidationError } from './errors';
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -155,3 +159,135 @@ export {
 	clearProofs,
 	type StoredProof
 };
+
+// ─── Send / Receive (P2P token transfer) ──────────────────────
+
+export interface SendResult {
+	token: string;
+	amount: number;
+	mint: string;
+}
+
+export interface ReceiveResult {
+	amount: number;
+	mint: string;
+	unit: string;
+	proofCount: number;
+	dleqCount?: number;
+}
+
+/**
+ * Send ecash tokens: select proofs, encode as V4 token, mark spent.
+ *
+ * F-070: When totalSelected > amount, excess proofs stay in wallet.
+ * Uses decomposeAmount to identify exactly which amounts sum to the
+ * requested send amount, keeping the rest as change in wallet.
+ *
+ * @param amount - Amount in sats to send
+ * @param mintUrl - Mint URL for the proofs
+ * @param memo - Optional memo note
+ * @returns { token, amount, mint }
+ */
+export async function sendTokens(
+	amount: number,
+	mintUrl: string,
+	memo?: string
+): Promise<SendResult> {
+	const allProofs = await getUnspentProofsByMint(mintUrl);
+	const selected = selectProofs(allProofs, amount);
+	const totalSelected = sumProofs(selected);
+
+	// F-070: Decompose selected amounts into send portion and change
+	const excess = totalSelected - amount;
+	const sendAmounts = decomposeAmount(amount);
+	const excessAmounts = excess > 0 ? decomposeAmount(excess) : [];
+	const allOutputAmounts = [...sendAmounts, ...excessAmounts];
+
+	// Match selected proofs to output amounts greedily
+	// First N output amounts = send; rest = change
+	let sendProofs: typeof selected = [];
+	let changeProofs: typeof selected = [];
+	let remainingSend = amount;
+	const unusedRemaining: typeof selected = [];
+
+	for (const p of selected) {
+		if (remainingSend <= 0) {
+			changeProofs.push(p);
+		} else if (p.amount > remainingSend && sendProofs.length === 0) {
+			sendProofs.push(p);
+			remainingSend = 0;
+		} else if (p.amount <= remainingSend) {
+			sendProofs.push(p);
+			remainingSend -= p.amount;
+		} else {
+			changeProofs.push(p);
+		}
+	}
+
+	// Encode send proofs as V4 token
+	const tokenProofs: TokenProof[] = sendProofs.map(p => {
+		const tp: TokenProof = {
+			id: p.id,
+			amount: p.amount,
+			secret: p.secret,
+			C: p.C
+		};
+		if (p.dleq) {
+			tp.dleq = p.dleq;
+		}
+		return tp;
+	});
+
+	const token = encodeToken(tokenProofs, mintUrl, 'sat', memo);
+
+	// Mark only sent proofs as spent
+	await markSpent(sendProofs.map(p => p.local_id));
+
+	return {
+		token,
+		amount: sumProofs(sendProofs),
+		mint: mintUrl
+	};
+}
+
+/**
+ * Receive ecash tokens: decode V4 token, validate, store in IndexedDB.
+ *
+ * @param tokenString - Cashu V4 token string
+ * @returns { amount, mint, unit, proofCount }
+ * @throws TokenValidationError if token is invalid
+ */
+export async function receiveTokens(tokenString: string): Promise<ReceiveResult> {
+	let decoded: DecodedToken;
+	try {
+		decoded = decodeToken(tokenString);
+	} catch (err) {
+		throw new TokenValidationError(
+			err instanceof Error ? err.message : 'Failed to decode token'
+		);
+	}
+
+	if (!decoded.proofs || decoded.proofs.length === 0) {
+		throw new TokenValidationError('Token contains no proofs');
+	}
+
+	for (const proof of decoded.proofs) {
+		if (!proof.secret || !proof.C || !proof.id || proof.amount <= 0) {
+			throw new TokenValidationError('Invalid proof: missing required fields');
+		}
+	}
+
+	const keysetId = decoded.proofs[0].id;
+	await addProofs(decoded.proofs, decoded.mint, keysetId);
+
+	const totalAmount = getTokenAmount(decoded);
+	const dleqCount = decoded.proofs.filter(p => p.dleq).length;
+
+	return {
+		amount: totalAmount,
+		mint: decoded.mint,
+		unit: decoded.unit,
+		proofCount: decoded.proofs.length,
+		dleqCount: dleqCount > 0 ? dleqCount : undefined
+	};
+}

@@ -97,7 +97,7 @@ export function clearWalletMetadata(): boolean {
 // ─── Wallet Settings ─────────────────────────────────────────
 
 const DEFAULT_SETTINGS: WalletSettings = {
-	language: 'th',
+	language: 'en',
 	theme: 'dark',
 	default_mint: ''
 };

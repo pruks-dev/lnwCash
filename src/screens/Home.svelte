@@ -295,13 +295,14 @@
 	.home-scroll {
 		max-width: 480px;
 		margin: 0 auto;
-		height: 100%;
+		min-height: calc(100dvh - 56px - 80px);
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
 		overflow-y: auto;
 		overflow-x: hidden;
 		-webkit-overflow-scrolling: touch;
 		overscroll-behavior-y: contain;
-		display: flex;
-		flex-direction: column;
 	}
 
 	.home-content {
@@ -317,9 +318,8 @@
 	.balance-container {
 		background: transparent;
 		border-radius: 0;
-		padding: var(--space-lg);
+		padding: var(--space-lg) var(--space-lg) 0;
 		box-shadow: none;
-		height: calc(100dvh - 56px - 80px);
 		display: flex;
 		flex-direction: column;
 		justify-content: center;
