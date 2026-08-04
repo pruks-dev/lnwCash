@@ -249,13 +249,13 @@ export async function completeMint(
 
 		const response = await postMint(mintUrl, quoteId, postBody);
 
-		// Fetch mint info for public key (additive unblinding)
+		// Fetch keyset-specific public key for additive unblinding
 		let mintPubkey: string | undefined;
 		try {
-			const info = await getMintInfo(mintUrl);
-			mintPubkey = info.pubkey;
+			await fetchAndCacheKeysets(mintUrl);
+			mintPubkey = getMintPubkey(mintUrl, keysetId);
 		} catch {
-			// Fallback to multiplicative unblinding if mint info unavailable
+			// Fallback to multiplicative unblinding if keys unavailable
 		}
 
 		// Step 5: Unblind signatures → proofs
