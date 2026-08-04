@@ -250,14 +250,10 @@ export async function completeMint(
 		const response = await postMint(mintUrl, quoteId, postBody);
 
 		// Fetch keysets once for all outputs
-		let hasPubkey = false;
 		try {
 			await fetchAndCacheKeysets(mintUrl);
-			const testPk = getMintPubkey(mintUrl, keysetId, amounts[0]);
-			hasPubkey = !!testPk;
-			console.log('[MINT] fetchAndCacheKeysets OK, pubkey for amount', amounts[0], ':', hasPubkey ? '✅' : '❌ MISSING');
-		} catch (e) {
-			console.error('[MINT] fetchAndCacheKeysets FAILED:', e);
+		} catch {
+			// Continue — unblinding will fall back to multiplicative if keys unavailable
 		}
 
 		// Step 5: Unblind signatures → proofs
