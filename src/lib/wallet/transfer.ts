@@ -63,9 +63,12 @@ export async function sendTokens(
 	// If there's excess, find best proof to swap for exact amount
 	if (excess > 0) {
 		// Pick the smallest proof that covers the amount (minimize excess)
-		const bestProof = [...selected].sort((a, b) => a.amount - b.amount).find(p => p.amount >= amount);
+		let bestProof = [...selected].sort((a, b) => a.amount - b.amount).find(p => p.amount >= amount);
+		// If no single proof covers amount, use the largest proof and swap it down
+		if (!bestProof) {
+			bestProof = [...selected].sort((a, b) => b.amount - a.amount)[0];
+		}
 		if (bestProof) {
-			// Swap this single proof to get exact amount + change
 			selected.length = 0;
 			selected.push(bestProof);
 		}
