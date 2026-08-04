@@ -84,28 +84,34 @@ export async function sendTokens(
 			await fetchAndCacheKeysets(mintUrl);
 			const keysetId = resolveKeysetId(mintUrl, swapProof.id) || swapProof.id;
 
-			// Create blinded outputs: exact need + change
-			const sendSecret = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2,'0')).join('');
-			const changeSecret = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2,'0')).join('');
-			const sendBlind = blindMessage(sendSecret);
-			const changeBlind = blindMessage(changeSecret);
+			// Decompose amounts into valid denominations (powers of 2)
+			const needAmounts = decomposeAmount(needFromSwap);
+			const excessAmounts = decomposeAmount(swapExcess);
+			const allAmounts = [...needAmounts, ...excessAmounts];
 
-			const outputs = [
-				{ amount: needFromSwap, id: keysetId, B_: sendBlind.B_ },
-				{ amount: swapExcess, id: keysetId, B_: changeBlind.B_ }
-			];
+			// Create blinded outputs for each denomination
+			const blinds = allAmounts.map(() => {
+				const secret = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2,'0')).join('');
+				return { secret, ...blindMessage(secret) };
+			});
+
+			const outputs = blinds.map((b, i) => ({
+				amount: allAmounts[i],
+				id: keysetId,
+				B_: b.B_
+			}));
 
 			const swapResult = await swapProofs(mintUrl, [swapProof], outputs);
 
-			// Unblind — use denomination-specific pubkey per signature
+			// Unblind all returned signatures
 			const swappedProofs = swapResult.signatures.map((sig, i) => {
-				const bp = i === 0 ? sendBlind : changeBlind;
+				const bp = blinds[i];
 				const pubkey = getMintPubkey(mintUrl, keysetId, sig.amount);
 				const C = pubkey ? unblindSignature(sig.C_, bp.blindingFactor, pubkey) : sig.C_;
 				const rHex = blindingFactorToHex(bp.blindingFactor);
 				return {
 					local_id: '', id: sig.id, amount: sig.amount,
-					secret: i === 0 ? sendSecret : changeSecret, C,
+					secret: bp.secret, C,
 					mint_url: mintUrl, keyset_id: keysetId,
 					stored_at: Date.now(), spent: false,
 					dleq: sig.dleq ? { e: sig.dleq.e, s: sig.dleq.s, r: rHex } : undefined
@@ -114,16 +120,19 @@ export async function sendTokens(
 
 			await markSpent([swapProof.local_id]);
 
-			// Replace swapProof in selected with the split pieces
+			// Separate into send amounts and change amounts
+			const swapSendProofs = swappedProofs.slice(0, needAmounts.length);
+			const swapChangeProofs = swappedProofs.slice(needAmounts.length);
+
+			// Replace swapProof in selected with send pieces
 			sendProofs = selected.filter(p => p.local_id !== swapProof.local_id);
-			sendProofs.push(swappedProofs[0]); // the needFromSwap piece
-			// Store change back
-			if (swappedProofs.length > 1) {
-				await addProofs([{
-					id: swappedProofs[1].id, amount: swappedProofs[1].amount,
-					secret: swappedProofs[1].secret, C: swappedProofs[1].C,
-					dleq: swappedProofs[1].dleq
-				}], mintUrl, keysetId);
+			sendProofs.push(...swapSendProofs);
+
+			// Store change back to wallet
+			if (swapChangeProofs.length > 0) {
+				await addProofs(swapChangeProofs.map(p => ({
+					id: p.id, amount: p.amount, secret: p.secret, C: p.C, dleq: p.dleq
+				})), mintUrl, keysetId);
 			}
 		} catch {
 			// Swap failed — fall back
