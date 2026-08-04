@@ -60,8 +60,20 @@ export async function sendTokens(
 
 	let sendProofs = selected;
 
-	// F-070: If single proof has excess, swap it to get exact amounts
-		if (excess > 0 && selected.length === 1 && !selected[0].amount.toString().startsWith('-')) {
+	// If there's excess, find best proof to swap for exact amount
+	if (excess > 0) {
+		// Pick the smallest proof that covers the amount (minimize excess)
+		const bestProof = [...selected].sort((a, b) => a.amount - b.amount).find(p => p.amount >= amount);
+		if (bestProof) {
+			// Swap this single proof to get exact amount + change
+			selected.length = 0;
+			selected.push(bestProof);
+		}
+	}
+
+	// Single-proof swap: split proof into exact send amount + change
+	const singleExcess = sumProofs(selected) - amount;
+	if (singleExcess > 0 && selected.length === 1) {
 		try {
 			await fetchAndCacheKeysets(mintUrl);
 			const keysetId = resolveKeysetId(mintUrl, selected[0].id) || selected[0].id;
@@ -74,7 +86,7 @@ export async function sendTokens(
 
 			const outputs = [
 				{ amount, id: keysetId, B_: sendBlind.B_ },
-				{ amount: excess, id: keysetId, B_: changeBlind.B_ }
+				{ amount: singleExcess, id: keysetId, B_: changeBlind.B_ }
 			];
 
 			const swapResult = await swapProofs(mintUrl, [selected[0]], outputs);
@@ -111,15 +123,6 @@ export async function sendTokens(
 			sendProofs = [sendProofs[0]];
 		} catch {
 			// Swap failed — fall back to sending the entire proof
-		}
-	} else if (excess > 0 && selected.length > 1) {
-		// Multiple proofs: keep excess in wallet (greedy selection already minimized)
-		sendProofs = [];
-		let remaining = amount;
-		for (const p of selected) {
-			if (remaining <= 0) break;
-			sendProofs.push(p);
-			remaining -= p.amount;
 		}
 	}
 
