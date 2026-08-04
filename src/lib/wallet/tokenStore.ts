@@ -307,7 +307,6 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 		// Fetch mint keys to get public key for this keyset
 		await fetchAndCacheKeysets(mintUrl);
 		fullId = resolveKeysetId(mintUrl, keysetId) || keysetId;
-		const pubkey = getMintPubkey(mintUrl, fullId);
 
 		// Create blinded outputs (new secrets + blinding)
 		const blindPairs: Array<{ secret: string; B_: string; r: string }> = [];
@@ -331,6 +330,7 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 		// Unblind signatures to get new proofs
 		const newProofs = swapResult.signatures.map((sig, i) => {
 			const bp = blindPairs[i];
+			const pubkey = getMintPubkey(mintUrl, fullId, sig.amount);
 			const C = pubkey ? unblindSignature(sig.C_, bp.r, pubkey) : sig.C_;
 			return {
 				id: sig.id || keysetId,

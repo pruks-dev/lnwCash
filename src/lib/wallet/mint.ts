@@ -249,19 +249,19 @@ export async function completeMint(
 
 		const response = await postMint(mintUrl, quoteId, postBody);
 
-		// Fetch keyset-specific public key for additive unblinding
-		let mintPubkey: string | undefined;
+		// Fetch keysets once for all outputs
 		try {
 			await fetchAndCacheKeysets(mintUrl);
-			mintPubkey = getMintPubkey(mintUrl, keysetId);
 		} catch {
-			// Fallback to multiplicative unblinding if keys unavailable
+			// Continue — unblinding will fall back to multiplicative if keys unavailable
 		}
 
 		// Step 5: Unblind signatures → proofs
 		const proofs: TokenProof[] = response.signatures.map((sig, i) => {
 			const output = outputs[i];
-			const C = unblindSignature(sig.C_, output.blindingFactor, mintPubkey);
+			// Get the denomination-specific pubkey for this proof's amount
+			const pubkey = getMintPubkey(mintUrl, keysetId, sig.amount);
+			const C = unblindSignature(sig.C_, output.blindingFactor, pubkey);
 			const rHex = blindingFactorToHex(output.blindingFactor);
 			const proof: TokenProof = {
 				id: sig.id,

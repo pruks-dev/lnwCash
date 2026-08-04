@@ -94,12 +94,17 @@ export async function rotateKeysets(mintUrl: string): Promise<KeysetCacheEntry[]
  * @param keysetId - The keyset ID
  * @returns The mint's public key as a hex string, or undefined if not found
  */
-export function 	getMintPubkey(mintUrl: string, keysetId: string): string | undefined {
+export function getMintPubkey(mintUrl: string, keysetId: string, amount?: number): string | undefined {
 	const fullId = resolveKeysetId(mintUrl, keysetId) || keysetId;
 	const keyset = getKeysetById(mintUrl, fullId);
 	if (!keyset || !keyset.keys) return undefined;
 
-	// Find the lowest denomination key
+	// Return key for specific amount if provided, otherwise lowest denomination
+	if (amount !== undefined && keyset.keys[String(amount)]) {
+		return keyset.keys[String(amount)];
+	}
+
+	// Fallback: lowest denomination
 	const amounts = Object.keys(keyset.keys).map(Number).filter(n => !isNaN(n));
 	if (amounts.length === 0) return undefined;
 
