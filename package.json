@@ -30,6 +30,8 @@
 		"capacitor-secure-storage-plugin": "^0.13.0",
 		"fake-indexeddb": "^6.2.5",
 		"idb": "^8.0.3",
+		"jsqr": "^1.4.0",
+		"qrcode": "^1.5.4",
 		"svelte-i18n": "^4.0.1"
 	},
 	"devDependencies": {
@@ -41,6 +43,7 @@
 		"@testing-library/svelte": "^5.4.2",
 		"@tsconfig/svelte": "^5.0.8",
 		"@types/node": "^24.13.2",
+		"@types/qrcode": "^1.5.6",
 		"@typescript-eslint/eslint-plugin": "^8.65.0",
 		"@typescript-eslint/parser": "^8.65.0",
 		"eslint": "^10.8.0",

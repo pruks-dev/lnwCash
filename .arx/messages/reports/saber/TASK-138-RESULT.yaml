@@ -1,0 +1,72 @@
+# Unified Message Envelope — TASK-138 RESULT
+message_id: "RESULT-TASK-138-2026-08-08"
+type: "RESULT"
+sender: "saber"
+receiver: "orion"
+timestamp: "2026-08-08T08:50:00+07:00"
+
+# Task Execution
+task_id: "TASK-138"
+scope: "History Icons + Filter Fix (F-V14-002)"
+
+# Verdict
+verdict: "COMPLETE"
+
+# Summary
+summary: >
+  Fixed multi-type transaction filtering in History screen per F-V14-002.
+  
+  Before fix:
+  - "Receive" chip filtered only `mint` (missed `cashu_receive`)
+  - "Send" chip filtered only `melt` (missed `cashu_send`)
+  
+  After fix:
+  - "Receive" chip now filters `['mint', 'cashu_receive']`
+  - "Send" chip now filters `['melt', 'cashu_send']`
+  - Individual `cashu_send` / `cashu_receive` / `transfer` chips still work as single-type filters
+  - TransactionFilter.type now supports `TransactionType | TransactionType[]`
+  - db.ts getTransactions() handles array type via manual filter (IndexedDB index used for single-type queries)
+  - Filter chip UI layout unchanged — same 6 chips, same positions
+  - Icons (F-V14-001) were already fixed — no changes needed
+
+# Files Changed
+files:
+  - path: "src/lib/types.ts"
+    changes: "Line 24: TransactionFilter.type changed from TransactionType to TransactionType | TransactionType[]"
+  - path: "src/lib/storage/db.ts"
+    changes: |
+      Line 84: Added !Array.isArray() guard to preserve index query for single types
+      Lines 100-105: Updated manual filter to handle array type with .includes()
+  - path: "src/screens/History.svelte"
+    changes: |
+      Lines 36-43: Added FILTER_TYPE_MAP constant mapping filter keys to TransactionType[]
+      Line 49: Changed activeFilter type from TransactionType|'all' to string
+      Lines 66-72: loadTransactions now resolves filter keys via FILTER_TYPE_MAP
+      Line 155: setFilter parameter type changed to string
+      Lines 269-271: "Receive" chip now uses key 'receive' → ['mint', 'cashu_receive']
+      Lines 272-274: "Send" chip now uses key 'send' → ['melt', 'cashu_send']
+
+# Proof
+proof:
+  - type: "svelte-check"
+    result: "0 errors from modified files (6 pre-existing errors in Send.svelte + theme.ts — unchanged)"
+    evidence: ".arx/evidence/saber/TASK-138/frontend/svelte-check.log"
+  - type: "vitest"
+    result: "3 test files passed (24 tests): History.test.ts (9), F008-History.test.ts (5), db.test.ts (10)"
+    evidence: ".arx/evidence/saber/TASK-138/frontend/vitest-output.log"
+  - type: "vite-build"
+    result: "BUILD SUCCESS (3.35s) — 294 modules, 0 errors"
+    evidence: ".arx/evidence/saber/TASK-138/frontend/vite-build.log"
+
+# Verification (boundary constraints)
+constraints_met:
+  - "Send.svelte NOT modified ✓"
+  - "Receive.svelte NOT modified ✓"
+  - "Transaction interface NOT modified ✓ (only TransactionFilter changed)"
+  - "Filter UI layout unchanged (6 chips, same positions) ✓"
+  - "npm run check: 0 new errors ✓"
+  - "vitest: 24/24 passed ✓"
+  - "vite build: success ✓"
+
+# Evidence Count
+evidence_count: 3

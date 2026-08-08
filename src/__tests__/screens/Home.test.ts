@@ -36,14 +36,24 @@ const mockNavigateTo = vi.fn();
 vi.mock('$lib/router', () => ({
 	navigateTo: (screen: string) => mockNavigateTo(screen),
 	getCurrentScreen: () => 'home',
-	onRouteChange: () => () => {}
+	onRouteChange: () => () => {},
+	getHashParam: () => null,
+	clearHashParams: vi.fn()
 }));
 
 // Mock wallet balance — returns 0 by default
-const mockGetBalance = vi.fn().mockResolvedValue({ total: 0, byMint: {}, proofCount: 0, lastUpdated: Date.now() });
+const mockGetBalanceByMint = vi.fn().mockResolvedValue(0);
 vi.mock('$lib/wallet/balance', () => ({
-	getBalance: () => mockGetBalance(),
+	getBalanceByMint: () => mockGetBalanceByMint(),
 	getMintBalances: async () => []
+}));
+
+// Mock wallet store
+vi.mock('$lib/wallet/store', () => ({
+	activeMintStore: {
+		subscribe: (fn: (v: string) => void) => { fn('https://mint.example.com'); return () => {}; }
+	},
+	getActiveMintUrl: () => 'https://mint.example.com'
 }));
 
 // Mock storage/db
@@ -64,7 +74,7 @@ vi.mock('$lib/wallet/offline', () => ({
 describe('Home (TASK-059) — Wallet Page Redesign', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		mockGetBalance.mockResolvedValue({ total: 0, byMint: {}, proofCount: 0, lastUpdated: Date.now() });
+		mockGetBalanceByMint.mockResolvedValue(0);
 		mockGetTransactions.mockResolvedValue([]);
 		mockNavigateTo.mockClear();
 	});
@@ -92,7 +102,7 @@ describe('Home (TASK-059) — Wallet Page Redesign', () => {
 	}, 10000);
 
 	it('displays balance value when non-zero', async () => {
-		mockGetBalance.mockResolvedValue({ total: 50000, byMint: {}, proofCount: 3, lastUpdated: Date.now() });
+		mockGetBalanceByMint.mockResolvedValue(50000);
 		render(Home, {});
 		await vi.waitFor(() => {
 			const el = document.querySelector('.balance-value');
@@ -102,7 +112,7 @@ describe('Home (TASK-059) — Wallet Page Redesign', () => {
 	}, 10000);
 
 	it('renders balance with Cyan color (#00bcd4) via CSS class', async () => {
-		mockGetBalance.mockResolvedValue({ total: 50000, byMint: {}, proofCount: 3, lastUpdated: Date.now() });
+		mockGetBalanceByMint.mockResolvedValue(50000);
 		render(Home, {});
 		await vi.waitFor(() => {
 			const el = document.querySelector('.balance-value');
@@ -113,7 +123,7 @@ describe('Home (TASK-059) — Wallet Page Redesign', () => {
 	}, 10000);
 
 	it('shows SAT unit label', async () => {
-		mockGetBalance.mockResolvedValue({ total: 100, byMint: {}, proofCount: 1, lastUpdated: Date.now() });
+		mockGetBalanceByMint.mockResolvedValue(100);
 		render(Home, {});
 		await vi.waitFor(() => {
 			expect(screen.getByText('screen.balance.sats')).toBeTruthy();
@@ -121,7 +131,7 @@ describe('Home (TASK-059) — Wallet Page Redesign', () => {
 	}, 10000);
 
 	it('shows THB equivalent estimate', async () => {
-		mockGetBalance.mockResolvedValue({ total: 10000, byMint: {}, proofCount: 2, lastUpdated: Date.now() });
+		mockGetBalanceByMint.mockResolvedValue(10000);
 		render(Home, {});
 		await vi.waitFor(() => {
 			const fiat = document.querySelector('.fiat-estimate');
@@ -206,7 +216,8 @@ describe('Home (TASK-059) — Wallet Page Redesign', () => {
 		mockGetTransactions.mockResolvedValue([]);
 		render(Home, {});
 		await vi.waitFor(() => {
-			expect(screen.getByText('screen.home.no_tx')).toBeTruthy();
+			// MOD-012: empty state uses home.no_transactions key
+			expect(screen.getByText('home.no_transactions')).toBeTruthy();
 		}, { timeout: 3000 });
 	}, 10000);
 
@@ -215,20 +226,14 @@ describe('Home (TASK-059) — Wallet Page Redesign', () => {
 			{ id: 'tx1', type: 'mint', amount: 5000, mint_url: 'https://m.example.com', timestamp: Date.now(), token_hash: null, status: 'confirmed' },
 			{ id: 'tx2', type: 'melt', amount: 2000, mint_url: 'https://m.example.com', timestamp: Date.now() - 86400000, token_hash: null, status: 'confirmed' },
 		]);
-		mockGetBalance.mockResolvedValue({ total: 7000, byMint: {}, proofCount: 3, lastUpdated: Date.now() });
+		mockGetBalanceByMint.mockResolvedValue(7000);
 		render(Home, {});
 		await vi.waitFor(() => {
 			const items = document.querySelectorAll('.tx-item');
-			expect(items.length).toBeGreaterThanOrEqual(2);
+			// MOD-012: Home shows only 1 latest tx (History tab = View All)
+			expect(items.length).toBe(1);
 		}, { timeout: 3000 });
 	}, 10000);
-
-	it('has View All link navigating to history', async () => {
-		render(Home, {});
-		const btn = screen.getByText('screen.home.view_all');
-		await fireEvent.click(btn);
-		expect(mockNavigateTo).toHaveBeenCalledWith('history');
-	});
 
 	it('has manual refresh button', () => {
 		render(Home, {});
@@ -240,7 +245,7 @@ describe('Home (TASK-059) — Wallet Page Redesign', () => {
 		mockGetTransactions.mockResolvedValue([
 			{ id: 'tx1', type: 'mint', amount: 5000, mint_url: 'https://m.example.com', timestamp: Date.now(), token_hash: null, status: 'confirmed' },
 		]);
-		mockGetBalance.mockResolvedValue({ total: 5000, byMint: {}, proofCount: 1, lastUpdated: Date.now() });
+		mockGetBalanceByMint.mockResolvedValue(5000);
 		render(Home, {});
 		await vi.waitFor(() => {
 			const dots = document.querySelectorAll('.tx-status-dot');
@@ -299,7 +304,7 @@ describe('Home (TASK-059) — Wallet Page Redesign', () => {
 	});
 
 	it('handles balance loading error', async () => {
-		mockGetBalance.mockRejectedValue(new Error('Network error'));
+		mockGetBalanceByMint.mockRejectedValue(new Error('Network error'));
 		render(Home, {});
 		await vi.waitFor(() => {
 			const section = document.querySelector('.balance-section');

@@ -4,8 +4,9 @@
 
 // ─── Storage Types ───────────────────────────────────────────
 
-export type TransactionType = 'mint' | 'melt' | 'transfer';
+export type TransactionType = 'mint' | 'melt' | 'transfer' | 'cashu_send' | 'cashu_receive';
 export type TransactionStatus = 'pending' | 'confirmed' | 'failed';
+export type TransactionProtocol = 'lightning' | 'cashu';
 
 export interface Transaction {
 	id: string;
@@ -16,10 +17,11 @@ export interface Transaction {
 	token_hash: string | null;
 	invoice?: string | null;
 	status: TransactionStatus;
+	protocol?: TransactionProtocol;
 }
 
 export interface TransactionFilter {
-	type?: TransactionType;
+	type?: TransactionType | TransactionType[];
 	mint_url?: string;
 	status?: TransactionStatus;
 }

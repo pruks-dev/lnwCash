@@ -1,0 +1,6 @@
+=== i18n Parity Check ===
+en.json: 267 keys
+th.json: 267 keys
+Keys in en but not th: 0
+Keys in th but not en: 0
+✅ i18n parity PASS — both files have identical key counts (267 each)

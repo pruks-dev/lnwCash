@@ -6,7 +6,7 @@
 	 */
 	import { _ } from 'svelte-i18n';
 	import { getTransactions } from '$lib/storage/db';
-	import type { Transaction, TransactionType, TransactionStatus, TransactionFilter } from '$lib/types';
+	import type { Transaction, TransactionType, TransactionStatus, TransactionFilter, TransactionProtocol } from '$lib/types';
 
 	// TASK-050 Design System Components
 	import Card from '$lib/components/ui/Card.svelte';
@@ -19,17 +19,34 @@
 	// TASK-050 Icons
 	import HistoryIcon from '$lib/components/icons/History.svelte';
 
+	// TASK-138 Iconly transaction icons
+	import SendIcon from '$lib/components/icons/Send.svelte';
+	import ReceiveIcon from '$lib/components/icons/Receive.svelte';
+	import SwapIcon from '$lib/components/icons/Swap.svelte';
+	import PlusIcon from '$lib/components/icons/Plus.svelte';
+	import MinusIcon from '$lib/components/icons/Minus.svelte';
+	import WalletIcon from '$lib/components/icons/Wallet.svelte';
+
 	interface Props {
 		maxItems?: number;
 	}
 
 	let { maxItems }: Props = $props();
 
+	// TASK-138: Filter key → TransactionType[] mapping
+	const FILTER_TYPE_MAP: Record<string, TransactionType[]> = {
+		receive: ['mint', 'cashu_receive'],
+		send: ['melt', 'cashu_send'],
+		transfer: ['transfer'],
+		cashu_send: ['cashu_send'],
+		cashu_receive: ['cashu_receive'],
+	};
+
 	// ─── State ─────────────────────────────────────────────
 	let transactions: Transaction[] = $state([]);
 	let loading: boolean = $state(true);
 	let error: string = $state('');
-	let activeFilter: TransactionType | 'all' = $state('all');
+	let activeFilter: string = $state('all');
 
 	// Pull-to-refresh state
 	let pullDistance: number = $state(0);
@@ -48,7 +65,10 @@
 		try {
 			const filter: TransactionFilter = {};
 			if (activeFilter !== 'all') {
-				filter.type = activeFilter;
+				const types = FILTER_TYPE_MAP[activeFilter];
+				if (types) {
+					filter.type = types.length === 1 ? types[0] : types;
+				}
 			}
 			const txs = await getTransactions(filter);
 			transactions = maxItems ? txs.slice(0, maxItems) : txs;
@@ -78,7 +98,17 @@
 			case 'mint': return $_('screen.history.type_receive');
 			case 'melt': return $_('screen.history.type_send');
 			case 'transfer': return $_('screen.history.type_transfer');
+			case 'cashu_send': return $_('screen.history.type_send');
+			case 'cashu_receive': return $_('screen.history.type_receive');
 			default: return type;
+		}
+	}
+
+	function protocolLabel(protocol?: TransactionProtocol): string {
+		switch (protocol) {
+			case 'lightning': return $_('screen.history.protocol_lightning');
+			case 'cashu': return $_('screen.history.protocol_cashu');
+			default: return '';
 		}
 	}
 
@@ -91,13 +121,17 @@
 		}
 	}
 
-	function typeIcon(type: TransactionType): string {
-		switch (type) {
-			case 'mint': return '↓';
-			case 'melt': return '↑';
-			case 'transfer': return '⇄';
-			default: return '?';
-		}
+	// TASK-138: Iconly SVG component mapping (no unicode/emoji)
+	const txIconMap: Record<TransactionType, typeof SendIcon> = {
+		mint: PlusIcon,
+		melt: MinusIcon,
+		transfer: SwapIcon,
+		cashu_send: SendIcon,
+		cashu_receive: ReceiveIcon,
+	};
+
+	function getTxIcon(type: TransactionType): typeof SendIcon {
+		return txIconMap[type] ?? WalletIcon;
 	}
 
 	function typeIconColor(type: TransactionType): string {
@@ -105,6 +139,8 @@
 			case 'mint': return 'var(--color-success)';
 			case 'melt': return 'var(--color-primary)';
 			case 'transfer': return 'var(--color-secondary)';
+			case 'cashu_send': return 'var(--color-primary)';
+			case 'cashu_receive': return 'var(--color-success)';
 			default: return 'var(--color-text-secondary)';
 		}
 	}
@@ -118,7 +154,7 @@
 		}
 	}
 
-	function setFilter(filter: TransactionType | 'all') {
+	function setFilter(filter: string) {
 		activeFilter = filter;
 		loadTransactions();
 	}
@@ -230,11 +266,20 @@
 		<Chip variant={activeFilter === 'all' ? 'active' : 'default'} onclick={() => setFilter('all')}>
 			{$_('screen.history.filter_all')}
 		</Chip>
-		<Chip variant={activeFilter === 'mint' ? 'active' : 'default'} onclick={() => setFilter('mint')}>
+		<Chip variant={activeFilter === 'receive' ? 'active' : 'default'} onclick={() => setFilter('receive')}>
 			{$_('screen.history.filter_receive')}
 		</Chip>
-		<Chip variant={activeFilter === 'melt' ? 'active' : 'default'} onclick={() => setFilter('melt')}>
+		<Chip variant={activeFilter === 'send' ? 'active' : 'default'} onclick={() => setFilter('send')}>
 			{$_('screen.history.filter_send')}
+		</Chip>
+		<Chip variant={activeFilter === 'transfer' ? 'active' : 'default'} onclick={() => setFilter('transfer')}>
+			{$_('screen.history.filter_transfer')}
+		</Chip>
+		<Chip variant={activeFilter === 'cashu_send' ? 'active' : 'default'} onclick={() => setFilter('cashu_send')}>
+			{$_('screen.history.filter_cashu_send')}
+		</Chip>
+		<Chip variant={activeFilter === 'cashu_receive' ? 'active' : 'default'} onclick={() => setFilter('cashu_receive')}>
+			{$_('screen.history.filter_cashu_receive')}
 		</Chip>
 	</div>
 
@@ -292,13 +337,21 @@
 										style="background: {typeIconColor(tx.type)}"
 										aria-hidden="true"
 									>
-										{typeIcon(tx.type)}
+										<!-- svelte-ignore svelte_component_deprecated -->
+										<svelte:component this={getTxIcon(tx.type)} size={20} color="white" />
 									</span>
 									<div class="tx-info">
 										<div class="tx-header">
-											<Body size="sm" weight="semibold">{typeLabel(tx.type)}</Body>
+											<div class="tx-header-left">
+												<Body size="sm" weight="semibold">{typeLabel(tx.type)}</Body>
+												{#if tx.protocol}
+													<span class="tx-protocol-badge" title={protocolLabel(tx.protocol)}>
+														{protocolLabel(tx.protocol)}
+													</span>
+												{/if}
+											</div>
 											<Body size="sm" weight="semibold">
-												{tx.type === 'mint' ? '+' : '-'}{formatSat(tx.amount)} {$_('screen.balance.sats')}
+												{tx.type === 'mint' || tx.type === 'cashu_receive' ? '+' : '-'}{formatSat(tx.amount)} {$_('screen.balance.sats')}
 											</Body>
 										</div>
 										<div class="tx-meta">
@@ -469,9 +522,6 @@
 		width: 36px;
 		height: 36px;
 		border-radius: var(--radius-full);
-		color: white;
-		font-size: var(--font-size-lg);
-		font-weight: var(--font-weight-bold);
 		flex-shrink: 0;
 	}
 
@@ -487,6 +537,22 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
+	}
+
+	.tx-header-left {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+	}
+
+	.tx-protocol-badge {
+		font-size: var(--font-size-xs);
+		font-weight: var(--font-weight-medium);
+		color: var(--color-text-secondary);
+		background: var(--color-surface-variant);
+		padding: 0 4px;
+		border-radius: var(--radius-sm);
+		white-space: nowrap;
 	}
 
 	.tx-meta {

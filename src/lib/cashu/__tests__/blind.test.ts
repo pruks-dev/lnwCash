@@ -41,6 +41,7 @@ function bytesToBigInt(bytes: Uint8Array): bigint {
 // ─── Test Data ───────────────────────────────────────────────
 
 const TEST_PRIVATE_KEY = 0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdefn;
+const TEST_PUBLIC_KEY = secp256k1.Point.BASE.multiply(TEST_PRIVATE_KEY).toHex(true);
 
 // Known test vectors for hash_to_curve (pre-computed, cross-referenced with Python reference)
 // The first 3 test vectors have known expected outputs
@@ -235,7 +236,7 @@ describe('BDHKE multiplicative scheme', () => {
 		const secret = 'bdhke-test-secret-001';
 		const r = deterministicBlindingFactor(secret);
 
-		// Alice: Y = hash_to_curve(secret), B_ = Y * r
+		// Alice: Y = hash_to_curve(secret), B_ = Y + r*G (additive BDHKE)
 		const { B_, blindingFactor } = blindMessage(secret, r);
 
 		// Mint: C_ = k * B_ (simulated with test private key)
@@ -243,8 +244,8 @@ describe('BDHKE multiplicative scheme', () => {
 		const C_point = B_point.multiply(TEST_PRIVATE_KEY);
 		const C_ = C_point.toHex(true);
 
-		// Alice: unblind C = C_ * r^{-1}
-		const C = unblindSignature(C_, blindingFactor);
+		// Alice: unblind C = C_ - r*K (additive unblinding with mint pubkey)
+		const C = unblindSignature(C_, blindingFactor, TEST_PUBLIC_KEY);
 
 		// Verify: C should equal k * hash_to_curve(secret)
 		expect(verifySignature(C, secret, TEST_PRIVATE_KEY)).toBe(true);
@@ -282,9 +283,9 @@ describe('BDHKE multiplicative scheme', () => {
 		const C1_ = secp256k1.Point.fromHex(B1).multiply(TEST_PRIVATE_KEY).toHex(true);
 		const C2_ = secp256k1.Point.fromHex(B2).multiply(TEST_PRIVATE_KEY).toHex(true);
 
-		// Unblind
-		const C1 = unblindSignature(C1_, base64url.encode(bigIntTo32Bytes(r1)));
-		const C2 = unblindSignature(C2_, base64url.encode(bigIntTo32Bytes(r2)));
+		// Unblind with additive unblinding (needs mint pubkey)
+		const C1 = unblindSignature(C1_, base64url.encode(bigIntTo32Bytes(r1)), TEST_PUBLIC_KEY);
+		const C2 = unblindSignature(C2_, base64url.encode(bigIntTo32Bytes(r2)), TEST_PUBLIC_KEY);
 
 		// Different signatures
 		expect(C1).not.toBe(C2);

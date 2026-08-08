@@ -9,14 +9,14 @@
 
 	let { onLanguageChanged }: Props = $props();
 
-	let currentLang: string = $state('th');
+	let currentLang: string = $state('en');
 
 	$effect(() => {
 		try {
 			const settings = getSettings();
-			currentLang = settings.language || 'th';
+			currentLang = settings.language || 'en';
 		} catch {
-			currentLang = 'th';
+			currentLang = 'en';
 		}
 	});
 

@@ -57,7 +57,7 @@ describe('localStorage service', () => {
 	describe('settings', () => {
 		it('should return defaults when no settings stored', () => {
 			const settings = getSettings();
-			expect(settings.language).toBe('th');
+			expect(settings.language).toBe('en');
 			expect(settings.theme).toBe('dark');
 			expect(settings.default_mint).toBe('');
 		});
@@ -86,7 +86,7 @@ describe('localStorage service', () => {
 			setSettings({ language: 'en' });
 			clearSettings();
 			const settings = getSettings();
-			expect(settings.language).toBe('th');
+			expect(settings.language).toBe('en');
 		});
 	});
 
@@ -176,7 +176,7 @@ describe('localStorage service', () => {
 			clearAll();
 
 			expect(getWalletMetadata()).toBeNull();
-			expect(getSettings().language).toBe('th');
+			expect(getSettings().language).toBe('en');
 			expect(getKeysetCache('https://mint.example.com')).toEqual([]);
 		});
 	});

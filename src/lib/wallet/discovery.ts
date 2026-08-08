@@ -10,8 +10,8 @@ import type { MintInfo, CachedEndpoint, Nut19Settings } from '../types';
 import {
 	getMintConfig,
 	setMintConfig,
-	type MintConfig
 } from './store';
+import type { MintConfig } from './config';
 import { createPlaceholderConfig, normalizeSupportedNuts } from './config';
 
 // ─── Error Types ───────────────────────────────────────────────

@@ -14,24 +14,25 @@ import { base64url } from '../../util/base64';
 import type { TokenProof } from '../../types';
 
 describe('Cashu token encode/decode (NUT-00 V4)', () => {
+	// Keyset IDs must be valid hex strings for CBOR encoding (bytes in V4 format)
 	const mockProofs: TokenProof[] = [
 		{
-			id: 'keyset-001',
+			id: 'deadbeef0001',
 			amount: 64,
 			secret: 'secret1',
-			C: 'signature1'
+			C: '02' + 'a1'.repeat(32)
 		},
 		{
-			id: 'keyset-001',
+			id: 'deadbeef0001',
 			amount: 32,
 			secret: 'secret2',
-			C: 'signature2'
+			C: '02' + 'b2'.repeat(32)
 		},
 		{
-			id: 'keyset-002',
+			id: 'cafebabe0002',
 			amount: 4,
 			secret: 'secret3',
-			C: 'signature3'
+			C: '02' + 'c3'.repeat(32)
 		}
 	];
 
@@ -191,9 +192,10 @@ describe('Cashu token encode/decode (NUT-00 V4)', () => {
 
 		// ─── no prefix (backward compat) ────
 
-		it('should decode token without prefix', () => {
-			const token = encodeToken(mockProofs, mintUrl);
-			const withoutPrefix = token.slice(TOKEN_PREFIX_V4.length);
+		it('should decode token without prefix (V3 legacy)', () => {
+			// V4 CBOR cannot be parsed without prefix; V3 JSON can
+			const token = encodeToken(mockProofs, mintUrl, 'sat', undefined, true);
+			const withoutPrefix = token.slice(TOKEN_PREFIX.length);
 			const decoded = decodeToken(withoutPrefix);
 			expect(decoded.mint).toBe(mintUrl);
 		});

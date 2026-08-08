@@ -100,8 +100,8 @@ export function getMintPubkey(mintUrl: string, keysetId: string, amount?: number
 	if (!keyset || !keyset.keys) return undefined;
 
 	// Return key for specific amount if provided, otherwise lowest denomination
-	if (amount !== undefined && keyset.keys[String(amount)]) {
-		return keyset.keys[String(amount)];
+	if (amount !== undefined && (keyset.keys as Record<string, string>)[String(amount)]) {
+		return (keyset.keys as Record<string, string>)[String(amount)];
 	}
 
 	// Fallback: lowest denomination

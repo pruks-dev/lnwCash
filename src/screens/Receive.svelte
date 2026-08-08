@@ -14,6 +14,8 @@
 	 * All UI states: idle, loading, success, error, timeout
 	 */
 	import { _ } from 'svelte-i18n';
+	import { onMount } from 'svelte';
+	import { scannedQRValue } from '$lib/stores/scannedQR';
 	import { mintFlow, decomposeAmount, type MintResult } from '$lib/wallet/mint';
 	import { receiveTokens, type ReceiveResult } from '$lib/wallet/tokenStore';
 	import { isCashuToken, getTokenAmount, decodeToken } from '$lib/cashu/token';
@@ -21,11 +23,12 @@
 	import { fetchAndCacheKeysets, getMintPubkey } from '$lib/cashu/keyset';
 	import { blindMessage, unblindSignature, deterministicBlindingFactor, blindingFactorToHex } from '$lib/cashu/blind';
 	import { addProofs } from '$lib/wallet/proofsDb';
+	import { addTransaction } from '$lib/storage/db';
 	import { getBalance } from '$lib/wallet/balance';
 	import { getPrivateKey, storeSessionPin, unlockWallet } from '$lib/wallet/state';
 	import { WalletLockedError } from '$lib/wallet/errors';
 	import { getMintConfig } from '$lib/wallet/store';
-	import { navigateTo } from '$lib/router';
+	import { navigateTo, getHashParam, clearHashParams } from '$lib/router';
 
 	import Card from '$lib/components/ui/Card.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
@@ -129,6 +132,30 @@
 			}
 			mintUrl = defaultMintUrl;
 		}
+	});
+
+	// TASK-122: Read scanned QR value from shared store (QRScan → Receive)
+	// TASK-133 (F-V13-010): Also read token from URL hash params
+	onMount(() => {
+		const unsub = scannedQRValue.subscribe((value) => {
+			if (value && (value.startsWith('cashuA') || value.startsWith('cashuB') || value.startsWith('cashu'))) {
+				cashuTokenInput = value;
+				activeTab = 'cashu';
+				scannedQRValue.set(null);
+				validateToken();
+			}
+		});
+
+		// TASK-133: Read token from URL hash params (#/receive?token=...)
+		const tokenParam = getHashParam('token');
+		if (tokenParam) {
+			cashuTokenInput = decodeURIComponent(tokenParam);
+			activeTab = 'cashu';
+			clearHashParams();
+			validateToken();
+		}
+
+		return unsub;
 	});
 
 	function showToast(message: string, type: 'info' | 'success' | 'error' = 'info') {
@@ -361,6 +388,23 @@
 
 			// Step 6: Store proofs in IndexedDB
 			await addProofs(proofs, mintUrlClean, keysetId);
+
+			// Step 6.5: Record transaction (F-087) — best-effort
+			try {
+				await addTransaction({
+					id: `mint-${pendingQuoteId}`,
+					type: 'mint',
+					protocol: 'lightning',
+					amount: pendingAmount,
+					mint_url: mintUrlClean,
+					timestamp: Date.now(),
+					token_hash: null,
+					invoice: null,
+					status: 'confirmed'
+				});
+			} catch {
+				// IndexedDB may be unavailable — transaction recording is best-effort
+			}
 
 			// Step 7: Update balance
 			const newBalance = await updateBalanceDisplay();
@@ -607,7 +651,7 @@
 				<Card variant="basic" padding="lg">
 					<div class="invoice-section">
 						<Heading level="h3">{$_('screen.receive.lightning_invoice')}</Heading>
-						<QRDisplay data={lightningQrData} size={200} />
+						<QRDisplay data={lightningQrData} size={300} />
 						<div class="invoice-text">
 							<Body size="sm" color="secondary">
 								{lightningInvoice.substring(0, 40)}...

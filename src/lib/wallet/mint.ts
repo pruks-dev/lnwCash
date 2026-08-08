@@ -13,7 +13,7 @@ import {
 	checkMintQuote,
 	pollMintQuoteUntil
 } from '../cashu/client';
-import { fetchAndCacheKeysets, getAllKeysets } from '../cashu/keyset';
+import { fetchAndCacheKeysets, getAllKeysets, getMintPubkey } from '../cashu/keyset';
 import { blindMessage, unblindSignature, deterministicBlindingFactor, blindingFactorToHex } from '../cashu/blind';
 import { getPrivateKey } from './state';
 import { addProofs } from './proofsDb';

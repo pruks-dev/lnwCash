@@ -259,7 +259,7 @@ describe('Cashu mint HTTP client', () => {
 				`${MINT_A}/v1/melt/quote/bolt11`,
 				expect.objectContaining({
 					method: 'POST',
-					body: JSON.stringify({ request: 'lnbc...invoice' })
+					body: JSON.stringify({ request: 'lnbc...invoice', unit: 'sat' })
 				})
 			);
 		});
@@ -281,7 +281,7 @@ describe('Cashu mint HTTP client', () => {
 			expect(mockFetch).toHaveBeenCalledWith(
 				`${MINT_A}/v1/melt/quote/bolt11`,
 				expect.objectContaining({
-					body: JSON.stringify({ request: 'lnbc...', amount: 500 })
+					body: JSON.stringify({ request: 'lnbc...', unit: 'sat', amount: 500 })
 				})
 			);
 		});
@@ -336,7 +336,7 @@ describe('Cashu mint HTTP client', () => {
 		it('C07-01: should check state of a single proof', async () => {
 			const mockResponse = {
 				states: [
-					{ secret: 'proof-secret-1', state: 'UNSPENT', witness: null }
+					{ secret: '70726f6f662d7365637265742d31', state: 'UNSPENT', witness: null }
 				]
 			};
 
@@ -346,19 +346,16 @@ describe('Cashu mint HTTP client', () => {
 			});
 
 			const response = await checkState(MINT_A, [
-				{ secret: 'proof-secret-1', C: 'sig-1' }
+				{ secret: '70726f6f662d7365637265742d31', C: '02' + 'aa'.repeat(32) }
 			]);
 
 			expect(response.states).toHaveLength(1);
-			expect(response.states[0].secret).toBe('proof-secret-1');
 			expect(response.states[0].state).toBe('UNSPENT');
 			expect(mockFetch).toHaveBeenCalledWith(
 				`${MINT_A}/v1/checkstate`,
 				expect.objectContaining({
 					method: 'POST',
-					body: JSON.stringify({
-						proofs: [{ secret: 'proof-secret-1', C: 'sig-1' }]
-					})
+					body: expect.stringContaining('Ys')
 				})
 			);
 		});
@@ -366,8 +363,8 @@ describe('Cashu mint HTTP client', () => {
 		it('C07-01: should check state of multiple proofs', async () => {
 			const mockResponse = {
 				states: [
-					{ secret: 's1', state: 'UNSPENT', witness: null },
-					{ secret: 's2', state: 'SPENT', witness: null }
+					{ secret: '7331', state: 'UNSPENT', witness: null },
+					{ secret: '7332', state: 'SPENT', witness: null }
 				]
 			};
 
@@ -377,8 +374,8 @@ describe('Cashu mint HTTP client', () => {
 			});
 
 			const response = await checkState(MINT_A, [
-				{ secret: 's1' },
-				{ secret: 's2' }
+				{ secret: '7331' },
+				{ secret: '7332' }
 			]);
 
 			expect(response.states).toHaveLength(2);

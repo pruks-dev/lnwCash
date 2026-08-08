@@ -17,6 +17,22 @@ function makeProof(id: string, amount: number): TokenProof {
 	return { id: KEYSET_ID, amount, secret: `secret-${id}`, C: `sig-${id}` };
 }
 
+// Mock the keyset module (fetch + cache layer)
+vi.mock('../../cashu/keyset', () => ({
+	fetchAndCacheKeysets: vi.fn().mockResolvedValue([
+		{ id: 'keyset-abc123', unit: 'sat', active: true, input_fee_ppk: 5, keys: { '1': '02' + 'a1'.repeat(32) }, last_updated: Date.now() }
+	]),
+	getAllKeysets: vi.fn().mockReturnValue([
+		{ id: 'keyset-abc123', unit: 'sat', active: true, input_fee_ppk: 5, keys: { '1': '02' + 'a1'.repeat(32) }, last_updated: Date.now() }
+	]),
+	getMintPubkey: vi.fn().mockReturnValue('03' + 'b1'.repeat(32)),
+	getKeysetById: vi.fn().mockReturnValue({ id: 'keyset-abc123', unit: 'sat', active: true, input_fee_ppk: 5, keys: { '1': '02' + 'a1'.repeat(32) }, last_updated: Date.now() }),
+	resolveKeysetId: vi.fn().mockImplementation((_url: string, id: string) => id),
+	isCacheStale: vi.fn().mockReturnValue(false),
+	clearCache: vi.fn(),
+	rotateKeysets: vi.fn()
+}));
+
 // Mock the client module
 vi.mock('../../cashu/client', () => ({
 	getMintInfo: vi.fn(),

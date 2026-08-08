@@ -16,12 +16,14 @@
 	 * All UI states: idle, validating, fee-calculating, confirming, sending, success, error
 	 */
 	import { _ } from 'svelte-i18n';
+	import { onMount } from 'svelte';
+	import { scannedQRValue } from '$lib/stores/scannedQR';
 	import { meltFlow, type MeltResult } from '$lib/wallet/melt';
 	import { sendTokens, type SendResult } from '$lib/wallet/transfer';
 	import { InsufficientFundsError, WalletLockedError } from '$lib/wallet/errors';
 	import { requestMeltQuote, CashuError } from '$lib/cashu/client';
 	import { getBalance, getBalanceByMint } from '$lib/wallet/balance';
-	import { navigateTo } from '$lib/router';
+	import { navigateTo, getHashParam, clearHashParams } from '$lib/router';
 	import { getMintConfig } from '$lib/wallet/store';
 	import { decodeBolt11, isValidBolt11, type Bolt11Decoded, type Bolt11Error } from '$lib/wallet/bolt11';
 
@@ -134,6 +136,35 @@
 			}
 			mintUrl = defaultMintUrl;
 		}
+	});
+
+	// TASK-122: Read scanned QR value from shared store (QRScan → Send)
+	// TASK-133 (F-V13-010): Also read invoice from URL hash params
+	onMount(() => {
+		const unsub = scannedQRValue.subscribe((value) => {
+			if (value && (value.startsWith('lnbc') || value.startsWith('lntb') || value.startsWith('lnurl'))) {
+				lightningInvoiceInput = value;
+				scannedQRValue.set(null);
+				// Auto-validate the invoice from QR scan
+				if (value.startsWith('lnbc') || value.startsWith('lntb') || value.startsWith('lnbcrt')) {
+					validateInvoiceSimple(value);
+				}
+			}
+		});
+
+		// TASK-133: Read invoice from URL hash params (#/send?invoice=...)
+		const invoiceParam = getHashParam('invoice');
+		if (invoiceParam) {
+			lightningInvoiceInput = decodeURIComponent(invoiceParam);
+			clearHashParams();
+			// Auto-validate the invoice from URL param
+			const val = lightningInvoiceInput;
+			if (val.startsWith('lnbc') || val.startsWith('lntb') || val.startsWith('lnbcrt')) {
+				validateInvoiceSimple(val);
+			}
+		}
+
+		return unsub;
 	});
 
 	function showToast(message: string, type: 'info' | 'success' | 'error' = 'info') {
@@ -464,6 +495,12 @@
 	}
 
 	function handleBack() {
+		navigateTo('receive');
+	}
+
+	function handleOkAndNavigate() {
+		resetLightning();
+		resetCashu();
 		navigateTo('home');
 	}
 
@@ -507,21 +544,63 @@
 		</button>
 	</div>
 
-	<!-- Full-screen sending overlay -->
-	{#if lightningState === 'sending'}
-		<div class="send-overlay" role="alert" aria-live="assertive">
-			<div class="send-overlay-content">
-				<div class="spinner-overlay"></div>
-				<Heading level="h3" align="center">{$_('screen.send.sending')}</Heading>
-				<Body size="md" color="secondary">{$_('screen.send.do_not_close')}</Body>
-			</div>
-		</div>
-	{/if}
-
 	<!-- ══════════════════ LIGHTNING TAB ══════════════════ -->
 	{#if activeTab === 'lightning'}
 		<div class="tab-content" role="tabpanel">
-			{#if lightningState !== 'success'}
+			{#if lightningState === 'sending'}
+				<div class="inline-sending" role="alert" aria-live="assertive">
+					<div class="spinner-lg"></div>
+					<Heading level="h3" align="center">{$_('screen.send.sending')}</Heading>
+					<Body size="md" color="secondary">{$_('screen.send.do_not_close')}</Body>
+				</div>
+			{:else if lightningState === 'success'}
+				<div class="success-expand">
+					<Card variant="basic" padding="lg">
+						<div class="success-section">
+							<span class="success-icon" aria-hidden="true">
+								<Check size={64} />
+							</span>
+							<Heading level="h3" align="center">{$_('screen.send.success_payment')}</Heading>
+							<div class="spent-amount">
+								<span class="spent-value">{formatSat(displaySpentAmount)}</span>
+								<span class="spent-unit">{$_('screen.balance.sats')}</span>
+							</div>
+							<Body size="sm" color="secondary">
+								{$_('screen.send.amount_sent', { values: { amount: formatSat(displaySpentAmount) } })}
+							</Body>
+							<div class="payment-breakdown">
+								<div class="detail-row">
+									<Body size="sm" color="secondary">{$_('screen.send.amount')}</Body>
+									<Body size="sm" weight="semibold">{formatSat(paidInvoiceAmount)} {$_('screen.balance.sats')}</Body>
+								</div>
+								{#if paidFee > 0}
+									<div class="detail-row">
+										<Body size="sm" color="secondary">{$_('screen.send.fee')}</Body>
+										<Body size="sm" weight="semibold">{formatSat(paidFee)} {$_('screen.balance.sats')}</Body>
+									</div>
+									<div class="detail-row detail-row-total">
+										<Body size="md" weight="semibold">{$_('screen.send.total')}</Body>
+										<Body size="md" weight="bold">{formatSat(paidInvoiceAmount + paidFee)} {$_('screen.balance.sats')}</Body>
+									</div>
+								{/if}
+							</div>
+							{#if lightningResult?.preimage}
+								<div class="detail-row">
+									<Body size="sm" color="secondary">Preimage</Body>
+									<div class="mono-text">
+										<Body size="sm" weight="semibold" truncate>
+											{lightningResult.preimage.substring(0, 16)}...
+										</Body>
+									</div>
+								</div>
+							{/if}
+							<Button variant="primary" onclick={handleOkAndNavigate}>
+								{#snippet children()}{$_('common.ok')}{/snippet}
+							</Button>
+						</div>
+					</Card>
+				</div>
+			{:else}
 				<Card variant="basic" padding="lg">
 					<div class="invoice-input-section">
 						<Heading level="h3">{$_('screen.send.enter_invoice')}</Heading>
@@ -603,62 +682,15 @@
 						</button>
 					</div>
 				{/if}
-			{/if}
 
-			{#if lightningState === 'error' && lightningError}
-				<div class="error-banner" role="alert">
-					<Body size="sm">{lightningError}</Body>
-					<button type="button" class="error-close" onclick={() => lightningState = 'idle'} aria-label="Dismiss">
-						<Close size={16} />
-					</button>
-				</div>
-			{/if}
-
-			{#if lightningState === 'success'}
-				<Card variant="basic" padding="lg">
-					<div class="success-section">
-						<span class="success-icon" aria-hidden="true">
-							<Check size={64} />
-						</span>
-						<Heading level="h3" align="center">{$_('screen.send.success_payment')}</Heading>
-						<div class="spent-amount">
-							<span class="spent-value">{formatSat(displaySpentAmount)}</span>
-							<span class="spent-unit">{$_('screen.balance.sats')}</span>
-						</div>
-						<Body size="sm" color="secondary">
-							{$_('screen.send.amount_sent', { values: { amount: formatSat(displaySpentAmount) } })}
-						</Body>
-						<div class="payment-breakdown">
-							<div class="detail-row">
-								<Body size="sm" color="secondary">{$_('screen.send.amount')}</Body>
-								<Body size="sm" weight="semibold">{formatSat(paidInvoiceAmount)} {$_('screen.balance.sats')}</Body>
-							</div>
-							{#if paidFee > 0}
-								<div class="detail-row">
-									<Body size="sm" color="secondary">{$_('screen.send.fee')}</Body>
-									<Body size="sm" weight="semibold">{formatSat(paidFee)} {$_('screen.balance.sats')}</Body>
-								</div>
-								<div class="detail-row detail-row-total">
-									<Body size="md" weight="semibold">{$_('screen.send.total')}</Body>
-									<Body size="md" weight="bold">{formatSat(paidInvoiceAmount + paidFee)} {$_('screen.balance.sats')}</Body>
-								</div>
-							{/if}
-						</div>
-						{#if lightningResult?.preimage}
-							<div class="detail-row">
-								<Body size="sm" color="secondary">Preimage</Body>
-								<div class="mono-text">
-									<Body size="sm" weight="semibold" truncate>
-										{lightningResult.preimage.substring(0, 16)}...
-									</Body>
-								</div>
-							</div>
-						{/if}
-						<Button variant="primary" onclick={resetLightning}>
-							{#snippet children()}{$_('common.ok')}{/snippet}
-						</Button>
+				{#if lightningState === 'error' && lightningError}
+					<div class="error-banner" role="alert">
+						<Body size="sm">{lightningError}</Body>
+						<button type="button" class="error-close" onclick={() => lightningState = 'idle'} aria-label="Dismiss">
+							<Close size={16} />
+						</button>
 					</div>
-				</Card>
+				{/if}
 			{/if}
 		</div>
 	{/if}
@@ -732,7 +764,7 @@
 						</span>
 						<Heading level="h3" align="center">{$_('screen.send.token_created')}</Heading>
 
-						<QRDisplay data={cashuToken} size={180} label={cashuToken.substring(0, 30) + '...'} />
+						<QRDisplay data={cashuToken} size={300} label={cashuToken.substring(0, 30) + '...'} />
 
 						<div class="token-display">
 							<textarea
@@ -751,7 +783,7 @@
 							{$_('screen.send.share_token')}
 						</Body>
 
-						<Button variant="primary" onclick={resetCashu}>
+						<Button variant="primary" onclick={handleOkAndNavigate}>
 							{#snippet children()}{$_('common.ok')}{/snippet}
 						</Button>
 					</div>
@@ -1092,32 +1124,34 @@
 		to { transform: rotate(360deg); }
 	}
 
-	/* ─── Send Overlay ────────────────── */
-	.send-overlay {
-		position: fixed;
-		inset: 0;
-		z-index: 1000;
-		background: var(--color-background);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		padding: var(--space-md);
-	}
-
-	.send-overlay-content {
+	/* ─── Inline Sending (was overlay, now inline) ── */
+	.inline-sending {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
+		justify-content: center;
 		gap: var(--space-lg);
+		padding: var(--space-xl);
+		min-height: 200px;
+		animation: expand-in 0.3s ease-out;
 	}
 
-	.spinner-overlay {
-		width: 56px;
-		height: 56px;
-		border: 4px solid var(--color-border);
-		border-top-color: var(--color-primary);
-		border-radius: 50%;
-		animation: spin 0.8s linear infinite;
+	/* ─── Success Expand Animation ────── */
+	.success-expand {
+		animation: expand-in 0.3s ease-out;
+	}
+
+	@keyframes expand-in {
+		from {
+			opacity: 0;
+			transform: translateY(12px);
+			max-height: 0;
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+			max-height: 600px;
+		}
 	}
 
 	/* ─── Success ─────────────────────── */

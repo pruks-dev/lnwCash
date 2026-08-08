@@ -1,0 +1,20 @@
+=== Vitest Summary — TASK-140 Build Gate v15 ===
+Run: 2026-08-08
+Provider: vitest v4.1.10
+Config: vitest.run (not watch)
+
+Results (stable over 5 runs):
+  Test Files: 64 passed, 1 failed (65 total)
+  Tests:      767 passed, 1 failed (768 total)
+
+Pre-existing failure (also present in v14):
+  FAIL src/__tests__/components/ErrorBoundary.test.ts > ErrorBoundary > should display retry button in error state
+  Root cause: Test expects text 'common.retry' but component renders localized text 'ลองใหม่' (Thai).
+  This is a known issue from v14 baseline.
+
+Flaky test observation (transient, not consistently failing):
+  FAIL src/lib/wallet/__tests__/seed.test.ts > Seed export/import > should restore correct public key from seed
+  Root cause: Occasionally generates 23-word seed instead of 24 — non-deterministic.
+  Occurred in 1 of 5 runs in this gate check.
+
+✅ VITEST: 767 PASS, 1 pre-existing FAIL → GATE PASS

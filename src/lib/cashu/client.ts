@@ -19,6 +19,9 @@ import type {
 	Nut19Settings
 } from '../types';
 
+import { hash_to_curve } from './blind';
+import { hexToBytes } from '@noble/hashes/utils.js';
+
 // ─── Error types ─────────────────────────────────────────────
 
 export class CashuError extends Error {
@@ -384,10 +387,23 @@ export async function checkState(
 	proofs: CheckStateProof[]
 ): Promise<CheckStateResponse> {
 	const path = STANDARD_PATHS.check_state;
-	return fetchFromMint<CheckStateResponse>(mintUrl, path, {
-		method: 'POST',
-		body: { Ys: proofs.map(p => p.C!) }
-	});
+	// F-086: NUT-07 expects Y = hash_to_curve(secret), not C (commitment)
+	const Ys = proofs.map(p => hash_to_curve(hexToBytes(p.secret)).toHex(true));
+	try {
+		return await fetchFromMint<CheckStateResponse>(mintUrl, path, {
+			method: 'POST',
+			body: { Ys }
+		});
+	} catch (e) {
+		// Fallback: if mint rejects Y-based format (400), retry with C
+		if (e instanceof CashuError && e.status === 400) {
+			return fetchFromMint<CheckStateResponse>(mintUrl, path, {
+				method: 'POST',
+				body: { Ys: proofs.map(p => p.C!) }
+			});
+		}
+		throw e;
+	}
 }
 
 /**

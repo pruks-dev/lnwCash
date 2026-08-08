@@ -258,7 +258,7 @@ describe('(B) Endpoint discovery flow', () => {
 
 		it('should handle mint without nuts at all', () => {
 			const info = makeFakeInfo();
-			delete (info as Record<string, unknown>).nuts;
+			delete (info as unknown as Record<string, unknown>).nuts;
 			const config = mintInfoToConfig(MINT_URL, info);
 			expect(config.supported_nuts).toEqual([]);
 			expect(config.cached_endpoints).toEqual([]);

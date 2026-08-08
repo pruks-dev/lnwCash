@@ -111,11 +111,20 @@ describe('TASK-084: Real Mint E2E (mint.lnw.cash)', () => {
 		const r = deterministicBlindingFactor(secret);
 		const { B_, blindingFactor } = blindMessage(secret, r);
 
-		// Unblinding B_ with same factor should recover Y = hash_to_curve(secret)
-		const Y = hash_to_curve(new TextEncoder().encode(secret));
-		const recoveredY = unblindSignature(B_, blindingFactor);
+		// Simulated mint: C_ = k * B_
+		const testMintPrivKey = 0x0f0e0d0c0b0a090807060504030201000f0e0d0c0b0a09080706050403020100n;
+		const testMintPubKey = secp256k1.Point.BASE.multiply(testMintPrivKey).toHex(true);
+		const B_point = secp256k1.Point.fromHex(B_);
+		const C_ = B_point.multiply(testMintPrivKey).toHex(true);
 
-		expect(recoveredY).toBe(Y.toHex(true));
+		// Alice unblinds (additive, needs mint pubkey)
+		const C = unblindSignature(C_, blindingFactor, testMintPubKey);
+
+		// C should equal k * hash_to_curve(secret)
+		const Y = hash_to_curve(new TextEncoder().encode(secret));
+		const expectedC = Y.multiply(testMintPrivKey).toHex(true);
+
+		expect(C).toBe(expectedC);
 		console.log(`[T084-RM-05] BDHKE roundtrip: PASS`);
 	});
 
@@ -124,6 +133,7 @@ describe('TASK-084: Real Mint E2E (mint.lnw.cash)', () => {
 		const amount = 10;
 		const amounts = decomposeAmount(amount);
 		const testMintPrivKey = 0x0f0e0d0c0b0a090807060504030201000f0e0d0c0b0a09080706050403020100n;
+		const testMintPubKey = secp256k1.Point.BASE.multiply(testMintPrivKey).toHex(true);
 
 		const outputs: Array<{ amount: number; secret: string; B_: string; blindingFactor: string }> = [];
 		for (const amt of amounts) {
@@ -138,11 +148,11 @@ describe('TASK-084: Real Mint E2E (mint.lnw.cash)', () => {
 			C_: secp256k1.Point.fromHex(o.B_).multiply(testMintPrivKey).toHex(true),
 		}));
 
-		// Client unblinds
+		// Client unblinds (additive, needs mint pubkey)
 		const proofs = outputs.map((o, i) => ({
 			amount: o.amount,
 			secret: o.secret,
-			C: unblindSignature(signatures[i].C_, o.blindingFactor),
+			C: unblindSignature(signatures[i].C_, o.blindingFactor, testMintPubKey),
 		}));
 
 		// Verify each proof
@@ -162,8 +172,9 @@ describe('TASK-084: Real Mint E2E (mint.lnw.cash)', () => {
 		const { B_, blindingFactor } = blindMessage(secret, r);
 
 		const testMintPrivKey = 0x0f0e0d0c0b0a090807060504030201000f0e0d0c0b0a09080706050403020100n;
+		const testMintPubKey = secp256k1.Point.BASE.multiply(testMintPrivKey).toHex(true);
 		const C_ = secp256k1.Point.fromHex(B_).multiply(testMintPrivKey).toHex(true);
-		const C = unblindSignature(C_, blindingFactor);
+		const C = unblindSignature(C_, blindingFactor, testMintPubKey);
 
 		// Mint-side verification: C should equal k * hash_to_curve(secret)
 		const Y = hash_to_curve(new TextEncoder().encode(secret));

@@ -11,7 +11,7 @@ import { requestMeltQuote, meltTokens as postMelt, checkState, checkMeltQuote } 
 import { blindMessage, unblindSignature, deterministicBlindingFactor, blindingFactorToHex } from '../cashu/blind';
 import { fetchAndCacheKeysets, getAllKeysets, getKeysetById, getMintPubkey } from '../cashu/keyset';
 import { getPrivateKey } from './state';
-import { getUnspentProofsByMint, addProofs, markSpent } from './proofsDb';
+import { getUnspentProofsByMint, addProofs, markSpent, type StoredProof } from './proofsDb';
 import { selectProofs, sumProofs } from './proofs';
 import { addTransaction } from '../storage/db';
 import type { TokenProof, MeltQuote, Transaction } from '../types';
@@ -76,11 +76,8 @@ export interface MeltCompleteResult {
 function generateChangeSecret(): string {
 	const bytes = new Uint8Array(32);
 	crypto.getRandomValues(bytes);
-	let binary = '';
-	for (let i = 0; i < bytes.length; i++) {
-		binary += String.fromCharCode(bytes[i]);
-	}
-	return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+	// NUT-00 recommends 64-char hex string from 32 random bytes
+	return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 }
 
 // ─── F-072: Error message extraction ─────────────────────────
@@ -271,7 +268,7 @@ export async function requestMelt(
 
 		// F-069: Account for fee_reserve in proof selection
 		const totalNeeded = amount + quote.fee_reserve;
-		const selectedSum = sumProofs(meltProofs.map(p => ({ ...p, spent: false })));
+		const selectedSum = sumProofs(meltProofs.map(p => ({ ...p, spent: false } as unknown as StoredProof)));
 		let finalProofs = meltProofs;
 		if (selectedSum < totalNeeded) {
 			const reselected = selectProofs(allProofs, totalNeeded);
@@ -294,6 +291,17 @@ export async function requestMelt(
 				);
 			}
 			finalProofs = reverified.length > 0 ? reverified : reorphaned;
+
+			// F-090: Re-check proof state after reselection (double-spend gap fix)
+			// selectProofs may return different proofs that haven't been checked yet
+			const recheckState = await checkState(mintUrl,
+				finalProofs.map(p => ({ secret: p.secret, C: p.C }))
+			);
+			for (const ps of recheckState.states) {
+				if (ps.state === 'SPENT') {
+					throw new Error(`Proof spent during reselection — secret: ${ps.secret?.substring(0, 12)}... abort melt to prevent double-spend`);
+				}
+			}
 		}
 
 		const proofInfos: SelectedProofInfo[] = finalProofs.map(p => ({
@@ -432,7 +440,7 @@ export async function completeMelt(
 		if (response.change && outputs.length > 0) {
 			changeProofs = response.change.map((sig, i) => {
 				const output = outputs[i];
-				const pubkey = getMintPubkey(mintUrl, keysetId, sig.amount);
+				const pubkey = getMintPubkey(mintUrl, inputs[0].id, sig.amount);
 				const C = unblindSignature(sig.C_, output.blindingFactor, pubkey);
 				const rHex = blindingFactorToHex(output.blindingFactor);
 				const proof: TokenProof = {

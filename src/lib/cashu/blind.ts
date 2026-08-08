@@ -83,11 +83,15 @@ export function hash_to_curve(message: Uint8Array): typeof BASE {
 		hashInput.set(msgHash, 0);
 		hashInput.set(counterBytes, msgHash.length);
 		const hash = sha256(hashInput);
-		// NUT-00: Y = PublicKey('02' || hash)
+		// NUT-00: Y = PublicKey('02' || hash), fallback to '03' prefix
 		try {
 			return secp256k1.Point.fromHex('02' + bytesToHex(hash));
 		} catch {
-			// Point not on curve — increment counter and try again
+			try {
+				return secp256k1.Point.fromHex('03' + bytesToHex(hash));
+			} catch {
+				// Point not on curve — increment counter and try again
+			}
 		}
 	}
 	throw new Error('hash_to_curve: failed to find valid point after 10000 attempts');

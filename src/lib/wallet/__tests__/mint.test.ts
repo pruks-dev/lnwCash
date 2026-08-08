@@ -66,7 +66,24 @@ vi.mock('../../cashu/blind', () => ({
 		blindingFactor: 'Zm9vYmFyYmF6' // valid base64url
 	}),
 	unblindSignature: vi.fn().mockReturnValue('03' + 'c1'.repeat(32)),
-	deterministicBlindingFactor: vi.fn().mockReturnValue(12345n)
+	deterministicBlindingFactor: vi.fn().mockReturnValue(12345n),
+	blindingFactorToHex: vi.fn().mockReturnValue('ab'.repeat(32))
+}));
+
+// Mock keyset module — fetchAndCacheKeysets is called directly by requestMint
+vi.mock('../../cashu/keyset', () => ({
+	fetchAndCacheKeysets: vi.fn().mockResolvedValue([
+		{ id: 'keyset-abc123', unit: 'sat', active: true, input_fee_ppk: 0, keys: { '1': '02' + 'ff'.repeat(32) }, last_updated: Date.now() }
+	]),
+	getKeysetById: vi.fn().mockReturnValue({
+		id: 'keyset-abc123', unit: 'sat', active: true, input_fee_ppk: 0, keys: { '1': '02' + 'ff'.repeat(32) }, last_updated: Date.now()
+	}),
+	getAllKeysets: vi.fn().mockReturnValue([]),
+	rotateKeysets: vi.fn(),
+	isCacheStale: vi.fn().mockReturnValue(false),
+	clearCache: vi.fn(),
+	getMintPubkey: vi.fn().mockReturnValue('02' + 'ff'.repeat(32)),
+	resolveKeysetId: vi.fn((_url: string, id: string) => id)
 }));
 
 import * as client from '../../cashu/client';
@@ -142,6 +159,13 @@ describe('Mint flow', () => {
 			state: 'PAID'
 		});
 
+		// Reset keyset mock to default (success)
+		const keysetModule = await import('../../cashu/keyset');
+		const mockFetchKeysets = keysetModule.fetchAndCacheKeysets as ReturnType<typeof vi.fn>;
+		mockFetchKeysets.mockResolvedValue([
+			{ id: 'keyset-abc123', unit: 'sat', active: true, input_fee_ppk: 0, keys: { '1': '02' + 'ff'.repeat(32) }, last_updated: Date.now() }
+		]);
+
 		await createWallet(TEST_PIN, TEST_NAME);
 		await unlockWallet(TEST_PIN);
 	});
@@ -186,7 +210,9 @@ describe('Mint flow', () => {
 		});
 
 		it('T084: should return error when mint unreachable', async () => {
-			(client.getKeysets as ReturnType<typeof vi.fn>).mockRejectedValue(
+			// fetchAndCacheKeysets is called directly by requestMint
+			const { fetchAndCacheKeysets: mockFetchKeysets } = await import('../../cashu/keyset');
+			(mockFetchKeysets as ReturnType<typeof vi.fn>).mockRejectedValue(
 				new TypeError('fetch failed')
 			);
 
@@ -252,7 +278,8 @@ describe('Mint flow', () => {
 		});
 
 		it('should return error when mint is unreachable', async () => {
-			(client.getKeysets as ReturnType<typeof vi.fn>).mockRejectedValue(
+			const { fetchAndCacheKeysets: mockFetchKeysets } = await import('../../cashu/keyset');
+			(mockFetchKeysets as ReturnType<typeof vi.fn>).mockRejectedValue(
 				new TypeError('fetch failed')
 			);
 
@@ -263,7 +290,8 @@ describe('Mint flow', () => {
 		});
 
 		it('should handle network error gracefully', async () => {
-			(client.getKeysets as ReturnType<typeof vi.fn>).mockRejectedValue(
+			const { fetchAndCacheKeysets: mockFetchKeysets } = await import('../../cashu/keyset');
+			(mockFetchKeysets as ReturnType<typeof vi.fn>).mockRejectedValue(
 				new Error('Network error')
 			);
 

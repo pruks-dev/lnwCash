@@ -109,7 +109,7 @@ export function getSettings(): WalletSettings {
 	const validThemes: ThemeMode[] = ['light', 'dark', 'system'];
 	return {
 		language: typeof data.language === 'string' ? data.language : DEFAULT_SETTINGS.language,
-		theme: validThemes.includes(data.theme as ThemeMode) ? data.theme : DEFAULT_SETTINGS.theme,
+		theme: validThemes.includes(data.theme as ThemeMode) ? (data.theme as ThemeMode) : DEFAULT_SETTINGS.theme,
 		default_mint:
 			typeof data.default_mint === 'string' ? data.default_mint : DEFAULT_SETTINGS.default_mint
 	};

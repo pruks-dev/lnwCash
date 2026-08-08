@@ -32,17 +32,17 @@
 
 	let { onBack }: Props = $props();
 
-	let currentLang: string = $state('th');
+	let currentLang: string = $state('en');
 	let currentTheme: ThemeMode = $state('system');
 	let showMintManage: boolean = $state(false); // F-042: sub-view for Manage Mint
 
 	$effect(() => {
 		try {
 			const settings = getSettings();
-			currentLang = settings.language || 'th';
+			currentLang = settings.language || 'en';
 			currentTheme = settings.theme || 'system';
 		} catch {
-			currentLang = 'th';
+			currentLang = 'en';
 			currentTheme = 'system';
 		}
 	});

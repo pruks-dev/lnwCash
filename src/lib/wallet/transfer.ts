@@ -13,7 +13,8 @@ import { blindMessage, unblindSignature, blindingFactorToHex } from '../cashu/bl
 import { fetchAndCacheKeysets, getMintPubkey, resolveKeysetId } from '../cashu/keyset';
 import { getPrivateKey } from './state';
 import { selectProofs, sumProofs } from './proofs';
-import { getUnspentProofsByMint, addProofs, markSpent } from './proofsDb';
+import { getUnspentProofsByMint, addProofs, markSpent, type StoredProof } from './proofsDb';
+import { addTransaction } from '../storage/db';
 import { decomposeAmount } from './mint';
 import type { TokenProof, DecodedToken } from '../types';
 import { InsufficientFundsError, TokenValidationError } from './errors';
@@ -159,9 +160,26 @@ export async function sendTokens(
 	// Mark only sent proofs as spent
 	await markSpent(sendProofs.map(p => p.local_id));
 
+	// Record transaction (F-088 fallback) — best-effort
+	const sentAmount = sumProofs(sendProofs);
+	try {
+		await addTransaction({
+			id: `cashu-send-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+			type: 'cashu_send',
+			protocol: 'cashu',
+			amount: sentAmount,
+			mint_url: mintUrl,
+			timestamp: Date.now(),
+			token_hash: token.substring(0, 64),
+			status: 'confirmed'
+		});
+	} catch {
+		// IndexedDB may be unavailable
+	}
+
 	return {
 		token,
-		amount: sumProofs(sendProofs),
+		amount: sentAmount,
 		mint: mintUrl
 	};
 }
@@ -219,6 +237,22 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 
 	const totalAmount = getTokenAmount(decoded);
 	const dleqCount = decoded.proofs.filter(p => p.dleq).length;
+
+	// Record transaction (F-088 fallback) — best-effort
+	try {
+		await addTransaction({
+			id: `cashu-recv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+			type: 'cashu_receive',
+			protocol: 'cashu',
+			amount: totalAmount,
+			mint_url: decoded.mint,
+			timestamp: Date.now(),
+			token_hash: tokenString.substring(0, 64),
+			status: 'confirmed'
+		});
+	} catch {
+		// IndexedDB may be unavailable
+	}
 
 	return {
 		amount: totalAmount,

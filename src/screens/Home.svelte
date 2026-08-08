@@ -25,7 +25,6 @@
 	// TASK-050 Icons
 	import Receive from '$lib/components/icons/Receive.svelte';
 	import Send from '$lib/components/icons/Send.svelte';
-	import ArrowRight from '$lib/components/icons/ArrowRight.svelte';
 
 	interface Props {
 		onQRScan?: () => void;
@@ -85,7 +84,8 @@
 	async function loadRecentTxs() {
 		try {
 			const txs = await getTransactions({});
-			recentTxs = txs.slice(0, 5);
+			// MOD-012: Show only 1 latest tx on Home (History tab = View All)
+			recentTxs = txs.slice(0, 1);
 		} catch {
 			// Non-critical
 		}
@@ -245,12 +245,6 @@
 							</svg>
 						{/snippet}
 					</Button>
-					<Button variant="ghost" size="sm" onclick={() => navTo('history')}>
-						{#snippet children()}
-							{$_('screen.home.view_all')}
-							<ArrowRight size={14} />
-						{/snippet}
-					</Button>
 				</div>
 			</div>
 
@@ -261,7 +255,7 @@
 			{:else if recentTxs.length === 0}
 				<Card variant="basic" padding="md">
 					<Body size="sm" color="secondary" align="center">
-						{$_('screen.home.no_tx')}
+						{$_('home.no_transactions')}
 					</Body>
 				</Card>
 			{:else}

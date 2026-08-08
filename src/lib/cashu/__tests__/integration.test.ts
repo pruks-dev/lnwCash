@@ -45,6 +45,11 @@ function mintVerify(C: string, secret: string): boolean {
 	return verifySignature(C, secret, MINT_PRIVATE_KEY);
 }
 
+/** Alice unblinds using additive scheme with mint's public key */
+function aliceUnblind(C_: string, blindingFactor: string): string {
+	return unblindSignature(C_, blindingFactor, MINT_PUBLIC_KEY);
+}
+
 // ─── Decompose amount ────────────────────────────────────────
 
 function decomposeAmount(amount: number): number[] {
@@ -71,15 +76,15 @@ describe('Integration: mint → blind → unblind → verify cycle', () => {
 		// Step 1: Alice generates a secret
 		const secret = generateSecret(1);
 
-		// Step 2: Alice blinds the secret
+		// Step 2: Alice blinds the secret (additive BDHKE)
 		const r = deterministicBlindingFactor(secret);
 		const { B_, blindingFactor } = blindMessage(secret, r);
 
 		// Step 3: Mint signs the blinded message
 		const C_ = mintSign(B_);
 
-		// Step 4: Alice unblinds the blind signature
-		const C = unblindSignature(C_, blindingFactor);
+		// Step 4: Alice unblinds the blind signature (additive, needs mint pubkey)
+		const C = aliceUnblind(C_, blindingFactor);
 
 		// Step 5: Verify unblinded signature
 		expect(mintVerify(C, secret)).toBe(true);
@@ -108,9 +113,9 @@ describe('Integration: mint → blind → unblind → verify cycle', () => {
 			C_: mintSign(o.B_)
 		}));
 
-		// Step 4: Alice unblinds all signatures
+		// Step 4: Alice unblinds all signatures (additive, needs mint pubkey)
 		for (let i = 0; i < outputs.length; i++) {
-			const C = unblindSignature(blindSignatures[i].C_, outputs[i].blindingFactor);
+			const C = aliceUnblind(blindSignatures[i].C_, outputs[i].blindingFactor);
 			proofs.push({
 				amount: outputs[i].amount,
 				secret: outputs[i].secret,
@@ -162,7 +167,7 @@ describe('Integration: mint → blind → unblind → verify cycle', () => {
 		const { B_, blindingFactor } = blindMessage(secret, r);
 
 		const C_ = mintSign(B_);
-		const C = unblindSignature(C_, blindingFactor);
+		const C = aliceUnblind(C_, blindingFactor);
 
 		// Spend verification (mint side):
 		// The mint recomputes k * hash_to_curve(secret)

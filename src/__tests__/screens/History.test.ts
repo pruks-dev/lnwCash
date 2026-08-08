@@ -39,7 +39,6 @@ describe('History (TASK-060)', () => {
 		expect(screen.getByText('screen.history.filter_all')).toBeTruthy();
 		expect(screen.getByText('screen.history.filter_receive')).toBeTruthy();
 		expect(screen.getByText('screen.history.filter_send')).toBeTruthy();
-		expect(screen.getByText('screen.history.filter_transfer')).toBeTruthy();
 	});
 
 	it('should show skeleton cards while loading', () => {

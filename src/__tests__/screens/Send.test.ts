@@ -25,7 +25,9 @@ vi.mock('svelte-i18n', () => {
 vi.mock('$lib/router', () => ({
 	navigateTo: vi.fn(),
 	getCurrentScreen: () => 'send',
-	onRouteChange: () => () => {}
+	onRouteChange: () => () => {},
+	getHashParam: () => null,
+	clearHashParams: vi.fn()
 }));
 
 // Mock getMintConfig for mint name resolution in toast

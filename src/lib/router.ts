@@ -36,7 +36,9 @@ function parseHash(): string {
 }
 
 function screenFromHash(hash: string): ScreenKey {
-	return ROUTE_MAP[hash] ?? ROUTE_MAP['/' + hash] ?? 'home';
+	// Strip query params before matching (TASK-133: QR value routing via URL params)
+	const pathOnly = hash.split('?')[0] || '';
+	return ROUTE_MAP[pathOnly] ?? ROUTE_MAP['/' + pathOnly] ?? 'home';
 }
 
 /**
@@ -44,6 +46,36 @@ function screenFromHash(hash: string): ScreenKey {
  */
 export function getCurrentScreen(): ScreenKey {
 	return screenFromHash(parseHash());
+}
+
+/**
+ * Parse a query parameter from the URL hash fragment.
+ * E.g. #/send?invoice=lnbc... → getHashParam('invoice') → 'lnbc...'
+ * Returns null if the param is not present.
+ *
+ * TASK-133: QR value routing via URL params
+ */
+export function getHashParam(key: string): string | null {
+	if (typeof window === 'undefined') return null;
+	const hash = window.location.hash.replace(/^#\/?/, '');
+	const qIndex = hash.indexOf('?');
+	if (qIndex === -1) return null;
+	return new URLSearchParams(hash.substring(qIndex)).get(key);
+}
+
+/**
+ * Clear hash query params while preserving the current route.
+ * Converts #/send?invoice=... → #/send
+ *
+ * TASK-133: Clean up URL after reading params to avoid stale data
+ */
+export function clearHashParams(): void {
+	if (typeof window === 'undefined') return;
+	const hash = window.location.hash;
+	const qIndex = hash.indexOf('?');
+	if (qIndex !== -1) {
+		window.location.hash = hash.substring(0, qIndex);
+	}
 }
 
 /**

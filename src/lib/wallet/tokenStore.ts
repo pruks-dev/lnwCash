@@ -23,6 +23,7 @@ import {
 	clearProofs,
 	type StoredProof
 } from './proofsDb';
+import { addTransaction } from '../storage/db';
 import { selectProofs, sumProofs } from './proofs';
 import { encodeToken, decodeToken, getTokenAmount } from '../cashu/token';
 import { decomposeAmount } from './mint';
@@ -245,9 +246,26 @@ export async function sendTokens(
 	// Mark only sent proofs as spent
 	await markSpent(sendProofs.map(p => p.local_id));
 
+	// Record transaction (F-088) — best-effort
+	const sentAmount = sumProofs(sendProofs);
+	try {
+		await addTransaction({
+			id: `cashu-send-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+			type: 'cashu_send',
+			protocol: 'cashu',
+			amount: sentAmount,
+			mint_url: mintUrl,
+			timestamp: Date.now(),
+			token_hash: token.substring(0, 64),
+			status: 'confirmed'
+		});
+	} catch {
+		// IndexedDB may be unavailable
+	}
+
 	return {
 		token,
-		amount: sumProofs(sendProofs),
+		amount: sentAmount,
 		mint: mintUrl
 	};
 }
@@ -350,6 +368,22 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 		const totalAmount = newProofs.reduce((sum, p) => sum + p.amount, 0);
 		const dleqCount = newProofs.filter(p => p.dleq).length;
 
+		// Record transaction (F-088) — best-effort
+		try {
+			await addTransaction({
+				id: `cashu-recv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+				type: 'cashu_receive',
+				protocol: 'cashu',
+				amount: totalAmount,
+				mint_url: mintUrl,
+				timestamp: Date.now(),
+				token_hash: tokenString.substring(0, 64),
+				status: 'confirmed'
+			});
+		} catch {
+			// IndexedDB may be unavailable
+		}
+
 		return {
 			amount: totalAmount,
 			mint: mintUrl,
@@ -367,6 +401,22 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 
 	const totalAmount = getTokenAmount(decoded);
 	const dleqCount = decoded.proofs.filter(p => p.dleq).length;
+
+	// Record transaction (F-088 fallback) — best-effort
+	try {
+		await addTransaction({
+			id: `cashu-recv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+			type: 'cashu_receive',
+			protocol: 'cashu',
+			amount: totalAmount,
+			mint_url: mintUrl,
+			timestamp: Date.now(),
+			token_hash: tokenString.substring(0, 64),
+			status: 'confirmed'
+		});
+	} catch {
+		// IndexedDB may be unavailable
+	}
 
 	return {
 		amount: totalAmount,

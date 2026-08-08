@@ -7,7 +7,7 @@
 	 *   size — display size in pixels (default: 200)
 	 *   label — optional label below QR
 	 */
-	import { generateQrSvg } from '$lib/util/qrcode';
+	import QRCode from 'qrcode';
 
 	interface Props {
 		data: string;
@@ -17,18 +17,22 @@
 
 	let { data, size = 200, label = undefined }: Props = $props();
 
-	let svgContent: string = $derived.by(() => {
-		if (!data) return '';
-		try {
-			return generateQrSvg(data, { moduleSize: Math.max(2, Math.floor(size / 40)) });
-		} catch {
-			return '';
-		}
-	});
+	let dataUri = $state('');
 
-	let dataUri: string = $derived.by(() => {
-		if (!svgContent) return '';
-		return 'data:image/svg+xml,' + encodeURIComponent(svgContent);
+	$effect(() => {
+		if (data) {
+			QRCode.toDataURL(data, {
+				width: size,
+				margin: 2,
+				color: { dark: '#000000', light: '#ffffff' }
+			}).then((uri: string) => {
+				dataUri = uri;
+			}).catch(() => {
+				dataUri = '';
+			});
+		} else {
+			dataUri = '';
+		}
 	});
 </script>
 
@@ -55,6 +59,8 @@
 		flex-direction: column;
 		align-items: center;
 		gap: var(--space-sm);
+		overflow: hidden;
+		width: 100%;
 	}
 
 	.qr-image-wrapper {
@@ -63,6 +69,8 @@
 		border-radius: var(--radius-md);
 		box-shadow: var(--shadow-sm);
 		line-height: 0;
+		box-sizing: border-box;
+		max-width: 100%;
 	}
 
 	.qr-image {

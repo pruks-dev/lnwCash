@@ -14,7 +14,14 @@ export * from './errors';
 export * from './config';
 export * from './discovery';
 export * from './store';
-export * from './tokenStore';
+export {
+	storeTokens,
+	getProofBalance,
+	validateProofs,
+	findSpentProof,
+	type TokenStateCheck,
+	type ProofBalance
+} from './tokenStore';
 
 // proofs and proofsDb have overlapping names, export selectively:
 export { selectProofs, sumProofs, groupByKeyset, groupByMint } from './proofs';

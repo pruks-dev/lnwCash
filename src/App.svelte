@@ -11,6 +11,9 @@
 	// Uses Svelte writable store — auto-reacts on mint switch (no page reload).
 	import { activeMintStore } from '$lib/wallet/store';
 
+	// TASK-122: Shared QR scan value store — QRScan writes, Send/Receive reads
+	import { scannedQRValue } from '$lib/stores/scannedQR';
+
 	// TASK-067: Theme reactivity — $effect subscribes to themeMode store
 	// and applies data-theme attribute to document.documentElement reactively.
 	import { themeMode, resolveTheme, applyThemeDom } from '$lib/design/theme';
@@ -142,10 +145,13 @@
 
 	function handleQRResult(result: string) {
 		showQRScan = false;
-		if (result.startsWith('lnbc') || result.startsWith('lntb')) {
+		scannedQRValue.set(result);
+		// Detect type from lowercased result (handles lightning: prefix)
+		const lowered = result.replace(/^(lightning:|bitcoin:)/i, '').toLowerCase();
+		if (lowered.startsWith('lnbc') || lowered.startsWith('lntb') || lowered.startsWith('lnurl')) {
 			navigateTo('send');
-		} else if (result.startsWith('cashu')) {
-			navigateTo('send');
+		} else if (lowered.startsWith('cashua') || lowered.startsWith('cashub') || lowered.startsWith('cashu')) {
+			navigateTo('receive');
 		} else {
 			navigateTo('receive');
 		}

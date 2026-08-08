@@ -81,7 +81,7 @@ export async function getTransactions(filter?: TransactionFilter): Promise<Trans
 	const db = await getDB();
 	let txs: Transaction[];
 
-	if (filter?.type) {
+	if (filter?.type && !Array.isArray(filter.type)) {
 		const idx = db.transaction(STORE_NAME, 'readonly').store.index('type');
 		txs = await idx.getAll(filter.type);
 	} else if (filter?.mint_url) {
@@ -97,7 +97,13 @@ export async function getTransactions(filter?: TransactionFilter): Promise<Trans
 	// Additional manual filtering for combined filters
 	if (filter) {
 		txs = txs.filter(tx => {
-			if (filter.type && tx.type !== filter.type) return false;
+			if (filter.type) {
+				if (Array.isArray(filter.type)) {
+					if (!filter.type.includes(tx.type)) return false;
+				} else {
+					if (tx.type !== filter.type) return false;
+				}
+			}
 			if (filter.mint_url && tx.mint_url !== filter.mint_url) return false;
 			if (filter.status && tx.status !== filter.status) return false;
 			return true;
