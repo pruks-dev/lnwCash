@@ -125,11 +125,18 @@ export async function getTransactionById(id: string): Promise<Transaction | unde
 }
 
 /**
- * Update an existing transaction
+ * Update an existing transaction by ID with a partial patch (read-modify-write).
+ * Does nothing if the transaction doesn't exist.
  */
-export async function updateTransaction(tx: Transaction): Promise<void> {
+export async function updateTransaction(id: string, patch: Partial<Transaction>): Promise<void> {
 	const db = await getDB();
-	await db.put(STORE_NAME, tx);
+	const tx = db.transaction(STORE_NAME, 'readwrite');
+	const store = tx.objectStore(STORE_NAME);
+	const existing = await store.get(id);
+	if (existing) {
+		await store.put({ ...existing, ...patch });
+	}
+	await tx.done;
 }
 
 /**

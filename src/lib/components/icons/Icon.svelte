@@ -19,6 +19,7 @@
 	import ArrowRight from './ArrowRight.svelte';
 	import Plus from './Plus.svelte';
 	import Minus from './Minus.svelte';
+	import Time from './Time.svelte';
 
 	export type IconName =
 		| 'Wallet'
@@ -35,7 +36,8 @@
 		| 'ArrowLeft'
 		| 'ArrowRight'
 		| 'Plus'
-		| 'Minus';
+		| 'Minus'
+		| 'Time';
 
 	interface Props {
 		/** Icon name — one of the available icon set */
@@ -65,7 +67,8 @@
 		ArrowLeft,
 		ArrowRight,
 		Plus,
-		Minus
+		Minus,
+		Time
 	};
 
 	const iconComponent = $derived(iconMap[name] ?? Wallet);

@@ -170,8 +170,9 @@ export async function sendTokens(
 			amount: sentAmount,
 			mint_url: mintUrl,
 			timestamp: Date.now(),
-			token_hash: token.substring(0, 64),
-			status: 'confirmed'
+			token_hash: token,
+			status: 'confirmed',
+			fee: 0
 		});
 	} catch {
 		// IndexedDB may be unavailable
@@ -247,8 +248,9 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 			amount: totalAmount,
 			mint_url: decoded.mint,
 			timestamp: Date.now(),
-			token_hash: tokenString.substring(0, 64),
-			status: 'confirmed'
+			token_hash: tokenString,
+			status: 'confirmed',
+			fee: 0
 		});
 	} catch {
 		// IndexedDB may be unavailable

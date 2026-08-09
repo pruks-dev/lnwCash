@@ -495,7 +495,7 @@
 	}
 
 	function handleBack() {
-		navigateTo('receive');
+		navigateTo('home');
 	}
 
 	function handleOkAndNavigate() {

@@ -6,25 +6,28 @@
 	 *
 	 * Svelte 5 runes: $state, $derived, $effect
 	 */
+	import { onDestroy } from 'svelte';
 	import { _ } from 'svelte-i18n';
 	import { getBalanceByMint } from '$lib/wallet/balance';
-	import { getTransactions } from '$lib/storage/db';
-	import type { Transaction, TransactionType, TransactionStatus } from '$lib/types';
 	import { isOnline, onConnectivityChange } from '$lib/wallet/offline';
 	import { navigateTo } from '$lib/router';
 	import type { ScreenKey } from '$lib/router';
 	import { activeMintStore, getActiveMintUrl } from '$lib/wallet/store';
+	import { mintConfirmed } from '$lib/stores/mint-events';
+
+	let _lastBalance: number = Number(sessionStorage.getItem('lnw_last_balance') || 0);
+	let _initialized: boolean = sessionStorage.getItem('lnw_balance_init') === '1';
 
 	// TASK-050 Design System Components
-	import Card from '$lib/components/ui/Card.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
 	import Heading from '$lib/components/ui/Heading.svelte';
 	import Body from '$lib/components/ui/Body.svelte';
-	import Divider from '$lib/components/ui/Divider.svelte';
 
 	// TASK-050 Icons
 	import Receive from '$lib/components/icons/Receive.svelte';
 	import Send from '$lib/components/icons/Send.svelte';
+
+	// TASK-145 Iconly
+	import Iconly from '$lib/iconly/Iconly.svelte';
 
 	interface Props {
 		onQRScan?: () => void;
@@ -36,18 +39,44 @@
 	let loading: boolean = $state(true);
 	let error: string = $state('');
 	let online: boolean = $state(isOnline());
-	let recentTxs: Transaction[] = $state([]);
-	let refreshing: boolean = $state(false);
-
-	// F-068: Track active mint URL for reactive balance display
 	let currentMintUrl: string = $state(getActiveMintUrl());
+
+	let displayBalance: number = $state(_lastBalance);
+	let animFrame: number | undefined;
+	let lastTarget: number = $state(_lastBalance);
+
+	function animateTo(target: number) {
+		if (target === lastTarget && displayBalance === target) return;
+		lastTarget = target;
+		if (animFrame) cancelAnimationFrame(animFrame);
+		const start = displayBalance;
+		const diff = target - start;
+		if (diff === 0) return;
+
+		const duration = 1200; // ms
+		const startTime = performance.now();
+
+		function step(now: number) {
+			const elapsed = now - startTime;
+			const progress = Math.min(elapsed / duration, 1);
+			// easeOutCubic
+			const eased = 1 - Math.pow(1 - progress, 3);
+			displayBalance = Math.round(start + diff * eased);
+			if (progress < 1) {
+				animFrame = requestAnimationFrame(step);
+			}
+		}
+		animFrame = requestAnimationFrame(step);
+	}
 
 	$effect(() => {
 		const cleanupConnectivity = onConnectivityChange((status: boolean) => {
 			online = status;
 		});
 
+		let init = true;
 		const unsubMint = activeMintStore.subscribe((url: string) => {
+			if (init) { init = false; return; } // skip initial fire
 			if (url && url !== currentMintUrl) {
 				currentMintUrl = url;
 				loadBalance();
@@ -62,9 +91,19 @@
 		};
 	});
 
+	// Reload + animate when mint confirmed in background
+	$effect(() => {
+		const _ = $mintConfirmed;
+		loadBalance();
+	});
+
+	onDestroy(() => {
+		if (animFrame) cancelAnimationFrame(animFrame);
+	});
+
 	async function loadAll() {
 		try {
-			await Promise.all([loadBalance(), loadRecentTxs()]);
+			await loadBalance();
 		} finally {
 			loading = false;
 		}
@@ -75,26 +114,24 @@
 		try {
 			// F-068: Home balance = active mint balance (not total all mints)
 			const mintUrl = getActiveMintUrl();
-			totalBalance = await getBalanceByMint(mintUrl);
+			const balance = await getBalanceByMint(mintUrl);
+			const prev = _lastBalance;
+			totalBalance = balance;
+			if (!_initialized) {
+				displayBalance = balance;
+				lastTarget = balance;
+				_lastBalance = balance;
+				sessionStorage.setItem('lnw_last_balance', String(balance));
+				sessionStorage.setItem('lnw_balance_init', '1');
+				_initialized = true;
+			} else if (balance !== prev) {
+				_lastBalance = balance;
+				sessionStorage.setItem('lnw_last_balance', String(balance));
+				animateTo(balance);
+			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : $_('common.error');
 		}
-	}
-
-	async function loadRecentTxs() {
-		try {
-			const txs = await getTransactions({});
-			// MOD-012: Show only 1 latest tx on Home (History tab = View All)
-			recentTxs = txs.slice(0, 1);
-		} catch {
-			// Non-critical
-		}
-	}
-
-	async function handleRefresh() {
-		refreshing = true;
-		await loadAll();
-		refreshing = false;
 	}
 
 	function formatSat(amount: number): string {
@@ -108,38 +145,6 @@
 
 	function navTo(screen: ScreenKey) {
 		navigateTo(screen);
-	}
-
-	function txTypeLabel(type: TransactionType): string {
-		switch (type) {
-			case 'mint': return $_('screen.history.type_receive');
-			case 'melt': return $_('screen.history.type_send');
-			case 'transfer': return $_('screen.history.type_transfer');
-			default: return type;
-		}
-	}
-
-	function txTypeIcon(type: TransactionType): string {
-		switch (type) {
-			case 'mint': return '↓';
-			case 'melt': return '↑';
-			case 'transfer': return '⇄';
-			default: return '?';
-		}
-	}
-
-	function formatTxDate(ts: number): string {
-		const d = new Date(ts);
-		return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-	}
-
-	function statusColor(status: TransactionStatus): string {
-		switch (status) {
-			case 'confirmed': return 'var(--color-success)';
-			case 'pending': return 'var(--color-warning)';
-			case 'failed': return 'var(--color-error)';
-			default: return 'var(--color-text-secondary)';
-		}
 	}
 
 	function handleRipple(e: MouseEvent) {
@@ -182,12 +187,12 @@
 				{:else}
 					<div class="balance-amount">
 						<span class="balance-value" aria-live="polite" aria-atomic="true">
-							{formatSat(totalBalance)}
+							{formatSat(displayBalance)}
 						</span>
 						<span class="balance-unit">{$_('screen.balance.sats')}</span>
 					</div>
 					<div class="fiat-estimate">
-						≈ {estimateFiat(totalBalance)} THB
+						≈ {estimateFiat(displayBalance)} THB
 					</div>
 				{/if}
 
@@ -225,60 +230,17 @@
 			</div>
 		</div>
 
-		<Divider />
-
-		<!-- C — Recent Transactions -->
-		<div class="recent-tx-section">
-			<div class="section-header">
-				<Heading level="h3">{$_('screen.home.recent_tx')}</Heading>
-				<div class="section-header-actions">
-					<Button variant="ghost" size="sm" loading={refreshing}
-						onclick={handleRefresh} ariaLabel="Refresh transactions">
-						{#snippet children()}
-							<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14"
-								viewBox="0 0 24 24" fill="none" stroke="currentColor"
-								stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-								class:spin={refreshing}>
-								<polyline points="23 4 23 10 17 10" />
-								<polyline points="1 20 1 14 7 14" />
-								<path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-							</svg>
-						{/snippet}
-					</Button>
-				</div>
-			</div>
-
-			{#if loading}
-				<Card variant="basic" padding="md">
-					<Body size="sm" color="secondary" align="center">{$_('common.loading')}</Body>
-				</Card>
-			{:else if recentTxs.length === 0}
-				<Card variant="basic" padding="md">
-					<Body size="sm" color="secondary" align="center">
-						{$_('home.no_transactions')}
-					</Body>
-				</Card>
-			{:else}
-				<div class="tx-list">
-					{#each recentTxs as tx}
-						<Card variant="interactive" padding="md" onclick={() => navTo('history')}>
-							<div class="tx-item">
-								<span class="tx-icon-bg" aria-hidden="true">{txTypeIcon(tx.type)}</span>
-								<div class="tx-info">
-									<Body size="sm" weight="semibold">{txTypeLabel(tx.type)}</Body>
-									<Body size="sm" color="secondary">
-										{tx.amount} {$_('screen.balance.sats')} · {formatTxDate(tx.timestamp)}
-									</Body>
-								</div>
-								<div class="tx-status-dot"
-									style="background: {statusColor(tx.status)}"
-									title={tx.status}></div>
-							</div>
-						</Card>
-					{/each}
-				</div>
-			{/if}
-		</div>
+		<!-- C — History Button -->
+		<button type="button" class="history-btn" onclick={() => navTo('history')}
+			aria-label={$_('screen.history.title')}>
+			<span class="history-btn-icon" aria-hidden="true">
+				<Iconly name="History" size={20} />
+			</span>
+			<Body size="sm" weight="medium">{$_('screen.history.title')}</Body>
+			<span class="history-btn-arrow" aria-hidden="true">
+				<Iconly name="ArrowRight" size={16} />
+			</span>
+		</button>
 
 		<!-- D — Safe-area bottom spacer -->
 		<div class="bottom-spacer"></div>
@@ -303,14 +265,14 @@
 		padding: var(--space-md);
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-lg);
+		gap: var(--space-md);
 	}
 
 	/* A — Balance */
 	.balance-container {
 		background: transparent;
 		border-radius: 0;
-		padding: var(--space-lg) var(--space-lg) 0;
+		padding: var(--space-sm) var(--space-lg) 0;
 		box-shadow: none;
 		display: flex;
 		flex-direction: column;
@@ -456,76 +418,47 @@
 		to { transform: scale(4); opacity: 0; }
 	}
 
-	/* C — Recent Transactions */
-	.recent-tx-section {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-md);
-	}
-
-	.section-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-	}
-
-	.section-header-actions {
-		display: flex;
-		align-items: center;
-		gap: var(--space-xs);
-	}
-
-	.tx-list {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-	}
-
-	.tx-item {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-	}
-
-	.tx-icon-bg {
+	/* C — History Button */
+	.history-btn {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 36px;
-		height: 36px;
+		gap: var(--space-sm);
+		padding: var(--space-sm) var(--space-xs);
+		background: transparent;
+		border: none;
+		cursor: pointer;
+		font-family: var(--font-family);
+		color: var(--color-text-primary);
+		-webkit-tap-highlight-color: transparent;
+		transition: opacity var(--transition-fast);
+	}
+
+	.history-btn:active {
+		opacity: 0.6;
+	}
+
+	.history-btn-icon {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 32px;
+		height: 32px;
 		border-radius: var(--radius-full);
 		background: var(--color-surface-variant);
-		font-size: var(--font-size-lg);
+		color: var(--color-text-secondary);
 		flex-shrink: 0;
 	}
 
-	.tx-info {
-		flex: 1;
-		min-width: 0;
+	.history-btn-arrow {
+		color: var(--color-text-secondary);
 		display: flex;
-		flex-direction: column;
-		gap: 2px;
-	}
-
-	.tx-status-dot {
-		width: 8px;
-		height: 8px;
-		border-radius: var(--radius-full);
-		flex-shrink: 0;
+		align-items: center;
 	}
 
 	/* D — Bottom Spacer */
 	.bottom-spacer {
 		height: calc(80px + env(safe-area-inset-bottom, 0px));
-	}
-
-	/* Refresh spin */
-	.spin {
-		animation: spin-rotate 0.8s linear infinite;
-	}
-
-	@keyframes spin-rotate {
-		to { transform: rotate(360deg); }
 	}
 
 	/* Responsive */
@@ -541,9 +474,6 @@
 	@media (prefers-reduced-motion: reduce) {
 		.action-btn {
 			transition: none !important;
-		}
-		.spin {
-			animation: none !important;
 		}
 	}
 </style>

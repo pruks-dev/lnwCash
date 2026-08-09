@@ -1,0 +1,30 @@
+message_id: TASK-148-RESULT
+type: RESULT
+sender: saber-backend
+receiver: saber
+task_id: TASK-148
+verdict: COMPLETE
+summary: >
+  Implemented pending→confirmed/failed transaction lifecycle for Lightning send (melt).
+  Modified db.ts to change updateTransaction to (id, patch) partial-patch signature with read-modify-write.
+  Modified melt.ts meltFlow to create pending tx at start, update to confirmed on success, failed on error.
+  Added optional pendingTxId parameter to completeMelt to avoid duplicate transaction records.
+  All 22 tests (11 db + 11 melt) pass. 0 regressions in existing tests.
+proof_list:
+  - "db.ts: updateTransaction(id, patch) with read-modify-write (lines 127-140)"
+  - "melt.ts meltFlow: pending tx created before requestMelt (line 553-567)"
+  - "melt.ts meltFlow: update to failed on reqResult failure (line 574)"
+  - "melt.ts meltFlow: update to failed on completeResult failure (line 598)"
+  - "melt.ts meltFlow: update to failed on unexpected catch (line 613)"
+  - "melt.ts completeMelt: pendingTxId param → updateTransaction instead of addTransaction (line 470-476)"
+  - "melt.ts completeMelt: standalone mode preserves addTransaction (line 478-491)"
+  - "grep verify: updateTransaction in db.ts line 131 — CONFIRMED"
+  - "grep verify: pending tx created in melt.ts line 562 — CONFIRMED"
+evidence_count: 1
+files_changed:
+  - src/lib/storage/db.ts
+  - src/lib/storage/__tests__/db.test.ts
+  - src/lib/wallet/melt.ts
+  - src/lib/wallet/__tests__/melt.test.ts
+tests_passed: 22
+tests_total: 22

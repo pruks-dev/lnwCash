@@ -91,6 +91,7 @@ import { createWallet, unlockWallet } from '../state';
 import { clearAllWalletData } from '../storage';
 import { deleteProofDB, resetProofDB, getTotalBalance } from '../proofsDb';
 import { mintFlow, requestMint, completeMint, decomposeAmount } from '../mint';
+import { getTransactions, clearTransactions } from '../../storage/db';
 
 const TEST_PIN = '123456';
 const TEST_NAME = 'Test Wallet';
@@ -258,6 +259,22 @@ describe('Mint flow', () => {
 			const result = await completeMint(MINT_URL, 'quote-unpaid', 10, KEYSET_ID, false);
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('not PAID');
+		});
+
+		it('should record transaction with protocol=lightning and bolt11 invoice', async () => {
+			await clearTransactions();
+
+			const result = await completeMint(MINT_URL, 'quote-xyz', 10, KEYSET_ID, false);
+
+			expect(result.success).toBe(true);
+
+			const txs = await getTransactions({ type: 'mint' });
+			expect(txs.length).toBe(1);
+			const tx = txs[0];
+			expect(tx.protocol).toBe('lightning');
+			expect(tx.invoice).toBe('lnbc...');
+			expect(tx.token_hash).toBeNull();
+			expect(tx.status).toBe('confirmed');
 		});
 	});
 

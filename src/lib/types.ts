@@ -4,6 +4,7 @@
 
 // ─── Storage Types ───────────────────────────────────────────
 
+/** @deprecated Use `cashu_send` or `cashu_receive` instead of `transfer` */
 export type TransactionType = 'mint' | 'melt' | 'transfer' | 'cashu_send' | 'cashu_receive';
 export type TransactionStatus = 'pending' | 'confirmed' | 'failed';
 export type TransactionProtocol = 'lightning' | 'cashu';
@@ -16,8 +17,10 @@ export interface Transaction {
 	timestamp: number;
 	token_hash: string | null;
 	invoice?: string | null;
+	preimage?: string | null;  // Lightning payment preimage (melt only)
 	status: TransactionStatus;
 	protocol?: TransactionProtocol;
+	fee?: number;  // sats fee paid (mint melt only; cashu = 0)
 }
 
 export interface TransactionFilter {
@@ -185,7 +188,7 @@ export interface PostMintResponse {
 
 export interface PostMeltResponse {
 	paid: boolean;
-	preimage?: string;
+	payment_preimage?: string;
 	change?: Array<{
 		id: string;
 		amount: number;

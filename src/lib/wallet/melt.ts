@@ -13,7 +13,7 @@ import { fetchAndCacheKeysets, getAllKeysets, getKeysetById, getMintPubkey } fro
 import { getPrivateKey } from './state';
 import { getUnspentProofsByMint, addProofs, markSpent, type StoredProof } from './proofsDb';
 import { selectProofs, sumProofs } from './proofs';
-import { addTransaction } from '../storage/db';
+import { addTransaction, updateTransaction } from '../storage/db';
 import type { TokenProof, MeltQuote, Transaction } from '../types';
 import { InsufficientFundsError, QuoteExpiredError, MintUnreachableError } from './errors';
 
@@ -385,7 +385,8 @@ export async function completeMelt(
 	inputs: SelectedProofInfo[],
 	invoice: string,
 	amount: number,
-	feeReserve: number
+	feeReserve: number,
+	pendingTxId?: string
 ): Promise<MeltCompleteResult> {
 	try {
 		getPrivateKey(); // throws if wallet is locked
@@ -466,16 +467,29 @@ export async function completeMelt(
 		// Step 7: Record transaction (F-063) — no silent swallowing
 		let txStatus = 'Recording failed ⚠️';
 		try {
-			await addTransaction({
-				id: `melt-${quoteId}`,
-				type: 'melt',
-				amount,
-				mint_url: mintUrl,
-				timestamp: Date.now(),
-				token_hash: null,
-				invoice,
-				status: 'confirmed'
-			} as Transaction);
+			if (pendingTxId) {
+				// Update the pending transaction created by meltFlow
+				await updateTransaction(pendingTxId, {
+					status: 'confirmed',
+					preimage: response.payment_preimage ?? undefined,
+					fee: feeReserve
+				});
+			} else {
+				// Standalone: create a new transaction record
+				await addTransaction({
+					id: `melt-${quoteId}`,
+					type: 'melt',
+					amount,
+					mint_url: mintUrl,
+					timestamp: Date.now(),
+					token_hash: null,
+					invoice,
+					preimage: response.payment_preimage ?? null,
+					status: 'confirmed',
+					protocol: 'lightning',
+					fee: feeReserve
+				} as Transaction);
+			}
 			txStatus = 'Transaction recorded: ✅';
 			console.log('[melt]', txStatus);
 		} catch (err) {
@@ -487,7 +501,7 @@ export async function completeMelt(
 		return {
 			success: true,
 			change: changeProofs,
-			preimage: response.preimage,
+			preimage: response.payment_preimage,
 			spentAmount: netSpent,
 			feeReserve,
 			txStatus
@@ -533,10 +547,31 @@ export async function meltFlow(
 	invoice: string,
 	amount: number
 ): Promise<MeltResult> {
+	// Create pending transaction at start (best-effort — don't break the flow)
+	const txId = `melt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+	try {
+		await addTransaction({
+			id: txId,
+			type: 'melt',
+			protocol: 'lightning',
+			amount,
+			mint_url: mintUrl,
+			timestamp: Date.now(),
+			token_hash: null,
+			invoice,
+			status: 'pending',
+			fee: 0
+		} as Transaction);
+	} catch {
+		// Best-effort: silently ignore — don't break the melt flow
+	}
+
 	try {
 		// Phase 1: Request
 		const reqResult = await requestMelt(mintUrl, invoice, amount);
 		if (!reqResult.success) {
+			// Phase 1 failed → update pending tx to failed (best-effort)
+			try { await updateTransaction(txId, { status: 'failed' }); } catch { /* best-effort */ }
 			return {
 				success: false,
 				change: [],
@@ -554,8 +589,15 @@ export async function meltFlow(
 			reqResult.selectedProofs,
 			invoice,
 			amount,
-			reqResult.feeReserve
+			reqResult.feeReserve,
+			txId  // pass pending tx ID — completeMelt will update it to 'confirmed'
 		);
+
+		if (!completeResult.success) {
+			// Phase 2 failed → update pending tx to failed (best-effort)
+			try { await updateTransaction(txId, { status: 'failed' }); } catch { /* best-effort */ }
+		}
+		// On success: completeMelt already updated the pending tx to 'confirmed'
 
 		return {
 			success: completeResult.success,
@@ -568,6 +610,9 @@ export async function meltFlow(
 			error: completeResult.error
 		};
 	} catch (error) {
+		// Unexpected error → update pending tx to failed (best-effort)
+		try { await updateTransaction(txId, { status: 'failed' }); } catch { /* best-effort */ }
+
 		const msg = humanErrorMessage(error);
 		if (msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('network') || msg.toLowerCase().includes('unreachable')) {
 			return {

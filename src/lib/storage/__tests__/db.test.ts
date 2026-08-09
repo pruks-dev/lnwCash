@@ -24,7 +24,8 @@ function makeTx(overrides?: Partial<Transaction>): Transaction {
 		mint_url: overrides?.mint_url ?? 'https://mint.example.com',
 		timestamp: overrides?.timestamp ?? Date.now(),
 		token_hash: overrides?.token_hash ?? null,
-		status: overrides?.status ?? 'confirmed'
+		status: overrides?.status ?? 'confirmed',
+		fee: overrides?.fee
 	};
 }
 
@@ -94,14 +95,23 @@ describe('IndexedDB storage', () => {
 	});
 
 	it('should update a transaction', async () => {
-		const tx = makeTx({ id: 'tx-update', status: 'pending' });
+		const tx = makeTx({ id: 'tx-update', status: 'pending', fee: 10 });
 		await addTransaction(tx);
 
-		const updated = { ...tx, status: 'confirmed' as const };
-		await updateTransaction(updated);
+		await updateTransaction('tx-update', { status: 'confirmed' });
 
 		const retrieved = await getTransactionById('tx-update');
 		expect(retrieved!.status).toBe('confirmed');
+		// Verify other fields are preserved (partial patch)
+		expect(retrieved!.fee).toBe(10);
+	});
+
+	it('should no-op when updating non-existent transaction', async () => {
+		// Should not throw
+		await updateTransaction('nonexistent', { status: 'confirmed' });
+
+		const retrieved = await getTransactionById('nonexistent');
+		expect(retrieved).toBeUndefined();
 	});
 
 	it('should delete a transaction', async () => {

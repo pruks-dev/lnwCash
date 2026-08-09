@@ -23,12 +23,13 @@
 	import { fetchAndCacheKeysets, getMintPubkey } from '$lib/cashu/keyset';
 	import { blindMessage, unblindSignature, deterministicBlindingFactor, blindingFactorToHex } from '$lib/cashu/blind';
 	import { addProofs } from '$lib/wallet/proofsDb';
-	import { addTransaction } from '$lib/storage/db';
+	import { addTransaction, updateTransaction } from '$lib/storage/db';
 	import { getBalance } from '$lib/wallet/balance';
 	import { getPrivateKey, storeSessionPin, unlockWallet } from '$lib/wallet/state';
 	import { WalletLockedError } from '$lib/wallet/errors';
 	import { getMintConfig } from '$lib/wallet/store';
 	import { navigateTo, getHashParam, clearHashParams } from '$lib/router';
+	import { notifyMintConfirmed } from '$lib/stores/mint-events';
 
 	import Card from '$lib/components/ui/Card.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
@@ -74,6 +75,7 @@
 	// Phase-tracked minting — TASK-068 two-phase mint flow
 	let pendingQuoteId: string = $state('');
 	let pendingAmount: number = $state(0);
+	let pendingTxId: string | null = $state(null);
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 	// ─── Cashu state ─────────────────────────────────────────
@@ -280,6 +282,24 @@
 
 			// Phase 1b: Display the bolt11 invoice as QR
 			lightningInvoice = quote.request;
+
+			// Create pending transaction for the mint (best-effort)
+			pendingTxId = `mint-${quote.quote}`;
+			try {
+				await addTransaction({
+					id: pendingTxId,
+					type: 'mint',
+					protocol: 'lightning',
+					amount: Math.floor(amount),
+					mint_url: mintUrlClean,
+					timestamp: Date.now(),
+					token_hash: null,
+					invoice: quote.request,
+					status: 'pending',
+					fee: 0
+				});
+			} catch { /* best-effort */ }
+
 			lightningQrData = `lightning:${quote.request}`;
 			lightningState = 'invoice';
 
@@ -389,19 +409,10 @@
 			// Step 6: Store proofs in IndexedDB
 			await addProofs(proofs, mintUrlClean, keysetId);
 
-			// Step 6.5: Record transaction (F-087) — best-effort
+			// Step 6.5: Update pending transaction to confirmed — best-effort
 			try {
-				await addTransaction({
-					id: `mint-${pendingQuoteId}`,
-					type: 'mint',
-					protocol: 'lightning',
-					amount: pendingAmount,
-					mint_url: mintUrlClean,
-					timestamp: Date.now(),
-					token_hash: null,
-					invoice: null,
-					status: 'confirmed'
-				});
+				await updateTransaction(pendingTxId, { status: 'confirmed' });
+				notifyMintConfirmed(pendingAmount);
 			} catch {
 				// IndexedDB may be unavailable — transaction recording is best-effort
 			}
@@ -431,6 +442,9 @@
 			lightningError = mapMintError(e);
 			lightningState = 'error';
 			showToast(lightningError, 'error');
+
+			// Mark pending transaction as failed
+			try { await updateTransaction(pendingTxId, { status: 'failed' }); } catch { /* best-effort */ }
 		}
 	}
 
@@ -474,6 +488,12 @@
 		displayBalance = 0;
 		pendingQuoteId = '';
 		pendingAmount = 0;
+		pendingTxId = null;
+	}
+
+	function handleOkAndNavigateLightning() {
+		resetLightning();
+		navigateTo('home');
 	}
 
 	// ─── Cashu tab handlers ──────────────────────────────────
@@ -562,6 +582,11 @@
 		cashuDecodedToken = null;
 		cashuError = '';
 		cashuReceiveResult = null;
+	}
+
+	function handleOkAndNavigateCashu() {
+		resetCashu();
+		navigateTo('home');
 	}
 
 	function handleBack() {
@@ -694,7 +719,7 @@
 						<Body size="sm" color="secondary">
 							{$_('screen.receive.amount_received_sat', { values: { amount: formatSat(displayBalance) } })}
 						</Body>
-						<Button variant="primary" onclick={resetLightning}>
+						<Button variant="primary" onclick={handleOkAndNavigateLightning}>
 							{#snippet children()}{$_('common.ok')}{/snippet}
 						</Button>
 					</div>
@@ -806,7 +831,7 @@
 								</div>
 							{/if}
 						</div>
-						<Button variant="primary" onclick={resetCashu}>
+						<Button variant="primary" onclick={handleOkAndNavigateCashu}>
 							{#snippet children()}{$_('common.ok')}{/snippet}
 						</Button>
 					</div>

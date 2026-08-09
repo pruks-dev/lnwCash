@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { _ } from 'svelte-i18n';
+	import { onMount } from 'svelte';
 	import { getWalletStatus, tryAutoUnlock, type WalletState } from '$lib/wallet/state';
 	import type { ScreenKey } from '$lib/router';
 	import { getCurrentScreen, navigateTo, onRouteChange } from '$lib/router';
@@ -14,9 +15,33 @@
 	// TASK-122: Shared QR scan value store — QRScan writes, Send/Receive reads
 	import { scannedQRValue } from '$lib/stores/scannedQR';
 
+	// Toast notifications for mint polling feedback
+	import { showToast, toastMessage, toastType } from '$lib/stores/toast';
+
 	// TASK-067: Theme reactivity — $effect subscribes to themeMode store
 	// and applies data-theme attribute to document.documentElement reactively.
 	import { themeMode, resolveTheme, applyThemeDom } from '$lib/design/theme';
+
+	// Background mint polling: check pending mint transactions every 15s
+	import { getTransactions, updateTransaction } from '$lib/storage/db';
+	import { checkMintQuote } from '$lib/cashu/client';
+	import { notifyMintConfirmed, mintBanner } from '$lib/stores/mint-events';
+	import Iconly from '$lib/iconly/Iconly.svelte';
+
+	let showBanner = $state(false);
+	let bannerAmount = $state(0);
+	let bannerTimer: ReturnType<typeof setTimeout> | undefined;
+
+	// Watch store → sync to local state for Svelte 5 reactivity
+	$effect(() => {
+		const b = $mintBanner;
+		if (b.show) {
+			showBanner = true;
+			bannerAmount = b.amount;
+			clearTimeout(bannerTimer);
+			bannerTimer = setTimeout(() => showBanner = false, 5000);
+		}
+	});
 
 	// TASK-051 New Route Screens
 	import Home from './screens/Home.svelte';
@@ -124,6 +149,52 @@
 		return unsub;
 	});
 
+	// ─── Background mint polling ──────────────────────────────
+	// Poll pending mint transactions every 5s — works on any screen.
+	let pollInterval: ReturnType<typeof setInterval> | undefined;
+
+	onMount(() => {
+
+		async function poll() {
+			try {
+				const allTxs = await getTransactions();
+				const pendingTxs = allTxs.filter(tx => tx.type === 'mint' && tx.status === 'pending');
+				if (pendingTxs.length === 0) return;
+
+				for (const tx of pendingTxs) {
+					try {
+						const quoteId = tx.id.startsWith('mint-') ? tx.id.slice(5) : tx.id;
+						const quote = await checkMintQuote(tx.mint_url, quoteId);
+						const state = quote.state ?? (quote.paid ? 'PAID' : 'UNPAID');
+
+						if (state === 'PAID' || state === 'ISSUED') {
+							try {
+						await updateTransaction(tx.id, { status: 'confirmed' });
+							} catch (upErr) {
+								console.error(`[mint-poll] ❌ updateTransaction failed:`, upErr);
+							}
+							notifyMintConfirmed(tx.amount);
+						} else if (state === 'EXPIRED') {
+							await updateTransaction(tx.id, { status: 'failed' });
+							console.log(`[mint-poll] Mint expired: ${tx.id}`);
+						}
+					} catch (txErr) {
+						console.warn(`[mint-poll] Error checking mint tx ${tx.id}:`, txErr);
+					}
+				}
+			} catch (err) {
+				console.warn('[mint-poll] Poll iteration error:', err);
+			}
+		}
+
+		poll();
+		pollInterval = setInterval(poll, 5_000);
+
+		return () => {
+			if (pollInterval) clearInterval(pollInterval);
+		};
+	});
+
 	// ─── Navigation ───────────────────────────────────────────
 	function handleNavigate(screen: ScreenKey) {
 		activeScreen = screen;
@@ -192,6 +263,16 @@
 
 		<OfflineIndicator variant="banner" />
 
+		<!-- Mint success banner -->
+		{#if showBanner}
+			<div class="mint-banner">
+				<span class="mint-banner-icon">
+					<Iconly name="Check" size={18} color="currentColor" />
+				</span>
+				<span>รับเงินสำเร็จ +{bannerAmount} sats</span>
+			</div>
+		{/if}
+
 		{#if appView === 'setup'}
 			<div class="setup-container">
 				<Setup onWalletReady={handleWalletReady} />
@@ -223,6 +304,13 @@
 			{/if}
 
 			<PwaInstallPrompt />
+
+			<!-- Toast notification -->
+			{#if $toastMessage}
+				<div class="global-toast toast-{$toastType}">
+					{$toastMessage}
+				</div>
+			{/if}
 		{/if}
 	</main>
 {/if}
@@ -293,5 +381,64 @@
 	.back-btn:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: 2px;
+	}
+
+	/* ─── Toast notification ──────────────────────────── */
+	.global-toast {
+		position: fixed;
+		bottom: 100px;
+		left: 50%;
+		transform: translateX(-50%);
+		padding: 12px 24px;
+		border-radius: var(--radius-lg);
+		font-size: var(--font-size-sm);
+		font-weight: var(--font-weight-semibold);
+		z-index: 9999;
+		box-shadow: var(--shadow-lg);
+		animation: toast-in 0.3s ease;
+	}
+	.toast-success { background: #14b8a6; color: #fff; }
+	.toast-error { background: #ef4444; color: #fff; }
+	.toast-info { background: var(--color-surface); color: var(--color-text-primary); }
+
+	@keyframes toast-in {
+		from { opacity: 0; transform: translateX(-50%) translateY(20px); }
+		to { opacity: 1; transform: translateX(-50%) translateY(0); }
+	}
+
+	/* Mint success banner */
+	.mint-banner {
+		position: fixed;
+		top: 56px;
+		left: 0;
+		right: 0;
+		z-index: 100;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
+		padding: 10px;
+		background: #00bcd4;
+		color: #fff;
+		font-size: var(--font-size-sm);
+		font-weight: var(--font-weight-semibold);
+		animation: banner-in 0.3s ease;
+	}
+
+	@media (prefers-color-scheme: light) {
+		.mint-banner {
+			background: rgba(0, 188, 212, 0.12);
+			color: #008394;
+		}
+	}
+
+	.mint-banner-icon {
+		display: flex;
+		align-items: center;
+	}
+
+	@keyframes banner-in {
+		from { transform: translateY(-100%); opacity: 0; }
+		to { transform: translateY(0); opacity: 1; }
 	}
 </style>

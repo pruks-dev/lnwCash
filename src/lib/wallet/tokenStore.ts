@@ -256,8 +256,9 @@ export async function sendTokens(
 			amount: sentAmount,
 			mint_url: mintUrl,
 			timestamp: Date.now(),
-			token_hash: token.substring(0, 64),
-			status: 'confirmed'
+			token_hash: token,
+			status: 'confirmed',
+			fee: 0
 		});
 	} catch {
 		// IndexedDB may be unavailable
@@ -301,26 +302,8 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 	const keysetId = decoded.proofs[0].id;
 	let fullId = keysetId; // Will be resolved to full ID if short form
 
-	// 1. Check if any proof is already spent (double-spend detection)
-	try {
-		const stateResponse = await checkState(
-			mintUrl,
-			decoded.proofs.map(p => ({ secret: p.secret, C: p.C }))
-		);
-		const spentProofs = decoded.proofs.filter((_, i) =>
-			stateResponse.states[i]?.state === 'SPENT'
-		);
-		if (spentProofs.length > 0) {
-			throw new TokenValidationError(
-				`${spentProofs.length} of ${decoded.proofs.length} proofs already spent`
-			);
-		}
-	} catch (err) {
-		if (err instanceof TokenValidationError) throw err;
-		// Mint unreachable — proceed with caution
-	}
-
-	// 2. Swap old proofs for new ones (NUT-03 double-spend protection)
+	// 1. Swap old proofs for new ones (NUT-03 double-spend protection)
+	// Swap acts as the gatekeeper — mint rejects spent proofs
 	try {
 		// Fetch mint keys to get public key for this keyset
 		await fetchAndCacheKeysets(mintUrl);
@@ -377,8 +360,9 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 				amount: totalAmount,
 				mint_url: mintUrl,
 				timestamp: Date.now(),
-				token_hash: tokenString.substring(0, 64),
-				status: 'confirmed'
+				token_hash: tokenString,
+				status: 'confirmed',
+				fee: 0
 			});
 		} catch {
 			// IndexedDB may be unavailable
@@ -393,36 +377,10 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 		};
 	} catch (err) {
 		if (err instanceof TokenValidationError) throw err;
-		// Swap failed — fall back to storing original proofs
+		throw new TokenValidationError(
+			err instanceof Error ? err.message : 'Swap failed — token may be spent or invalid'
+		);
 	}
 
-	// 3. Fallback: store original proofs (swap not supported)
-	await addProofs(decoded.proofs, mintUrl, fullId);
-
-	const totalAmount = getTokenAmount(decoded);
-	const dleqCount = decoded.proofs.filter(p => p.dleq).length;
-
-	// Record transaction (F-088 fallback) — best-effort
-	try {
-		await addTransaction({
-			id: `cashu-recv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-			type: 'cashu_receive',
-			protocol: 'cashu',
-			amount: totalAmount,
-			mint_url: mintUrl,
-			timestamp: Date.now(),
-			token_hash: tokenString.substring(0, 64),
-			status: 'confirmed'
-		});
-	} catch {
-		// IndexedDB may be unavailable
-	}
-
-	return {
-		amount: totalAmount,
-		mint: mintUrl,
-		unit: decoded.unit,
-		proofCount: decoded.proofs.length,
-		dleqCount: dleqCount > 0 ? dleqCount : undefined
-	};
+	// Not reached — swap or throw above
 }

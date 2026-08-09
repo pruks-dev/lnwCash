@@ -56,7 +56,7 @@ vi.mock('../../cashu/client', () => ({
 	}),
 	meltTokens: vi.fn().mockResolvedValue({
 		paid: true,
-		preimage: 'preimage-abc'
+		payment_preimage: 'preimage-abc'
 	}),
 	mintTokens: vi.fn(),
 	checkState: vi.fn().mockResolvedValue({
@@ -81,6 +81,7 @@ vi.mock('../../cashu/client', () => ({
 
 import * as client from '../../cashu/client';
 import { meltFlow } from '../melt';
+import { getTransactions, clearTransactions } from '../../storage/db';
 
 describe('Melt flow', () => {
 	beforeEach(async () => {
@@ -102,7 +103,7 @@ describe('Melt flow', () => {
 		});
 		(client.meltTokens as ReturnType<typeof vi.fn>).mockResolvedValue({
 			paid: true,
-			preimage: 'preimage-abc'
+			payment_preimage: 'preimage-abc'
 		});
 		(client.checkState as ReturnType<typeof vi.fn>).mockResolvedValue({
 			states: []
@@ -267,6 +268,92 @@ describe('Melt flow', () => {
 
 			expect(result.success).toBe(true);
 			expect(result.preimage).toBe('preimage-abc');
+		});
+
+		it('should record transaction with protocol=lightning and bolt11 invoice', async () => {
+			await clearTransactions();
+			await clearAllWalletData();
+			await deleteProofDB();
+			resetProofDB();
+			await createWallet(TEST_PIN, TEST_NAME);
+			await unlockWallet(TEST_PIN);
+
+			await addProofs(
+				[makeProof('p1', 64)],
+				MINT_URL,
+				KEYSET_ID
+			);
+
+			(client.checkState as ReturnType<typeof vi.fn>).mockResolvedValue({
+				states: [
+					{ secret: 'secret-p1', state: 'UNSPENT', witness: null }
+				]
+			});
+
+			const result = await meltFlow(MINT_URL, 'lnbc2500u...', 50);
+
+			expect(result.success).toBe(true);
+
+			const txs = await getTransactions({ type: 'melt' });
+			expect(txs.length).toBe(1);
+			const tx = txs[0];
+			expect(tx.protocol).toBe('lightning');
+			expect(tx.invoice).toBe('lnbc2500u...');
+			expect(tx.token_hash).toBeNull();
+			expect(tx.status).toBe('confirmed');
+			// Pending→confirmed flow: fee and preimage should be updated by completeMelt
+			expect(tx.fee).toBe(1); // feeReserve from mock quote
+			expect(tx.preimage).toBe('preimage-abc');
+		});
+
+		it('should set transaction status to failed when melt fails', async () => {
+			await clearTransactions();
+			await clearAllWalletData();
+			await deleteProofDB();
+			resetProofDB();
+			await createWallet(TEST_PIN, TEST_NAME);
+			await unlockWallet(TEST_PIN);
+
+			await addProofs(
+				[makeProof('p1', 64)],
+				MINT_URL,
+				KEYSET_ID
+			);
+
+			// Force quote request to fail
+			(client.requestMeltQuote as ReturnType<typeof vi.fn>).mockRejectedValue(
+				new Error('Insufficient funds')
+			);
+
+			const result = await meltFlow(MINT_URL, 'lnbc...', 99999);
+
+			expect(result.success).toBe(false);
+
+			const txs = await getTransactions({ type: 'melt' });
+			expect(txs.length).toBe(1);
+			expect(txs[0].status).toBe('failed');
+			expect(txs[0].protocol).toBe('lightning');
+		});
+
+		it('should create only one transaction for a successful melt (pending→confirmed)', async () => {
+			await clearTransactions();
+
+			(client.checkState as ReturnType<typeof vi.fn>).mockResolvedValue({
+				states: [
+					{ secret: 'secret-p1', state: 'UNSPENT', witness: null },
+					{ secret: 'secret-p2', state: 'UNSPENT', witness: null },
+					{ secret: 'secret-p3', state: 'UNSPENT', witness: null }
+				]
+			});
+
+			const result = await meltFlow(MINT_URL, 'lnbc...', 50);
+
+			expect(result.success).toBe(true);
+
+			// Should have exactly 1 transaction (pending→confirmed, not 2)
+			const txs = await getTransactions({ type: 'melt' });
+			expect(txs.length).toBe(1);
+			expect(txs[0].status).toBe('confirmed');
 		});
 	});
 });

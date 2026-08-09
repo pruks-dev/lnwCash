@@ -2,7 +2,7 @@
 	/**
 	 * History Screen — TASK-060 (C) / D-015
 	 * Full tx list with date grouping, pull-to-refresh, skeleton cards, empty state.
-	 * Uses TASK-050: Card, Chip, Heading, Body, Divider, Icons
+	 * Uses TASK-050: Card, Chip, Heading, Body, Icons
 	 */
 	import { _ } from 'svelte-i18n';
 	import { getTransactions } from '$lib/storage/db';
@@ -13,19 +13,14 @@
 	import Chip from '$lib/components/ui/Chip.svelte';
 	import Heading from '$lib/components/ui/Heading.svelte';
 	import Body from '$lib/components/ui/Body.svelte';
-	import Divider from '$lib/components/ui/Divider.svelte';
+	
 	import Button from '$lib/components/ui/Button.svelte';
 
-	// TASK-050 Icons
-	import HistoryIcon from '$lib/components/icons/History.svelte';
+	// TASK-142 Iconly unified component
+	import Iconly from '$lib/iconly/Iconly.svelte';
 
-	// TASK-138 Iconly transaction icons
-	import SendIcon from '$lib/components/icons/Send.svelte';
-	import ReceiveIcon from '$lib/components/icons/Receive.svelte';
-	import SwapIcon from '$lib/components/icons/Swap.svelte';
-	import PlusIcon from '$lib/components/icons/Plus.svelte';
-	import MinusIcon from '$lib/components/icons/Minus.svelte';
-	import WalletIcon from '$lib/components/icons/Wallet.svelte';
+	// TASK-150 Transaction Detail Bottom Sheet
+	import TransactionDetailSheet from '$lib/components/TransactionDetailSheet.svelte';
 
 	interface Props {
 		maxItems?: number;
@@ -33,13 +28,10 @@
 
 	let { maxItems }: Props = $props();
 
-	// TASK-138: Filter key → TransactionType[] mapping
+	// TASK-142: Filter key → TransactionType[] mapping (3 chips)
 	const FILTER_TYPE_MAP: Record<string, TransactionType[]> = {
 		receive: ['mint', 'cashu_receive'],
-		send: ['melt', 'cashu_send'],
-		transfer: ['transfer'],
-		cashu_send: ['cashu_send'],
-		cashu_receive: ['cashu_receive'],
+		send: ['melt', 'transfer', 'cashu_send'],
 	};
 
 	// ─── State ─────────────────────────────────────────────
@@ -53,6 +45,9 @@
 	let isPulling: boolean = $state(false);
 	let refreshing: boolean = $state(false);
 	let touchStartY: number = $state(0);
+
+	// TASK-150: Transaction detail sheet state
+	let selectedTx: Transaction | null = $state(null);
 
 	// ─── Load transactions on mount & filter change ───────
 	$effect(() => {
@@ -121,36 +116,16 @@
 		}
 	}
 
-	// TASK-138: Iconly SVG component mapping (no unicode/emoji)
-	const txIconMap: Record<TransactionType, typeof SendIcon> = {
-		mint: PlusIcon,
-		melt: MinusIcon,
-		transfer: SwapIcon,
-		cashu_send: SendIcon,
-		cashu_receive: ReceiveIcon,
-	};
-
-	function getTxIcon(type: TransactionType): typeof SendIcon {
-		return txIconMap[type] ?? WalletIcon;
-	}
-
-	function typeIconColor(type: TransactionType): string {
+	// TASK-142: 2-category mapping (send/receive) — unified <Iconly>
+	function getTxCategory(type: TransactionType): 'Send' | 'Receive' {
 		switch (type) {
-			case 'mint': return 'var(--color-success)';
-			case 'melt': return 'var(--color-primary)';
-			case 'transfer': return 'var(--color-secondary)';
-			case 'cashu_send': return 'var(--color-primary)';
-			case 'cashu_receive': return 'var(--color-success)';
-			default: return 'var(--color-text-secondary)';
-		}
-	}
-
-	function statusColor(status: TransactionStatus): string {
-		switch (status) {
-			case 'confirmed': return 'var(--color-success)';
-			case 'pending': return 'var(--color-warning)';
-			case 'failed': return 'var(--color-error)';
-			default: return 'var(--color-text-secondary)';
+			case 'mint':
+			case 'cashu_receive':
+				return 'Receive';
+			case 'melt':
+			case 'transfer':
+			case 'cashu_send':
+				return 'Send';
 		}
 	}
 
@@ -235,6 +210,15 @@
 		}
 		return '';
 	}
+
+	// TASK-150: Open detail sheet for a transaction
+	function openDetail(tx: Transaction) {
+		selectedTx = tx;
+	}
+
+	function closeDetail() {
+		selectedTx = null;
+	}
 </script>
 
 <div
@@ -266,24 +250,13 @@
 		<Chip variant={activeFilter === 'all' ? 'active' : 'default'} onclick={() => setFilter('all')}>
 			{$_('screen.history.filter_all')}
 		</Chip>
-		<Chip variant={activeFilter === 'receive' ? 'active' : 'default'} onclick={() => setFilter('receive')}>
-			{$_('screen.history.filter_receive')}
-		</Chip>
 		<Chip variant={activeFilter === 'send' ? 'active' : 'default'} onclick={() => setFilter('send')}>
-			{$_('screen.history.filter_send')}
+			<Iconly name="Send" size={14} /> {$_('screen.history.filter_send')}
 		</Chip>
-		<Chip variant={activeFilter === 'transfer' ? 'active' : 'default'} onclick={() => setFilter('transfer')}>
-			{$_('screen.history.filter_transfer')}
-		</Chip>
-		<Chip variant={activeFilter === 'cashu_send' ? 'active' : 'default'} onclick={() => setFilter('cashu_send')}>
-			{$_('screen.history.filter_cashu_send')}
-		</Chip>
-		<Chip variant={activeFilter === 'cashu_receive' ? 'active' : 'default'} onclick={() => setFilter('cashu_receive')}>
-			{$_('screen.history.filter_cashu_receive')}
+		<Chip variant={activeFilter === 'receive' ? 'active' : 'default'} onclick={() => setFilter('receive')}>
+			<Iconly name="Receive" size={14} /> {$_('screen.history.filter_receive')}
 		</Chip>
 	</div>
-
-	<Divider />
 
 	<!-- ─── Transactions / States ──────────────────────── -->
 	{#if loading && !refreshing}
@@ -314,7 +287,7 @@
 		<Card variant="basic" padding="lg">
 			<div class="empty-state">
 				<span class="empty-icon" aria-hidden="true">
-					<HistoryIcon size={48} />
+					<Iconly name="History" size={48} />
 				</span>
 				<Body size="md" color="disabled" align="center">{$_('screen.history.empty')}</Body>
 				<Body size="sm" color="disabled" align="center">
@@ -330,42 +303,65 @@
 					<Heading level="h4">{groupKey}</Heading>
 					<div class="tx-items">
 						{#each groupedTxs[groupKey] as tx (tx.id)}
+							<!-- svelte-ignore a11y_no_static_element_interactions -->
+							<div
+								class="tx-clickable"
+								onclick={() => openDetail(tx)}
+								onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(tx); } }}
+								role="button"
+								tabindex="0"
+								aria-label="{typeLabel(tx.type)} — {getTxCategory(tx.type) === 'Receive' ? '+' : '-'}{formatSat(tx.amount)} {$_('screen.balance.sats')}"
+							>
 							<Card variant="basic" padding="md">
 								<div class="tx-item">
 									<span
 										class="tx-type-icon"
-										style="background: {typeIconColor(tx.type)}"
+										class:tx-receive={getTxCategory(tx.type) === 'Receive'}
+										class:tx-send={getTxCategory(tx.type) === 'Send'}
 										aria-hidden="true"
 									>
-										<!-- svelte-ignore svelte_component_deprecated -->
-										<svelte:component this={getTxIcon(tx.type)} size={20} color="white" />
+										<Iconly name={getTxCategory(tx.type)} size={20} />
 									</span>
 									<div class="tx-info">
 										<div class="tx-header">
 											<div class="tx-header-left">
 												<Body size="sm" weight="semibold">{typeLabel(tx.type)}</Body>
 												{#if tx.protocol}
-													<span class="tx-protocol-badge" title={protocolLabel(tx.protocol)}>
+													<span
+														class="tx-protocol-badge"
+														class:protocol-cashu={tx.protocol === 'cashu'}
+														class:protocol-lightning={tx.protocol === 'lightning'}
+														title={protocolLabel(tx.protocol)}
+													>
 														{protocolLabel(tx.protocol)}
 													</span>
 												{/if}
 											</div>
 											<Body size="sm" weight="semibold">
-												{tx.type === 'mint' || tx.type === 'cashu_receive' ? '+' : '-'}{formatSat(tx.amount)} {$_('screen.balance.sats')}
+												{getTxCategory(tx.type) === 'Receive' ? '+' : '-'}{formatSat(tx.amount)} {$_('screen.balance.sats')}
 											</Body>
 										</div>
 										<div class="tx-meta">
 											<Body size="sm" color="secondary">{formatDate(tx.timestamp)}</Body>
-											<span
-												class="tx-status-badge"
-												style="background: {statusColor(tx.status)}"
-											>
-												{statusLabel(tx.status)}
-											</span>
+											{#if tx.status === 'pending'}
+												<span class="tx-pending-indicator" aria-label={$_('screen.history.pending_text')}>
+													<Iconly name="Time" size={14} />
+													<span class="pending-text">{$_('screen.history.pending_text')}</span>
+												</span>
+											{:else}
+												<span
+													class="tx-status-badge"
+													class:status-confirmed={tx.status === 'confirmed'}
+													class:status-failed={tx.status === 'failed'}
+												>
+													{statusLabel(tx.status)}
+												</span>
+											{/if}
 										</div>
 									</div>
 								</div>
 							</Card>
+							</div>
 						{/each}
 					</div>
 				</div>
@@ -374,6 +370,9 @@
 	{/if}
 
 	<div class="bottom-spacer"></div>
+
+	<!-- TASK-150: Transaction Detail Bottom Sheet -->
+	<TransactionDetailSheet tx={selectedTx} onclose={closeDetail} />
 </div>
 
 <style>
@@ -509,6 +508,25 @@
 	}
 
 	/* ─── Transaction Item ──────────────────────────────── */
+	.tx-clickable {
+		cursor: pointer;
+		border-radius: var(--radius-lg);
+		transition: opacity 0.15s ease, transform 0.15s ease;
+	}
+
+	.tx-clickable:hover {
+		opacity: 0.85;
+	}
+
+	.tx-clickable:active {
+		transform: scale(0.98);
+	}
+
+	.tx-clickable:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
+	}
+
 	.tx-item {
 		display: flex;
 		align-items: center;
@@ -523,6 +541,49 @@
 		height: 36px;
 		border-radius: var(--radius-full);
 		flex-shrink: 0;
+	}
+
+	/* Dark theme (default) */
+	/* TX icon — Send (Cyan / LnwCash brand) */
+	.tx-type-icon.tx-send {
+		background: #00bcd4;
+		color: #fff;
+	}
+	/* TX icon — Receive (Teal / cool positive) */
+	.tx-type-icon.tx-receive {
+		background: #14b8a6;
+		color: #fff;
+	}
+
+	/* Protocol — Lightning (Cyan / same as Send) */
+	.tx-protocol-badge.protocol-lightning {
+		background: #00bcd4;
+		color: #fff;
+	}
+	/* Protocol — Cashu (Violet) */
+	.tx-protocol-badge.protocol-cashu {
+		background: #7c3aed;
+		color: #fff;
+	}
+
+	/* Light theme overrides */
+	@media (prefers-color-scheme: light) {
+		.tx-type-icon.tx-send {
+			background: rgba(0, 188, 212, 0.12);
+			color: #00bcd4;
+		}
+		.tx-type-icon.tx-receive {
+			background: rgba(20, 184, 166, 0.12);
+			color: #14b8a6;
+		}
+		.tx-protocol-badge.protocol-lightning {
+			background: rgba(0, 188, 212, 0.12);
+			color: #00bcd4;
+		}
+		.tx-protocol-badge.protocol-cashu {
+			background: rgba(124, 58, 237, 0.12);
+			color: #7c3aed;
+		}
 	}
 
 	.tx-info {
@@ -548,9 +609,9 @@
 	.tx-protocol-badge {
 		font-size: var(--font-size-xs);
 		font-weight: var(--font-weight-medium);
-		color: var(--color-text-secondary);
-		background: var(--color-surface-variant);
-		padding: 0 4px;
+		color: #ffffff;
+		padding: 1px 6px;
+		letter-spacing: 0.02em;
 		border-radius: var(--radius-sm);
 		white-space: nowrap;
 	}
@@ -564,10 +625,49 @@
 	.tx-status-badge {
 		font-size: var(--font-size-xs);
 		font-weight: var(--font-weight-semibold);
-		color: white;
+		color: #fff;
 		padding: 1px 6px;
 		border-radius: var(--radius-sm);
 		white-space: nowrap;
+	}
+	.tx-status-badge.status-confirmed {
+		background: #14b8a6;
+	}
+	.tx-status-badge.status-failed {
+		background: #ef4444;
+	}
+
+	/* TASK-149 (CV17-001): Pending indicator — Time icon + text */
+	.tx-pending-indicator {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		color: var(--color-accent);
+		animation: pending-pulse 2s ease-in-out infinite;
+	}
+
+	@keyframes pending-pulse {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.5; }
+	}
+
+	.pending-text {
+		font-size: var(--font-size-xs);
+		font-weight: var(--font-weight-medium);
+		color: var(--color-accent);
+		white-space: nowrap;
+	}
+
+	/* Light theme — muted backgrounds */
+	@media (prefers-color-scheme: light) {
+		.tx-status-badge.status-confirmed {
+			background: rgba(20, 184, 166, 0.12);
+			color: #14b8a6;
+		}
+		.tx-status-badge.status-failed {
+			background: rgba(239, 68, 68, 0.12);
+			color: #ef4444;
+		}
 	}
 
 	.bottom-spacer {

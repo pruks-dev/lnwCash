@@ -415,6 +415,13 @@
 			></video>
 			<canvas bind:this={canvasRef} class="scan-canvas-hidden" aria-hidden="true"></canvas>
 
+			<!-- Scan instruction text -->
+			{#if scanState === 'scanning'}
+				<div class="scan-instruction">
+					<p>{$_('screen.qrscan.instruction')}</p>
+				</div>
+			{/if}
+
 			<!-- Scan Region Overlay -->
 			<div class="scan-region-overlay">
 				<div class="scan-region">
@@ -669,6 +676,33 @@
 	}
 
 	.retry-btn:hover,
+	.retry-btn:focus-visible {
+		background: var(--color-primary-hover, #0097a7);
+	}
+
+	/* ─── Scan Instruction ────────────────────────────────── */
+	.scan-instruction {
+		position: absolute;
+		top: 12px;
+		left: 0;
+		right: 0;
+		text-align: center;
+		pointer-events: none;
+		z-index: 5;
+	}
+
+	.scan-instruction p {
+		display: inline-block;
+		padding: var(--space-xs) var(--space-lg);
+		font-size: var(--font-size-md);
+		font-weight: var(--font-weight-semibold);
+		color: #ffffff;
+		background: rgba(0, 0, 0, 0.55);
+		border-radius: var(--radius-full);
+		margin: 0;
+		text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+	}
+
 	/* ─── Scan Region Overlay ──────────────────────────────── */
 	.scan-region-overlay {
 		position: absolute;

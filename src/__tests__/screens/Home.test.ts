@@ -207,9 +207,9 @@ describe('Home (TASK-059) — Wallet Page Redesign', () => {
 	// AC-3: Recent Transactions
 	// ═══════════════════════════════════════════════════════════════
 
-	it('renders recent transactions heading', () => {
+	it('does NOT render recent transactions heading (TASK-145: removed)', () => {
 		render(Home, {});
-		expect(screen.getByText('screen.home.recent_tx')).toBeTruthy();
+		expect(screen.queryByText('screen.home.recent_tx')).toBeNull();
 	});
 
 	it('shows empty state when no transactions', async () => {
@@ -235,10 +235,10 @@ describe('Home (TASK-059) — Wallet Page Redesign', () => {
 		}, { timeout: 3000 });
 	}, 10000);
 
-	it('has manual refresh button', () => {
+	it('does NOT have manual refresh button (TASK-145: removed)', () => {
 		render(Home, {});
 		const btn = document.querySelector('[aria-label="Refresh transactions"]');
-		expect(btn).toBeTruthy();
+		expect(btn).toBeNull();
 	});
 
 	it('renders status dots for transactions', async () => {

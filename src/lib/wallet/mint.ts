@@ -221,12 +221,15 @@ export async function completeMint(
 
 		// Step 1: Verify quote is PAID before submitting outputs
 		let quoteState = 'UNPAID';
+		let bolt11Invoice: string | null = null;
 		if (waitForPayment) {
 			const paidQuote = await pollMintQuoteUntil(mintUrl, quoteId, 'PAID');
 			quoteState = paidQuote.state ?? 'PAID';
+			bolt11Invoice = paidQuote.request ?? null;
 		} else {
 			const quote = await checkMintQuote(mintUrl, quoteId);
 			quoteState = quote.state ?? 'UNPAID';
+			bolt11Invoice = quote.request ?? null;
 		}
 
 		if (quoteState !== 'PAID') {
@@ -286,8 +289,10 @@ export async function completeMint(
 				mint_url: mintUrl,
 				timestamp: Date.now(),
 				token_hash: null,
-				invoice: null,
-				status: 'confirmed'
+				invoice: bolt11Invoice,
+				status: 'confirmed',
+				protocol: 'lightning',
+				fee: 0
 			} as Transaction);
 		} catch {
 			// IndexedDB may be unavailable — transaction recording is best-effort
