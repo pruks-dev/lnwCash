@@ -1,8 +1,8 @@
 <script lang="ts">
 	/**
-	 * Icon: SendVertical — Vertical up arrow (↑)
+	 * Icon: SendVertical — Alt chevron up (^)
 	 * Used in Home/Wallet page quick action buttons.
-	 * Solar Linear style (api.iconify.design/solar, CC BY 4.0)
+	 * Solar Linear alt-arrow-up-linear (api.iconify.design/solar, CC BY 4.0)
 	 */
 	interface Props {
 		size?: number;
@@ -32,6 +32,6 @@
 		stroke-linecap="round"
 		stroke-linejoin="round"
 		stroke-width="1.5"
-		d="M12 20V4m0 0l6 6m-6-6l-6 6"
+		d="m19 15l-7-6l-7 6"
 	/>
 </svg>
