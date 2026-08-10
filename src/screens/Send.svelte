@@ -621,7 +621,7 @@
 							</Button>
 							{#if onQRScan}
 								<Button variant="ghost" size="sm" onclick={onQRScan} disabled={lightningState === 'sending'}>
-									{#snippet children()}<Iconly name="Scan" size={14} /> {$_('screen.send.scan_qr')}{/snippet}
+									{#snippet children()}<span class="icon-with-text"><Iconly name="Scan" size={14} /> {$_('screen.send.scan_qr')}</span>{/snippet}
 								</Button>
 							{/if}
 						</div>
@@ -977,6 +977,13 @@
 	.invoice-input-actions {
 		display: flex;
 		gap: var(--space-sm);
+	}
+
+	.icon-with-text {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		line-height: 1;
 	}
 
 	/* ─── Amount Display ──────────────── */
