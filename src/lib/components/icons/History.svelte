@@ -1,8 +1,8 @@
 <script lang="ts">
 	/**
-	 * Icon: History — Solar Linear (verified, api.iconify.design/solar)
-	 * CC BY 4.0 — clock-circle-linear (stroke-only, lighter visual weight)
-	 * Previous history-linear had a filled curved arrow which looked too bold.
+	 * Icon: History — Solar Linear style (verified, api.iconify.design/solar)
+	 * CC BY 4.0 — modified history-linear: replaced filled curved arrow
+	 * with stroke-only path for lighter visual weight.
 	 */
 	interface Props {
 		size?: number;
@@ -27,7 +27,11 @@
 	role="img"
 >
 	<g fill="none" stroke="currentColor" stroke-width="1.5">
-		<circle cx="12" cy="12" r="10" />
+		<!-- Clock hands -->
 		<path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l2.5 2.5" />
+		<!-- Curved back arrow (stroke-only, replaces filled path) -->
+		<path stroke-linecap="round" stroke-linejoin="round" d="M3 12a9 9 0 1 0 3-6.7" />
+		<!-- Arrowhead at top -->
+		<path stroke-linecap="round" stroke-linejoin="round" d="M6 5.3l-3 .3l.3-3" />
 	</g>
 </svg>
