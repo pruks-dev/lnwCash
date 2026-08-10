@@ -1,8 +1,7 @@
 <script lang="ts">
 	/**
-	 * Icon: History — Solar Linear style (verified, api.iconify.design/solar)
-	 * CC BY 4.0 — modified history-linear: replaced filled curved arrow
-	 * with stroke-only path for lighter visual weight.
+	 * Icon: History — Solar Linear (verified, api.iconify.design/solar)
+	 * CC BY 4.0 — stroke-only paths matching Wallet's stroke/fill style
 	 */
 	interface Props {
 		size?: number;
@@ -29,9 +28,18 @@
 	<g fill="none" stroke="currentColor" stroke-width="1.5">
 		<!-- Clock hands -->
 		<path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l2.5 2.5" />
-		<!-- Curved back arrow (stroke-only, replaces filled path) -->
-		<path stroke-linecap="round" stroke-linejoin="round" d="M3 12a9 9 0 1 0 3-6.7" />
+		<!-- Circular back arrow (stroke-only) -->
+		<path
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			d="M3.5 12a8.5 8.5 0 1 0 2.5-6"
+		/>
 		<!-- Arrowhead at top -->
-		<path stroke-linecap="round" stroke-linejoin="round" d="M6 5.3l-3 .3l.3-3" />
+		<path
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			stroke-width="1.5"
+			d="M6 6l-3 .3l.3-3"
+		/>
 	</g>
 </svg>
