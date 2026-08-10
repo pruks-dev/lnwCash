@@ -1,7 +1,8 @@
 <script lang="ts">
 	/**
-	 * Icon: Send — Solar Linear (verified, api.iconify.design/solar)
-	 * CC BY 4.0 — verified from official Solar Linear arrow-up-linear path
+	 * Icon: Send — Diagonal up-right arrow (↗)
+	 * Solar Linear style (api.iconify.design/solar, CC BY 4.0)
+	 * Modified to diagonal for visual distinction between Send/Receive
 	 */
 	interface Props {
 		size?: number;
@@ -31,6 +32,6 @@
 		stroke-linecap="round"
 		stroke-linejoin="round"
 		stroke-width="1.5"
-		d="M12 20V4m0 0l6 6m-6-6l-6 6"
+		d="M5 19l14-14m0 0H9m10 0v10"
 	/>
 </svg>
