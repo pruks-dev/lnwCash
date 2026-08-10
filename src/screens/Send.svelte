@@ -621,7 +621,7 @@
 							</Button>
 							{#if onQRScan}
 								<Button variant="ghost" size="sm" onclick={onQRScan} disabled={lightningState === 'sending'}>
-									{#snippet children()}<span class="icon-with-text"><Iconly name="Scan" size={14} /> {$_('screen.send.scan_qr')}</span>{/snippet}
+									{#snippet children()}<Iconly name="Scan" size={14} class="btn-icon-align" /> {$_('screen.send.scan_qr')}{/snippet}
 								</Button>
 							{/if}
 						</div>
@@ -979,17 +979,13 @@
 		gap: var(--space-sm);
 	}
 
-	.icon-with-text {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		line-height: 1;
-	}
-
-	.icon-with-text :global(svg) {
+	/* Button icon alignment — applied via class on Iconly → passed to SVG */
+	.btn-icon-align {
 		display: inline-block;
 		vertical-align: middle;
-		flex-shrink: 0;
+		margin-right: 4px;
+		position: relative;
+		top: -1px;
 	}
 
 	/* ─── Amount Display ──────────────── */
