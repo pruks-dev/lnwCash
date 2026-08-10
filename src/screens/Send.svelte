@@ -986,6 +986,12 @@
 		line-height: 1;
 	}
 
+	.icon-with-text :global(svg) {
+		display: inline-block;
+		vertical-align: middle;
+		flex-shrink: 0;
+	}
+
 	/* ─── Amount Display ──────────────── */
 	.amount-section {
 		display: flex;
