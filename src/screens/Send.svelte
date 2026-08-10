@@ -617,7 +617,7 @@
 						></textarea>
 						<div class="invoice-input-actions">
 							<Button variant="ghost" size="sm" onclick={handlePasteInvoice} disabled={lightningState === 'sending'}>
-								{#snippet children()}{$_('common.paste')}{/snippet}
+								{#snippet children()}<span class="btn-icon-text"><span class="btn-icon-label">{$_('common.paste')}</span></span>{/snippet}
 							</Button>
 							{#if onQRScan}
 								<Button variant="ghost" size="sm" onclick={onQRScan} disabled={lightningState === 'sending'}>
