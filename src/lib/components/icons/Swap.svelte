@@ -1,7 +1,7 @@
 <script lang="ts">
 	/**
-	 * Icon: Swap — Iconly 3.0 Bold Swap
-	 * Two arrows swapping direction
+	 * Icon: Swap — Solar Linear (verified, api.iconify.design/solar)
+	 * CC BY 4.0 — verified from official Solar Linear transfer-horizontal-linear path
 	 */
 	interface Props {
 		size?: number;
@@ -25,8 +25,12 @@
 	aria-hidden="true"
 	role="img"
 >
-	<path d="M16.84 3.99L20.27 7.42L16.84 10.85" />
-	<path d="M4.18 12.51H19.27" />
-	<path d="M7.16 20.01L3.73 16.58L7.16 13.15" />
-	<path d="M19.82 11.49H4.73" />
+	<path
+		fill="none"
+		stroke="currentColor"
+		stroke-linecap="round"
+		stroke-linejoin="round"
+		stroke-width="1.5"
+		d="M20 10H4l5.5-6M4 14h16l-5.5 6"
+	/>
 </svg>

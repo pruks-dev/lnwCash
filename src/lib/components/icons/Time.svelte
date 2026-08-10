@@ -1,8 +1,7 @@
 <script lang="ts">
 	/**
-	 * Icon: Time — TASK-149 (CV17-001)
-	 * Clock icon for pending transaction indicator
-	 * Iconly 3.0 style: circle + clock hands
+	 * Icon: Time — Solar Linear (verified, api.iconify.design/solar)
+	 * CC BY 4.0 — verified from official Solar Linear clock-circle-linear path
 	 */
 	interface Props {
 		size?: number;
@@ -26,6 +25,8 @@
 	aria-hidden="true"
 	role="img"
 >
-	<path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z" />
-	<path d="M12 6V12L16 14" />
+	<g fill="none" stroke="currentColor" stroke-width="1.5">
+		<circle cx="12" cy="12" r="10" />
+		<path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l2.5 2.5" />
+	</g>
 </svg>

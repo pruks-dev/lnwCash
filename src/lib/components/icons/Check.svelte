@@ -1,7 +1,7 @@
 <script lang="ts">
 	/**
-	 * Icon: Check — Iconly 3.0 Bold Tick-Square
-	 * Checkmark inside a rounded square
+	 * Icon: Check — Solar Linear (verified, api.iconify.design/solar)
+	 * CC BY 4.0 — verified from official Solar Linear check-circle-linear path
 	 */
 	interface Props {
 		size?: number;
@@ -25,6 +25,8 @@
 	aria-hidden="true"
 	role="img"
 >
-	<path d="M9 22H15C20 22 22 20 22 15V9C22 4 20 2 15 2H9C4 2 2 4 2 9V15C2 20 4 22 9 22Z" />
-	<path d="M7.75 12L10.58 14.83L16.25 9.17" />
+	<g fill="none" stroke="currentColor" stroke-width="1.5">
+		<circle cx="12" cy="12" r="10" />
+		<path stroke-linecap="round" stroke-linejoin="round" d="m8.5 12.5l2 2l5-5" />
+	</g>
 </svg>

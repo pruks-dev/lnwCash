@@ -1,7 +1,7 @@
 <script lang="ts">
 	/**
-	 * Icon: Copy — Iconly 3.0 Bold Copy
-	 * Two overlapping rounded rectangles
+	 * Icon: Copy — Solar Linear (verified, api.iconify.design/solar)
+	 * CC BY 4.0 — verified from official Solar Linear copy-linear path
 	 */
 	interface Props {
 		size?: number;
@@ -25,6 +25,12 @@
 	aria-hidden="true"
 	role="img"
 >
-	<path d="M16 12.9V17.1C16 20.6 14.6 22 11.1 22H6.9C3.4 22 2 20.6 2 17.1V12.9C2 9.4 3.4 8 6.9 8H11.1C14.6 8 16 9.4 16 12.9Z" />
-	<path d="M22 6.9V11.1C22 14.6 20.6 16 17.1 16H16V12.9C16 9.4 14.6 8 11.1 8H8V6.9C8 3.4 9.4 2 12.9 2H17.1C20.6 2 22 3.4 22 6.9Z" />
+	<g fill="none" stroke="currentColor" stroke-width="1.5">
+		<path
+			d="M6 11c0-2.828 0-4.243.879-5.121C7.757 5 9.172 5 12 5h3c2.828 0 4.243 0 5.121.879C21 6.757 21 8.172 21 11v5c0 2.828 0 4.243-.879 5.121C19.243 22 17.828 22 15 22h-3c-2.828 0-4.243 0-5.121-.879C6 20.243 6 18.828 6 16z"
+		/>
+		<path
+			d="M6 19a3 3 0 0 1-3-3v-6c0-3.771 0-5.657 1.172-6.828S7.229 2 11 2h4a3 3 0 0 1 3 3"
+		/>
+	</g>
 </svg>

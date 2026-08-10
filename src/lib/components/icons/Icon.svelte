@@ -3,6 +3,9 @@
 	 * Icon — D-005
 	 * Dynamic icon wrapper: renders icon by name
 	 * Usage: <Icon name="Wallet" size={28} />
+	 *
+	 * All icons sourced from Solar Linear (api.iconify.design/solar)
+	 * License: CC BY 4.0 — https://creativecommons.org/licenses/by/4.0/
 	 */
 	import Wallet from './Wallet.svelte';
 	import Receive from './Receive.svelte';
@@ -20,6 +23,9 @@
 	import Plus from './Plus.svelte';
 	import Minus from './Minus.svelte';
 	import Time from './Time.svelte';
+	import Lightning from './Lightning.svelte';
+	import Banknote from './Banknote.svelte';
+	import Warning from './Warning.svelte';
 
 	export type IconName =
 		| 'Wallet'
@@ -37,7 +43,10 @@
 		| 'ArrowRight'
 		| 'Plus'
 		| 'Minus'
-		| 'Time';
+		| 'Time'
+		| 'Lightning'
+		| 'Banknote'
+		| 'Warning';
 
 	interface Props {
 		/** Icon name — one of the available icon set */
@@ -68,7 +77,10 @@
 		ArrowRight,
 		Plus,
 		Minus,
-		Time
+		Time,
+		Lightning,
+		Banknote,
+		Warning
 	};
 
 	const iconComponent = $derived(iconMap[name] ?? Wallet);

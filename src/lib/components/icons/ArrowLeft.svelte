@@ -1,7 +1,7 @@
 <script lang="ts">
 	/**
-	 * Icon: ArrowLeft — Iconly 3.0 Bold Arrow-Left
-	 * Thick chevron pointing left, rounded caps
+	 * Icon: ArrowLeft — Solar Linear (verified, api.iconify.design/solar)
+	 * CC BY 4.0 — verified from official Solar Linear arrow-left-linear path
 	 */
 	interface Props {
 		size?: number;
@@ -25,5 +25,12 @@
 	aria-hidden="true"
 	role="img"
 >
-	<path d="M15 19.92L8.48 13.4C7.71 12.63 7.71 11.37 8.48 10.6L15 4.08" />
+	<path
+		fill="none"
+		stroke="currentColor"
+		stroke-linecap="round"
+		stroke-linejoin="round"
+		stroke-width="1.5"
+		d="M20 12H4m0 0l6-6m-6 6l6 6"
+	/>
 </svg>

@@ -1,7 +1,7 @@
 <script lang="ts">
 	/**
-	 * Icon: Minus — Iconly 3.0 Bold Minus
-	 * Minus sign inside a rounded square
+	 * Icon: Minus — Solar Linear (verified, api.iconify.design/solar)
+	 * CC BY 4.0 — verified from official Solar Linear minus-circle-linear path
 	 */
 	interface Props {
 		size?: number;
@@ -25,6 +25,8 @@
 	aria-hidden="true"
 	role="img"
 >
-	<path d="M9 22H15C20 22 22 20 22 15V9C22 4 20 2 15 2H9C4 2 2 4 2 9V15C2 20 4 22 9 22Z" />
-	<path d="M8 12H16" />
+	<g fill="none" stroke="currentColor" stroke-width="1.5">
+		<circle cx="12" cy="12" r="10" />
+		<path stroke-linecap="round" d="M15 12H9" />
+	</g>
 </svg>

@@ -1,7 +1,7 @@
 <script lang="ts">
 	/**
-	 * Icon: Wallet — Iconly 3.0 Bold Wallet
-	 * Wallet with card slot
+	 * Icon: Wallet — Solar Linear (verified, api.iconify.design/solar)
+	 * CC BY 4.0 — verified from official Solar Linear wallet-linear path
 	 */
 	interface Props {
 		size?: number;
@@ -25,7 +25,16 @@
 	aria-hidden="true"
 	role="img"
 >
-	<path d="M22 12V17C22 20 20 22 17 22H7C4 22 2 20 2 17V12C2 9.28 4.53 7.06 7.69 7.01C7.79 7.01 7.89 7 7.99 7H16C16.11 7 16.21 7.01 16.31 7.01C19.47 7.06 22 9.28 22 12Z" />
-	<path d="M18 11V13C18 13.55 17.55 14 17 14H7C6.45 14 6 13.55 6 13V11C6 10.45 6.45 10 7 10H17C17.55 10 18 10.45 18 11Z" />
-	<path d="M22 12.5V13.5C22 14.05 21.55 14.5 21 14.5H20C18.9 14.5 18 13.6 18 12.5V11.5C18 10.4 18.9 9.5 20 9.5H21C21.55 9.5 22 9.95 22 10.5" />
+	<g fill="none" stroke="currentColor" stroke-width="1.5">
+		<path stroke-linecap="round" stroke-linejoin="round" d="M6 8h4" />
+		<path
+			stroke-width="1.5"
+			d="M20.833 9h-2.602C16.446 9 15 10.343 15 12s1.447 3 3.23 3h2.603c.084 0 .125 0 .16-.002c.54-.033.97-.432 1.005-.933c.002-.032.002-.071.002-.148v-3.834c0-.077 0-.116-.002-.148c-.036-.501-.465-.9-1.005-.933C20.959 9 20.918 9 20.834 9Z"
+		/>
+		<path
+			stroke-width="1.5"
+			d="M20.965 9c-.078-1.872-.328-3.02-1.137-3.828C18.657 4 16.771 4 13 4h-3C6.229 4 4.343 4 3.172 5.172S2 8.229 2 12s0 5.657 1.172 6.828S6.229 20 10 20h3c3.771 0 5.657 0 6.828-1.172c.809-.808 1.06-1.956 1.137-3.828"
+		/>
+		<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.991 12h.01" />
+	</g>
 </svg>

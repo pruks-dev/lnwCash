@@ -1,6 +1,7 @@
 <script lang="ts">
 	/**
-	 * Icon: ArrowRight — Iconly 3.0 Bold Arrow-Right
+	 * Icon: ArrowRight — Solar Linear (verified, api.iconify.design/solar)
+	 * CC BY 4.0 — verified from official Solar Linear arrow-right-linear path
 	 */
 	interface Props {
 		size?: number;
@@ -24,5 +25,12 @@
 	aria-hidden="true"
 	role="img"
 >
-	<path d="M8.91 19.92L15.43 13.4C16.2 12.63 16.2 11.37 15.43 10.6L8.91 4.08" />
+	<path
+		fill="none"
+		stroke="currentColor"
+		stroke-linecap="round"
+		stroke-linejoin="round"
+		stroke-width="1.5"
+		d="M4 12h16m0 0l-6-6m6 6l-6 6"
+	/>
 </svg>
