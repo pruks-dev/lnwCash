@@ -40,9 +40,11 @@
 	import SendIcon from '$lib/components/icons/Send.svelte';
 	import Copy from '$lib/components/icons/Copy.svelte';
 	import Check from '$lib/components/icons/Check.svelte';
-	import Wallet from '$lib/components/icons/Wallet.svelte';
 	import ArrowLeft from '$lib/components/icons/ArrowLeft.svelte';
 	import Close from '$lib/components/icons/Close.svelte';
+
+	// TASK-159 Iconly wrapper — unified icon system
+	import Iconly from '$lib/iconly/Iconly.svelte';
 
 	interface Props {
 		defaultMintUrl?: string;
@@ -530,7 +532,7 @@
 			aria-selected={activeTab === 'lightning'}
 			onclick={() => activeTab = 'lightning'}
 		>
-			⚡ {$_('screen.send.tab_lightning')}
+			<Iconly name="Lightning" size={18} /> {$_('screen.send.tab_lightning')}
 		</button>
 		<button
 			type="button"
@@ -540,7 +542,7 @@
 			aria-selected={activeTab === 'cashu'}
 			onclick={() => activeTab = 'cashu'}
 		>
-			<Wallet size={18} /> {$_('screen.send.tab_cashu')}
+			<Iconly name="Banknote" size={18} /> {$_('screen.send.tab_cashu')}
 		</button>
 	</div>
 
@@ -619,7 +621,7 @@
 							</Button>
 							{#if onQRScan}
 								<Button variant="ghost" size="sm" onclick={onQRScan} disabled={lightningState === 'sending'}>
-									{#snippet children()}📷 {$_('screen.send.scan_qr')}{/snippet}
+									{#snippet children()}<Iconly name="Scan" size={14} /> {$_('screen.send.scan_qr')}{/snippet}
 								</Button>
 							{/if}
 						</div>
@@ -817,7 +819,7 @@
 				</div>
 				<span class="text-error-warning">
 					<Body size="sm" align="center" weight="semibold">
-						⚠️ {$_('screen.send.irreversible_warning')}
+						<Iconly name="Warning" size={18} /> {$_('screen.send.irreversible_warning')}
 					</Body>
 				</span>
 				<div class="confirm-actions">
@@ -1030,11 +1032,11 @@
 		border-bottom: 1px solid var(--color-border);
 	}
 
+	/* TASK-161 (F-V18-007): Spacing-only design — 2px cyan border-top removed, padding-top increased to preserve visual rhythm */
 	.detail-row-total {
 		border-bottom: none;
-		border-top: 2px solid var(--color-primary);
-		padding-top: var(--space-sm);
-		margin-top: var(--space-xs);
+		padding-top: var(--space-md);
+		margin-top: var(--space-sm);
 	}
 
 	.detail-row:last-child {
@@ -1071,19 +1073,19 @@
 		font-family: var(--font-family);
 		font-size: var(--font-size-md);
 		font-weight: var(--font-weight-bold);
-		background: var(--color-accent);
-		color: var(--color-accent-contrast);
+		background: var(--color-primary);
+		color: var(--color-primary-contrast);
 		cursor: pointer;
 		transition: all var(--transition-fast);
 		-webkit-tap-highlight-color: transparent;
-		box-shadow: 0 2px 8px rgba(255, 111, 0, 0.35);
+		box-shadow: 0 2px 8px color-mix(in srgb, var(--color-primary) 35%, transparent);
 		min-height: 48px;
 	}
 
 	.send-confirm-btn:hover:not(:disabled) {
-		background: var(--color-accent-hover);
+		background: var(--color-primary-hover);
 		transform: translateY(-1px);
-		box-shadow: 0 4px 16px rgba(255, 111, 0, 0.4);
+		box-shadow: 0 4px 16px color-mix(in srgb, var(--color-primary) 40%, transparent);
 	}
 
 	.send-confirm-btn:active:not(:disabled) {
@@ -1096,7 +1098,7 @@
 	}
 
 	.send-confirm-btn:focus-visible {
-		outline: 2px solid var(--color-accent);
+		outline: 2px solid var(--color-primary);
 		outline-offset: 2px;
 	}
 
@@ -1162,6 +1164,12 @@
 		gap: var(--space-md);
 	}
 
+	/* TASK-161 (F-V18-007): Spacing-only design — border-bottom removed in success state, padding-bottom added to preserve visual rhythm */
+	.success-section .detail-row {
+		border-bottom: none;
+		padding-bottom: 0.75rem; /* 12px — matches the visual weight of the removed 1px border + 4px existing padding */
+	}
+
 	.success-icon {
 		color: var(--color-success);
 		animation: check-pop 0.5s ease-out;
@@ -1206,14 +1214,14 @@
 	}
 
 	/* ─── Payment Breakdown ──────────── */
+	/* TASK-161 (F-V18-007): Spacing-only design — border-top removed, margin-top increased to preserve visual rhythm */
 	.payment-breakdown {
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-sm);
 		width: 100%;
-		padding-top: var(--space-sm);
-		margin-top: var(--space-xs);
-		border-top: 1px solid var(--color-border);
+		padding-top: var(--space-md);
+		margin-top: var(--space-md);
 	}
 
 	/* ─── Token Output ────────────────── */
@@ -1267,14 +1275,14 @@
 		font-size: var(--font-size-sm);
 		font-weight: var(--font-weight-bold);
 		background: var(--color-error);
-		color: #ffffff;
+		color: var(--color-error-contrast);
 		cursor: pointer;
 		transition: all var(--transition-fast);
 		min-height: 44px;
 	}
 
 	.danger-btn:hover:not(:disabled) {
-		background: #b71c1c;
+		background: var(--color-error-hover);
 	}
 
 	.danger-btn:active:not(:disabled) {
