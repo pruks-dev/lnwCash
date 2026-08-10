@@ -22,9 +22,9 @@
 	import Heading from '$lib/components/ui/Heading.svelte';
 	import Body from '$lib/components/ui/Body.svelte';
 
-	// TASK-050 Icons
-	import Receive from '$lib/components/icons/Receive.svelte';
-	import Send from '$lib/components/icons/Send.svelte';
+	// TASK-050 Icons (Home page uses vertical up/down for quick action buttons)
+	import ReceiveVertical from '$lib/components/icons/ReceiveVertical.svelte';
+	import SendVertical from '$lib/components/icons/SendVertical.svelte';
 
 	// TASK-145 Iconly
 	import Iconly from '$lib/iconly/Iconly.svelte';
@@ -214,7 +214,7 @@
 					onclick={(e) => { handleRipple(e); navTo('receive'); }}
 					aria-label={$_('wallet.receive')}>
 					<span class="action-icon-wrap" aria-hidden="true">
-						<Receive size={28} />
+						<ReceiveVertical size={28} />
 					</span>
 					<Body size="md" weight="semibold">{$_('wallet.receive')}</Body>
 				</button>
@@ -223,7 +223,7 @@
 					onclick={(e) => { handleRipple(e); navTo('send'); }}
 					aria-label={$_('wallet.send')}>
 					<span class="action-icon-wrap" aria-hidden="true">
-						<Send size={28} />
+						<SendVertical size={28} />
 					</span>
 					<Body size="md" weight="semibold">{$_('wallet.send')}</Body>
 				</button>
