@@ -42,9 +42,12 @@
 
 	import Copy from '$lib/components/icons/Copy.svelte';
 	import Check from '$lib/components/icons/Check.svelte';
-	import Wallet from '$lib/components/icons/Wallet.svelte';
+	import Time from '$lib/components/icons/Time.svelte';
 	import ArrowLeft from '$lib/components/icons/ArrowLeft.svelte';
 	import Close from '$lib/components/icons/Close.svelte';
+
+	// TASK-159 Iconly wrapper — unified icon system
+	import Iconly from '$lib/iconly/Iconly.svelte';
 
 	interface Props {
 		defaultMintUrl?: string;
@@ -619,7 +622,7 @@
 			aria-selected={activeTab === 'lightning'}
 			onclick={() => activeTab = 'lightning'}
 		>
-			⚡ {$_('screen.receive.tab_lightning')}
+			<Iconly name="Lightning" size={18} /> {$_('screen.receive.tab_lightning')}
 		</button>
 		<button
 			type="button"
@@ -629,7 +632,7 @@
 			aria-selected={activeTab === 'cashu'}
 			onclick={() => activeTab = 'cashu'}
 		>
-			<Wallet size={18} /> {$_('screen.receive.tab_cashu')}
+			<Iconly name="Banknote" size={18} /> {$_('screen.receive.tab_cashu')}
 		</button>
 	</div>
 
@@ -707,11 +710,11 @@
 
 			{#if lightningState === 'success'}
 				<Card variant="basic" padding="lg">
-					<div class="success-section">
+					<div class="success-section" data-flow="receive-lightning">
 						<span class="success-icon" aria-hidden="true">
 							<Check size={64} />
 						</span>
-						<Heading level="h3" align="center">{$_('screen.receive.success_received')}</Heading>
+						<Heading level="h3" align="center">{$_('screen.receive.success_title')}</Heading>
 						<div class="received-amount">
 							<span class="received-value" aria-live="polite">{formatSat(displayBalance)}</span>
 							<span class="received-unit">{$_('screen.balance.sats')}</span>
@@ -719,9 +722,31 @@
 						<Body size="sm" color="secondary">
 							{$_('screen.receive.amount_received_sat', { values: { amount: formatSat(displayBalance) } })}
 						</Body>
-						<Button variant="primary" onclick={handleOkAndNavigateLightning}>
-							{#snippet children()}{$_('common.ok')}{/snippet}
-						</Button>
+						<div class="success-rows" role="list" aria-label={$_('screen.receive.success_title')}>
+							<!-- Row 1: Amount (always shown) -->
+							<div class="success-row" role="listitem">
+								<Body size="sm" color="secondary">{$_('screen.receive.success_amount_label')}</Body>
+								<Body size="sm" weight="semibold">
+									{formatSat(displayBalance)} {$_('screen.balance.sats')}
+								</Body>
+							</div>
+							<!-- Row 2: Mint (always shown — using default mint url) -->
+							<div class="success-row" role="listitem">
+								<Body size="sm" color="secondary">{$_('screen.receive.success_mint_label')}</Body>
+								<Body size="sm" weight="semibold" truncate>{mintUrl}</Body>
+							</div>
+							<!-- Row 3: Time (always shown) — NO preimage per MOD-013 correction -->
+							<div class="success-row" role="listitem">
+								<Body size="sm" color="secondary">{$_('screen.receive.success_time_label')}</Body>
+								<Body size="sm" weight="semibold">
+									<Time size={14} />
+									<span>{new Date().toLocaleTimeString()}</span>
+								</Body>
+							</div>
+						</div>
+						<button type="button" class="success-cta" onclick={handleOkAndNavigateLightning}>
+							{$_('common.ok')}
+						</button>
 					</div>
 				</Card>
 			{/if}
@@ -806,34 +831,54 @@
 
 			{#if cashuState === 'success' && cashuReceiveResult}
 				<Card variant="basic" padding="lg">
-					<div class="success-section">
+					<div class="success-section" data-flow="receive-cashu">
 						<span class="success-icon" aria-hidden="true">
 							<Check size={64} />
 						</span>
-						<Heading level="h3" align="center">{$_('screen.receive.token_received_success')}</Heading>
+						<Heading level="h3" align="center">{$_('screen.receive.success_title')}</Heading>
 						<div class="received-amount">
 							<span class="received-value">{formatSat(cashuReceiveResult.amount)}</span>
 							<span class="received-unit">{$_('screen.balance.sats')}</span>
 						</div>
-						<div class="success-details">
-							<div class="detail-row">
-								<Body size="sm" color="secondary">{$_('screen.send.mint_url_label')}</Body>
+						<div class="success-rows" role="list" aria-label={$_('screen.receive.success_title')}>
+							<!-- Row 1: Amount (always shown) -->
+							<div class="success-row" role="listitem">
+								<Body size="sm" color="secondary">{$_('screen.receive.success_amount_label')}</Body>
+								<Body size="sm" weight="semibold">
+									{formatSat(cashuReceiveResult.amount)} {$_('screen.balance.sats')}
+								</Body>
+							</div>
+							<!-- Row 2: Mint (always shown) -->
+							<div class="success-row" role="listitem">
+								<Body size="sm" color="secondary">{$_('screen.receive.success_mint_label')}</Body>
 								<Body size="sm" weight="semibold" truncate>{cashuReceiveResult.mint}</Body>
 							</div>
-							<div class="detail-row">
-								<Body size="sm" color="secondary">{$_('screen.receive.proof_count')}</Body>
-								<Body size="sm" weight="semibold">{cashuReceiveResult.proofCount}</Body>
-							</div>
-							{#if cashuReceiveResult.dleqCount !== undefined && cashuReceiveResult.dleqCount > 0}
-								<div class="detail-row">
-									<Body size="sm" color="secondary">DLEQ</Body>
-									<Body size="sm" weight="semibold">{cashuReceiveResult.dleqCount} verified</Body>
+							<!-- Row 3: Proofs (conditional — only if proofCount > 0) -->
+							{#if cashuReceiveResult.proofCount > 0}
+								<div class="success-row" role="listitem">
+									<Body size="sm" color="secondary">{$_('screen.receive.success_proofs_label')}</Body>
+									<Body size="sm" weight="semibold">{cashuReceiveResult.proofCount}</Body>
 								</div>
 							{/if}
+							<!-- Row 4: DLEQ (conditional — only if dleqCount > 0) -->
+							{#if cashuReceiveResult.dleqCount !== undefined && cashuReceiveResult.dleqCount > 0}
+								<div class="success-row" role="listitem">
+									<Body size="sm" color="secondary">{$_('screen.receive.success_dleq_label')}</Body>
+									<Body size="sm" weight="semibold">{cashuReceiveResult.dleqCount}</Body>
+								</div>
+							{/if}
+							<!-- Row 5: Time (always shown) -->
+							<div class="success-row" role="listitem">
+								<Body size="sm" color="secondary">{$_('screen.receive.success_time_label')}</Body>
+								<Body size="sm" weight="semibold">
+									<Time size={14} />
+									<span>{new Date().toLocaleTimeString()}</span>
+								</Body>
+							</div>
 						</div>
-						<Button variant="primary" onclick={handleOkAndNavigateCashu}>
-							{#snippet children()}{$_('common.ok')}{/snippet}
-						</Button>
+						<button type="button" class="success-cta" onclick={handleOkAndNavigateCashu}>
+							{$_('common.ok')}
+						</button>
 					</div>
 				</Card>
 			{/if}
@@ -930,11 +975,21 @@
 		-webkit-tap-highlight-color: transparent;
 	}
 
+	/* TASK-F-NEW-010: Active tab now uses a soft cyan background tint
+	   (rgba 0,188,212 @ 12%) to mark the active state, instead of the
+	   2px cyan bottom border from F-NEW-009. Text remains cyan, the
+	   Iconly SVG inside inherits currentColor → automatically cyan too.
+	   Dark theme variant uses a slightly stronger cyan 400 tint (18%). */
 	.tab-active {
-		background: var(--color-surface);
-		color: var(--color-text);
+		background: rgba(0, 188, 212, 0.12);
+		color: var(--color-primary);
 		font-weight: var(--font-weight-semibold);
 		box-shadow: var(--shadow-sm);
+	}
+
+	:global([data-theme='dark']) .tab-active {
+		background: rgba(38, 198, 218, 0.18);
+		color: var(--color-primary);   /* Cyan 400 on dark */
 	}
 
 	.tab-btn:focus-visible {
@@ -1079,8 +1134,30 @@
 		gap: var(--space-md);
 	}
 
+	/* TASK-169 / MOD-013: Spacing-only success rows (no borders, gap-based dividers) */
+	.success-rows {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+		width: 100%;
+		padding: var(--space-sm) 0;
+	}
+
+	.success-row {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: var(--space-sm);
+		padding: var(--space-sm) 0;
+	}
+
+	.success-row :global(svg) {
+		vertical-align: middle;
+		flex-shrink: 0;
+	}
+
 	.success-icon {
-		color: var(--color-success);
+		color: var(--color-primary);
 		animation: check-pop 0.5s ease-out;
 	}
 
@@ -1100,7 +1177,7 @@
 		font-family: var(--font-family);
 		font-size: var(--font-size-2xl);
 		font-weight: var(--font-weight-bold);
-		color: var(--color-success);
+		color: var(--color-primary);
 	}
 
 	.received-unit {
@@ -1110,12 +1187,40 @@
 		color: var(--color-text-secondary);
 	}
 
-	.success-details {
+	/* ─── Success CTA (Brand Cyan — F-V18-004) ─ */
+	.success-cta {
 		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
+		align-items: center;
+		justify-content: center;
 		width: 100%;
-		padding: var(--space-sm) 0;
+		padding: var(--space-md) var(--space-lg);
+		border: none;
+		border-radius: var(--radius-md);
+		font-family: var(--font-family);
+		font-size: var(--font-size-md);
+		font-weight: var(--font-weight-bold);
+		background: var(--color-primary);
+		color: var(--color-primary-contrast);
+		cursor: pointer;
+		transition: all var(--transition-fast);
+		-webkit-tap-highlight-color: transparent;
+		box-shadow: 0 2px 8px color-mix(in srgb, var(--color-primary) 35%, transparent);
+		min-height: 48px;
+	}
+
+	.success-cta:hover:not(:disabled) {
+		background: var(--color-primary-hover);
+		transform: translateY(-1px);
+		box-shadow: 0 4px 16px color-mix(in srgb, var(--color-primary) 40%, transparent);
+	}
+
+	.success-cta:active:not(:disabled) {
+		transform: scale(0.97);
+	}
+
+	.success-cta:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
 	}
 
 	/* ─── Cashu Input ─────────────────── */
@@ -1136,13 +1241,22 @@
 		background: var(--color-surface);
 		resize: vertical;
 		line-height: var(--line-height-normal);
-		transition: border-color var(--transition-fast);
+		transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 	}
 
+	/* TASK-F-NEW-009: Cashu token textarea focus — Cyan border + cyan halo (light theme).
+	   Matches Send.svelte .invoice-textarea:focus pattern from F-NEW-008. */
 	.token-textarea:focus {
-		border-color: var(--color-border-focus);
 		outline: none;
-		box-shadow: 0 0 0 3px rgba(0, 188, 212, 0.15);
+		border-color: var(--color-primary);
+		box-shadow: 0 0 0 3px rgba(0, 188, 212, 0.12);
+	}
+
+	/* TASK-F-NEW-009: Dark-theme focus halo — uses brighter cyan 400 (#26c6da) + slightly stronger alpha
+	   Required :global() wrapper so vite-plugin-svelte does not tree-shake the dark variant. */
+	:global([data-theme='dark']) .token-textarea:focus {
+		border-color: var(--color-primary);
+		box-shadow: 0 0 0 3px rgba(38, 198, 218, 0.18);
 	}
 
 	.token-textarea:disabled {
@@ -1161,6 +1275,14 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-md);
+	}
+
+	/* TASK-F-NEW-009: Cashu token amount (preview section, first row) — Cyan highlight.
+	   Target via :global() to reach the Body child component's <p data-weight="semibold"> element.
+	   Receive.svelte's .preview-section holds the Cashu token preview (amount/mint/proofs). */
+	.preview-section .detail-row:first-child :global([data-weight='semibold']) {
+		color: var(--color-primary);
+		font-weight: var(--font-weight-bold);
 	}
 
 	.preview-details {

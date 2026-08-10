@@ -544,46 +544,50 @@
 	}
 
 	/* Dark theme (default) */
-	/* TX icon — Send (Cyan / LnwCash brand) */
+	/* TX icon — Send (Cyan / LnwCash brand) — soft BG both themes */
 	.tx-type-icon.tx-send {
-		background: #00bcd4;
-		color: #fff;
+		background: rgba(0, 188, 212, 0.22);
+		color: var(--color-primary);
 	}
 	/* TX icon — Receive (Teal / cool positive) */
 	.tx-type-icon.tx-receive {
-		background: #14b8a6;
-		color: #fff;
+		background: rgba(20, 184, 166, 0.22);
+		color: var(--color-secondary);
 	}
 
-	/* Protocol — Lightning (Cyan / same as Send) */
+	[data-theme='dark'] .tx-type-icon.tx-receive {
+		background: rgba(77, 182, 172, 0.18);
+		color: var(--color-secondary-light);
+	}
+
+	:global([data-theme='dark']) .tx-type-icon.tx-send {
+		background: rgba(38, 198, 218, 0.28);
+		color: var(--color-primary-light);
+	}
+
+	/* Protocol — Lightning (soft BG, accessible both themes) */
 	.tx-protocol-badge.protocol-lightning {
-		background: #00bcd4;
-		color: #fff;
+		background: rgba(0, 188, 212, 0.25);
+		color: var(--color-primary);
 	}
-	/* Protocol — Cashu (Violet) */
+	/* Protocol — Cashu (soft BG, accessible both themes) */
 	.tx-protocol-badge.protocol-cashu {
-		background: #7c3aed;
-		color: #fff;
+		background: rgba(124, 58, 237, 0.22);
+		color: var(--color-protocol-lightning);
 	}
 
-	/* Light theme overrides */
-	@media (prefers-color-scheme: light) {
-		.tx-type-icon.tx-send {
-			background: rgba(0, 188, 212, 0.12);
-			color: #00bcd4;
-		}
-		.tx-type-icon.tx-receive {
-			background: rgba(20, 184, 166, 0.12);
-			color: #14b8a6;
-		}
-		.tx-protocol-badge.protocol-lightning {
-			background: rgba(0, 188, 212, 0.12);
-			color: #00bcd4;
-		}
-		.tx-protocol-badge.protocol-cashu {
-			background: rgba(124, 58, 237, 0.12);
-			color: #7c3aed;
-		}
+	/* Light theme overrides — removed tx-send override (default rule handles light now) */
+
+	/* Dark theme variant — :global() escapes Svelte scoped-CSS analyzer
+	   (which otherwise tree-shakes [data-theme='dark'] as 'unused' because
+	   data-theme is set on documentElement, not detectable statically). */
+	:global([data-theme='dark']) .tx-protocol-badge.protocol-lightning {
+		background: rgba(38, 198, 218, 0.18);
+		color: var(--color-primary-light);
+	}
+	:global([data-theme='dark']) .tx-protocol-badge.protocol-cashu {
+		background: rgba(183, 148, 244, 0.18);
+		color: var(--color-protocol-lightning);
 	}
 
 	.tx-info {
@@ -609,7 +613,7 @@
 	.tx-protocol-badge {
 		font-size: var(--font-size-xs);
 		font-weight: var(--font-weight-medium);
-		color: #ffffff;
+		color: var(--color-white);
 		padding: 1px 6px;
 		letter-spacing: 0.02em;
 		border-radius: var(--radius-sm);
@@ -631,10 +635,16 @@
 		white-space: nowrap;
 	}
 	.tx-status-badge.status-confirmed {
-		background: #14b8a6;
+		background: rgba(20, 184, 166, 0.22);
+		color: var(--color-secondary);
+	}
+
+	[data-theme='dark'] .tx-status-badge.status-confirmed {
+		background: rgba(77, 182, 172, 0.18);
+		color: var(--color-secondary-light);
 	}
 	.tx-status-badge.status-failed {
-		background: #ef4444;
+		background: var(--color-error);
 	}
 
 	/* TASK-149 (CV17-001): Pending indicator — Time icon + text */
@@ -660,13 +670,9 @@
 
 	/* Light theme — muted backgrounds */
 	@media (prefers-color-scheme: light) {
-		.tx-status-badge.status-confirmed {
-			background: rgba(20, 184, 166, 0.12);
-			color: #14b8a6;
-		}
 		.tx-status-badge.status-failed {
 			background: rgba(239, 68, 68, 0.12);
-			color: #ef4444;
+			color: var(--color-error);
 		}
 	}
 

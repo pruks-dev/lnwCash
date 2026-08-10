@@ -93,9 +93,8 @@ describe('TASK-061 — Iconly 3.0 Integration', () => {
 		expect(svg?.getAttribute('width')).toBe('28');
 		expect(svg?.getAttribute('height')).toBe('28');
 		expect(svg?.getAttribute('stroke')).toBe('#ffffff');
-		// Verify scan paths
-		const paths = svg?.querySelectorAll('path');
-		expect(paths?.length).toBeGreaterThanOrEqual(4);
+		// Verify component identity (v23): geometry-agnostic — name from IconName union
+		expect(Scan.name).toBe('Scan');
 	});
 
 	it('should have Iconly Bold style characteristics (stroke-width=2, round caps)', () => {

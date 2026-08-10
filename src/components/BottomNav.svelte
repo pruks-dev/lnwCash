@@ -10,9 +10,8 @@
 	// TASK-050 Components
 	import Nav from '$lib/components/ui/Nav.svelte';
 
-	// TASK-050 Icons
-	import Wallet from '$lib/components/icons/Wallet.svelte';
-	import History from '$lib/components/icons/History.svelte';
+	// TASK-159 Iconly wrapper — unified icon system
+	import Iconly from '$lib/iconly/Iconly.svelte';
 
 	// FAB QR Scan (TASK-056)
 	import Fab from './Fab.svelte';
@@ -54,11 +53,11 @@
 
 <!-- Stable snippet blocks — referenced by identifier in $derived above -->
 {#snippet walletIcon()}
-	<Wallet size={24} />
+	<Iconly name="Wallet" size={24} />
 {/snippet}
 
 {#snippet historyIcon()}
-	<History size={24} />
+	<Iconly name="History" size={24} />
 {/snippet}
 
 <div class="bottom-nav-shell">

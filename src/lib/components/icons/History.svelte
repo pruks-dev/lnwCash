@@ -1,7 +1,8 @@
 <script lang="ts">
 	/**
 	 * Icon: History — Solar Linear (verified, api.iconify.design/solar)
-	 * CC BY 4.0 — stroke-only paths matching Wallet's stroke/fill style
+	 * CC BY 4.0
+	 * MODIFIED from Solar Linear history-linear (stroke-only curved arrow)
 	 */
 	interface Props {
 		size?: number;

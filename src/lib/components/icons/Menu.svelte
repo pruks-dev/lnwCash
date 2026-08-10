@@ -1,6 +1,8 @@
 <script lang="ts">
 	/**
-	 * Icon: Menu — Iconly 3.0 Bold Hamburger Menu
+	 * Icon: Menu
+	 * Source: Solar Linear — hamburger-menu-linear (verified via api.iconify.design/solar)
+	 * License: CC BY 4.0 — https://creativecommons.org/licenses/by/4.0/
 	 * Three horizontal lines, rounded caps, ☰ style
 	 */
 	interface Props {
@@ -18,14 +20,12 @@
 	viewBox="0 0 24 24"
 	fill="none"
 	stroke={color}
-	stroke-width="2"
+	stroke-width="1.5"
 	stroke-linecap="round"
 	stroke-linejoin="round"
 	class={className}
 	aria-hidden="true"
 	role="img"
 >
-	<path d="M3 7H21" />
-	<path d="M3 12H21" />
-	<path d="M3 17H21" />
+	<path d="M20 7H4m16 5H4m16 5H4" />
 </svg>

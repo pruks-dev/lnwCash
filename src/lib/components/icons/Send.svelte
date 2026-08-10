@@ -2,7 +2,7 @@
 	/**
 	 * Icon: Send — Diagonal up-right arrow (↗)
 	 * Solar Linear style (api.iconify.design/solar, CC BY 4.0)
-	 * Modified to diagonal for visual distinction between Send/Receive
+	 * MODIFIED from Solar Linear arrow-up-linear (M5 19l14-14...)
 	 */
 	interface Props {
 		size?: number;

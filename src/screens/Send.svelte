@@ -40,6 +40,7 @@
 	import SendIcon from '$lib/components/icons/Send.svelte';
 	import Copy from '$lib/components/icons/Copy.svelte';
 	import Check from '$lib/components/icons/Check.svelte';
+	import Time from '$lib/components/icons/Time.svelte';
 	import ArrowLeft from '$lib/components/icons/ArrowLeft.svelte';
 	import Close from '$lib/components/icons/Close.svelte';
 
@@ -558,11 +559,11 @@
 			{:else if lightningState === 'success'}
 				<div class="success-expand">
 					<Card variant="basic" padding="lg">
-						<div class="success-section">
+						<div class="success-section" data-flow="send-lightning">
 							<span class="success-icon" aria-hidden="true">
 								<Check size={64} />
 							</span>
-							<Heading level="h3" align="center">{$_('screen.send.success_payment')}</Heading>
+							<Heading level="h3" align="center">{$_('screen.send.success_title')}</Heading>
 							<div class="spent-amount">
 								<span class="spent-value">{formatSat(displaySpentAmount)}</span>
 								<span class="spent-unit">{$_('screen.balance.sats')}</span>
@@ -570,35 +571,53 @@
 							<Body size="sm" color="secondary">
 								{$_('screen.send.amount_sent', { values: { amount: formatSat(displaySpentAmount) } })}
 							</Body>
-							<div class="payment-breakdown">
-								<div class="detail-row">
-									<Body size="sm" color="secondary">{$_('screen.send.amount')}</Body>
-									<Body size="sm" weight="semibold">{formatSat(paidInvoiceAmount)} {$_('screen.balance.sats')}</Body>
+							<div class="success-rows" role="list" aria-label={$_('screen.send.success_title')}>
+								<!-- Row 1: Amount (always shown) -->
+								<div class="success-row" role="listitem">
+									<Body size="sm" color="secondary">{$_('screen.send.success_amount_label')}</Body>
+									<Body size="sm" weight="semibold">
+										{formatSat(paidInvoiceAmount)} {$_('screen.balance.sats')}
+									</Body>
 								</div>
+								<!-- Row 2: Fee (conditional — only if fee > 0) -->
 								{#if paidFee > 0}
-									<div class="detail-row">
-										<Body size="sm" color="secondary">{$_('screen.send.fee')}</Body>
-										<Body size="sm" weight="semibold">{formatSat(paidFee)} {$_('screen.balance.sats')}</Body>
-									</div>
-									<div class="detail-row detail-row-total">
-										<Body size="md" weight="semibold">{$_('screen.send.total')}</Body>
-										<Body size="md" weight="bold">{formatSat(paidInvoiceAmount + paidFee)} {$_('screen.balance.sats')}</Body>
-									</div>
-								{/if}
-							</div>
-							{#if lightningResult?.preimage}
-								<div class="detail-row">
-									<Body size="sm" color="secondary">Preimage</Body>
-									<div class="mono-text">
-										<Body size="sm" weight="semibold" truncate>
-											{lightningResult.preimage.substring(0, 16)}...
+									<div class="success-row" role="listitem">
+										<Body size="sm" color="secondary">{$_('screen.send.success_fee_label')}</Body>
+										<Body size="sm" weight="semibold">
+											{formatSat(paidFee)} {$_('screen.balance.sats')}
 										</Body>
 									</div>
+									<!-- Row 3: Total (conditional — only if fee > 0) -->
+									<div class="success-row" role="listitem">
+										<Body size="sm" weight="semibold">{$_('screen.send.success_total_label')}</Body>
+										<Body size="sm" weight="bold">
+											{formatSat(paidInvoiceAmount + paidFee)} {$_('screen.balance.sats')}
+										</Body>
+									</div>
+								{/if}
+								<!-- Row 4: Preimage (conditional — only if preimage available) -->
+								{#if lightningResult?.preimage}
+									<div class="success-row" role="listitem">
+										<Body size="sm" color="secondary">{$_('screen.send.success_preimage_label')}</Body>
+										<div class="mono-text">
+											<Body size="sm" weight="semibold" truncate>
+												{lightningResult.preimage.substring(0, 16)}...
+											</Body>
+										</div>
+									</div>
+								{/if}
+								<!-- Row 5: Time (always shown) -->
+								<div class="success-row" role="listitem">
+									<Body size="sm" color="secondary">{$_('screen.send.success_time_label')}</Body>
+									<Body size="sm" weight="semibold">
+										<Time size={14} />
+										<span>{new Date().toLocaleTimeString()}</span>
+									</Body>
 								</div>
-							{/if}
-							<Button variant="primary" onclick={handleOkAndNavigate}>
-								{#snippet children()}{$_('common.ok')}{/snippet}
-							</Button>
+							</div>
+							<button type="button" class="success-cta" onclick={handleOkAndNavigate}>
+								{$_('common.ok')}
+							</button>
 						</div>
 					</Card>
 				</div>
@@ -760,13 +779,16 @@
 
 			{#if cashuState === 'success' && cashuToken}
 				<Card variant="basic" padding="lg">
-					<div class="success-section">
+					<div class="success-section" data-flow="send-cashu">
 						<span class="success-icon" aria-hidden="true">
 							<Check size={64} />
 						</span>
-						<Heading level="h3" align="center">{$_('screen.send.token_created')}</Heading>
+						<Heading level="h3" align="center">{$_('screen.send.success_title')}</Heading>
 
-						<QRDisplay data={cashuToken} size={300} label={cashuToken.substring(0, 30) + '...'} />
+						<!-- TASK-169 / MOD-013: Token QR at TOP for Send Cashu (prominent placement) -->
+						<div class="token-qr-top" aria-label={$_('screen.send.success_token_qr_caption')}>
+							<QRDisplay data={cashuToken} size={300} label={$_('screen.send.success_token_qr_caption')} />
+						</div>
 
 						<div class="token-display">
 							<textarea
@@ -774,20 +796,53 @@
 								class="token-output"
 								value={cashuToken}
 								rows={3}
-								aria-label="Cashu token"
+								aria-label={$_('screen.send.success_token_label')}
 							></textarea>
-							<Button variant="secondary" size="sm" onclick={handleCopyToken}>
-								{#snippet children()}<Copy size={14} /> {$_('common.copy')}{/snippet}
-							</Button>
+							<button type="button" class="success-copy-btn" onclick={handleCopyToken}>
+								<Copy size={14} /> {$_('screen.send.success_token_copy')}
+							</button>
 						</div>
 
-						<Body size="sm" color="secondary">
-							{$_('screen.send.share_token')}
-						</Body>
+						<div class="success-rows" role="list" aria-label={$_('screen.send.success_title')}>
+							<!-- Row 1: Amount (always shown) -->
+							<div class="success-row" role="listitem">
+								<Body size="sm" color="secondary">{$_('screen.send.success_amount_label')}</Body>
+								<Body size="sm" weight="semibold">
+									{formatSat(parseInt(cashuAmount) || 0)} {$_('screen.balance.sats')}
+								</Body>
+							</div>
+							<!-- Row 2: Mint (always shown — using default mint url) -->
+							<div class="success-row" role="listitem">
+								<Body size="sm" color="secondary">{$_('screen.send.success_mint_label')}</Body>
+								<Body size="sm" weight="semibold" truncate>{mintUrl}</Body>
+							</div>
+							<!-- Row 3: Proofs (conditional — only if count known) -->
+							{#if cashuSendResult?.amount}
+								<div class="success-row" role="listitem">
+									<Body size="sm" color="secondary">{$_('screen.send.success_proofs_label')}</Body>
+									<Body size="sm" weight="semibold">{formatSat(cashuSendResult.amount)} {$_('screen.balance.sats')}</Body>
+								</div>
+							{/if}
+							<!-- Row 4: Token[Copy] (always shown) -->
+							<div class="success-row" role="listitem">
+								<Body size="sm" color="secondary">{$_('screen.send.success_token_label')}</Body>
+								<Body size="sm" weight="semibold" truncate>
+									{cashuToken.substring(0, 24)}...
+								</Body>
+							</div>
+							<!-- Row 5: Time (always shown) -->
+							<div class="success-row" role="listitem">
+								<Body size="sm" color="secondary">{$_('screen.send.success_time_label')}</Body>
+								<Body size="sm" weight="semibold">
+									<Time size={14} />
+									<span>{new Date().toLocaleTimeString()}</span>
+								</Body>
+							</div>
+						</div>
 
-						<Button variant="primary" onclick={handleOkAndNavigate}>
-							{#snippet children()}{$_('common.ok')}{/snippet}
-						</Button>
+						<button type="button" class="success-cta" onclick={handleOkAndNavigate}>
+							{$_('common.ok')}
+						</button>
 					</div>
 				</Card>
 			{/if}
@@ -924,11 +979,21 @@
 		-webkit-tap-highlight-color: transparent;
 	}
 
+	/* TASK-F-NEW-010: Active tab now uses a soft cyan background tint
+	   (rgba 0,188,212 @ 12%) to mark the active state, instead of the
+	   2px cyan bottom border from F-NEW-008. Text remains cyan, the
+	   Iconly SVG inside inherits currentColor → automatically cyan too.
+	   Dark theme variant uses a slightly stronger cyan 400 tint (18%). */
 	.tab-active {
-		background: var(--color-surface);
-		color: var(--color-text);
+		background: rgba(0, 188, 212, 0.12);
+		color: var(--color-primary);
 		font-weight: var(--font-weight-semibold);
 		box-shadow: var(--shadow-sm);
+	}
+
+	:global([data-theme='dark']) .tab-active {
+		background: rgba(38, 198, 218, 0.18);
+		color: var(--color-primary);   /* Cyan 400 on dark */
 	}
 
 	.tab-btn:focus-visible {
@@ -960,13 +1025,20 @@
 		background: var(--color-surface);
 		resize: vertical;
 		line-height: var(--line-height-normal);
-		transition: border-color var(--transition-fast);
+		transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 	}
 
 	.invoice-textarea:focus {
-		border-color: var(--color-border-focus);
 		outline: none;
-		box-shadow: 0 0 0 3px rgba(0, 188, 212, 0.15);
+		border-color: var(--color-primary);
+		box-shadow: 0 0 0 3px rgba(0, 188, 212, 0.12);
+	}
+
+	/* TASK-F-NEW-008: Dark-theme focus halo — uses brighter cyan 400 (#26c6da) + slightly stronger alpha
+	   Required :global() wrapper so vite-plugin-svelte does not tree-shake the dark variant. */
+	:global([data-theme='dark']) .invoice-textarea:focus {
+		border-color: var(--color-primary);
+		box-shadow: 0 0 0 3px rgba(38, 198, 218, 0.18);
 	}
 
 	.invoice-textarea:disabled {
@@ -1057,6 +1129,14 @@
 		border-bottom: none;
 		padding-top: var(--space-md);
 		margin-top: var(--space-sm);
+	}
+
+	/* TASK-F-NEW-008: Lightning invoice amount (preview section, first row) — Cyan highlight.
+	   Target via :global() to reach the Body child component's <p data-weight="semibold"> element.
+	   Scoped to .preview-section (Lightning tab only — Cashu uses .preview-details, not .preview-section). */
+	.preview-section .detail-row:first-child :global([data-weight='semibold']) {
+		color: var(--color-primary);
+		font-weight: var(--font-weight-bold);
 	}
 
 	.detail-row:last-child {
@@ -1185,13 +1265,32 @@
 	}
 
 	/* TASK-161 (F-V18-007): Spacing-only design — border-bottom removed in success state, padding-bottom added to preserve visual rhythm */
-	.success-section .detail-row {
-		border-bottom: none;
-		padding-bottom: 0.75rem; /* 12px — matches the visual weight of the removed 1px border + 4px existing padding */
+	/* TASK-169 (MOD-013): success-section .detail-row removed — replaced by .success-row (Option A) */
+
+	/* TASK-169 / MOD-013: Spacing-only success rows (no borders, gap-based dividers) */
+	.success-rows {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+		width: 100%;
+		padding: var(--space-sm) 0;
+	}
+
+	.success-row {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: var(--space-sm);
+		padding: var(--space-sm) 0;
+	}
+
+	.success-row :global(svg) {
+		vertical-align: middle;
+		flex-shrink: 0;
 	}
 
 	.success-icon {
-		color: var(--color-success);
+		color: var(--color-primary);
 		animation: check-pop 0.5s ease-out;
 	}
 
@@ -1211,7 +1310,7 @@
 		font-family: var(--font-family);
 		font-size: var(--font-size-2xl);
 		font-weight: var(--font-weight-bold);
-		color: var(--color-success);
+		color: var(--color-primary);
 	}
 
 	.spent-unit {
@@ -1233,15 +1332,86 @@
 		color: var(--color-error);
 	}
 
-	/* ─── Payment Breakdown ──────────── */
-	/* TASK-161 (F-V18-007): Spacing-only design — border-top removed, margin-top increased to preserve visual rhythm */
-	.payment-breakdown {
+	/* ─── Token QR (TOP) — Send Cashu ───── */
+	.token-qr-top {
 		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
+		justify-content: center;
+		padding: var(--space-md) 0;
 		width: 100%;
-		padding-top: var(--space-md);
-		margin-top: var(--space-md);
+	}
+
+	/* ─── Copy Button (Token) ─────────────── */
+	.success-copy-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: var(--space-xs);
+		padding: var(--space-sm) var(--space-md);
+		border: 1.5px solid var(--color-primary);
+		border-radius: var(--radius-md);
+		background: transparent;
+		color: var(--color-primary);
+		font-family: var(--font-family);
+		font-size: var(--font-size-sm);
+		font-weight: var(--font-weight-semibold);
+		cursor: pointer;
+		transition: all var(--transition-fast);
+		min-height: 44px;
+		-webkit-tap-highlight-color: transparent;
+	}
+
+	.success-copy-btn:hover:not(:disabled) {
+		background: var(--color-primary);
+		color: var(--color-primary-contrast);
+	}
+
+	.success-copy-btn:active:not(:disabled) {
+		transform: scale(0.97);
+	}
+
+	.success-copy-btn:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
+	}
+
+	.success-copy-btn :global(svg) {
+		flex-shrink: 0;
+	}
+
+	/* ─── Success CTA (Brand Cyan — F-V18-004) ─ */
+	.success-cta {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 100%;
+		padding: var(--space-md) var(--space-lg);
+		border: none;
+		border-radius: var(--radius-md);
+		font-family: var(--font-family);
+		font-size: var(--font-size-md);
+		font-weight: var(--font-weight-bold);
+		background: var(--color-primary);
+		color: var(--color-primary-contrast);
+		cursor: pointer;
+		transition: all var(--transition-fast);
+		-webkit-tap-highlight-color: transparent;
+		box-shadow: 0 2px 8px color-mix(in srgb, var(--color-primary) 35%, transparent);
+		min-height: 48px;
+	}
+
+	.success-cta:hover:not(:disabled) {
+		background: var(--color-primary-hover);
+		transform: translateY(-1px);
+		box-shadow: 0 4px 16px color-mix(in srgb, var(--color-primary) 40%, transparent);
+	}
+
+	.success-cta:active:not(:disabled) {
+		transform: scale(0.97);
+	}
+
+	.success-cta:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
 	}
 
 	/* ─── Token Output ────────────────── */
@@ -1265,7 +1435,7 @@
 		line-height: var(--line-height-normal);
 	}
 
-	/* ─── Confirm Dialog ──────────────── */
+	/* ─── Confirm Dialog (Brand Cyan — TASK-175) ── */
 	.confirm-dialog {
 		display: flex;
 		flex-direction: column;
@@ -1294,15 +1464,15 @@
 		font-family: var(--font-family);
 		font-size: var(--font-size-sm);
 		font-weight: var(--font-weight-bold);
-		background: var(--color-error);
-		color: var(--color-error-contrast);
+		background: var(--color-primary);
+		color: var(--color-primary-contrast);
 		cursor: pointer;
 		transition: all var(--transition-fast);
 		min-height: 44px;
 	}
 
 	.danger-btn:hover:not(:disabled) {
-		background: var(--color-error-hover);
+		background: var(--color-primary-hover);
 	}
 
 	.danger-btn:active:not(:disabled) {
@@ -1310,7 +1480,7 @@
 	}
 
 	.danger-btn:focus-visible {
-		outline: 2px solid var(--color-error);
+		outline: 2px solid var(--color-primary);
 		outline-offset: 2px;
 	}
 

@@ -19,10 +19,10 @@ html {
 	--color-primary-dark: #00838f;
 	--color-primary-contrast: #ffffff;
 
-	/* Colors — Secondary */
-	--color-secondary: #00695c;
-	--color-secondary-hover: #004d40;
-	--color-secondary-light: #26a69a;
+	/* Colors — Secondary (TASK-176 — was Teal 900/950/400, now Teal 600/700/300 — bridges cyan brand + green semantic) */
+	--color-secondary: #00897b;
+	--color-secondary-hover: #00796b;
+	--color-secondary-light: #4db6ac;
 	--color-secondary-contrast: #ffffff;
 
 	/* Colors — Accent */
@@ -30,6 +30,13 @@ html {
 	--color-accent-hover: #e65100;
 	--color-accent-light: #ffa726;
 	--color-accent-contrast: #ffffff;
+
+	/* Colors — Protocol (TASK-167) */
+	--color-protocol-lightning: #7c3aed;
+	--color-protocol-lightning-light: rgba(124, 58, 237, 0.12);
+
+	/* Colors — Plain white (TASK-167) */
+	--color-white: #ffffff;
 
 	/* Colors — Surface & Background */
 	--color-surface: #ffffff;
@@ -47,8 +54,11 @@ html {
 	/* Colors — Semantic */
 	--color-error: #d32f2f;
 	--color-error-light: #ffcdd2;
+	--color-error-hover: #b71c1c;       /* darker red for hover state */
+	--color-error-contrast: #ffffff;    /* text color on error background */
 	--color-success: #2e7d32;
 	--color-success-light: #c8e6c9;
+	--color-success-brand: #00897b;  /* Teal 600 — bridges cyan brand + green semantic */
 	--color-warning: #f57f17;
 	--color-warning-light: #fff9c4;
 	--color-info: #0288d1;
@@ -131,6 +141,13 @@ html {
 	--color-accent-light: #ffcc80;
 	--color-accent-contrast: #121212;
 
+	/* Colors — Protocol (TASK-167) */
+	--color-protocol-lightning: #b794f4;
+	--color-protocol-lightning-light: rgba(183, 148, 244, 0.18);
+
+	/* Colors — Plain white (TASK-167) */
+	--color-white: #ffffff;
+
 	--color-surface: #1e1e2e;
 	--color-surface-variant: #2a2a3c;
 	--color-surface-raised: #282840;
@@ -144,8 +161,11 @@ html {
 
 	--color-error: #ef5350;
 	--color-error-light: #4a2020;
+	--color-error-hover: #ef5350;       /* lighter red — visible on dark bg */
+	--color-error-contrast: #ffffff;    /* text on error bg (dark) */
 	--color-success: #66bb6a;
 	--color-success-light: #1b3a1b;
+	--color-success-brand: #4db6ac;  /* Teal 300 — lighter for dark mode contrast */
 	--color-warning: #ffb74d;
 	--color-warning-light: #3d3520;
 	--color-info: #42a5f5;
