@@ -79,6 +79,9 @@
 	let pendingAmount: number = $state(0);
 	let pendingTxId: string | null = $state(null);
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
+	// Re-entrancy guard: prevents double-submit of the mint when overlapping
+	// poll callbacks both observe the quote as PAID (intermittent 400).
+	let mintCompleting: boolean = $state(false);
 
 	// ─── Cashu state ─────────────────────────────────────────
 	type CashuState = 'idle' | 'validating' | 'preview' | 'loading' | 'success' | 'error';
@@ -308,6 +311,7 @@
 			// Phase 1c: Start polling for payment
 			lightningState = 'polling';
 			pollCount = 0;
+			mintCompleting = false;
 			startQuotePolling();
 		} catch (e) {
 			lightningError = mapMintError(e);
@@ -325,6 +329,7 @@
 		if (pollTimer) clearInterval(pollTimer);
 
 		pollTimer = setInterval(async () => {
+			if (mintCompleting) return;
 			pollCount++;
 			if (pollCount >= 60) {
 				// Timeout after ~3 minutes
@@ -338,7 +343,11 @@
 
 			try {
 				const state = await getMintQuoteState(mintUrl.trim(), pendingQuoteId);
-				if (state === 'PAID' || state === 'ISSUED') {
+				// Re-check after the await: a slower overlapping callback may have
+				// already started completing the mint while this one was in flight.
+				if (mintCompleting) return;
+				if (state === 'PAID') {
+					mintCompleting = true;
 					clearInterval(pollTimer!);
 					pollTimer = null;
 					await completeMintAfterPayment();
@@ -418,6 +427,7 @@
 			};
 
 			lightningState = 'success';
+			mintCompleting = false;
 			animateBalance(0, pendingAmount);
 			showToast($_('screen.receive.success_received'), 'success');
 		} catch (e) {
@@ -430,6 +440,7 @@
 			}
 			lightningError = mapMintError(e);
 			lightningState = 'error';
+			mintCompleting = false;
 			showToast(lightningError, 'error');
 
 			// Mark pending transaction as failed

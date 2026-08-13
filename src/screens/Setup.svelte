@@ -71,11 +71,11 @@
 
 	// ─── Wizard model ─────────────────────────────────────────
 	type SetupMode = 'create' | 'recover' | 'unlock';
-	type WizardStep = 'welcome' | 'seed' | 'verify' | 'pin' | 'done';
+	type WizardStep = 'welcome' | 'seed' | 'verify' | 'pin' | 'restoring' | 'done';
 	type PinEntryMode = 'keypad' | 'input';
 
 	const CREATE_STEPS: WizardStep[] = ['welcome', 'seed', 'verify', 'pin', 'done'];
-	const RECOVER_STEPS: WizardStep[] = ['welcome', 'seed', 'pin', 'done'];
+	const RECOVER_STEPS: WizardStep[] = ['welcome', 'seed', 'pin', 'restoring', 'done'];
 
 	// TASK-209 (D5): PIN is 4 digits (was 6)
 	const PIN_LENGTH = 4;
@@ -108,6 +108,9 @@
 	let restoredProofs: number = $state(0);
 	// TASK-217: per-mint restore progress (which mint is being restored)
 	let restoreProgress: string = $state('');
+	// Cached BIP39 seed bytes — reused by the "retry" action on the blocking
+	// 'restoring' step (seed state is cleared at finalization for security).
+	let restoreSeedBytes: Uint8Array | null = null;
 
 	// PIN state (TASK-209 preserved)
 	let pin: string = $state('');
@@ -128,11 +131,15 @@
 	const stepIndex = $derived(Math.max(0, wizardSteps.indexOf(step)));
 	const isUnlock = $derived((mode as SetupMode) === 'unlock');
 
+	// 'restoring' is a transient processing state, not a user step — hide it
+	// from the numbered stepper (recover flow still shows welcome/seed/pin/done).
 	const stepperSteps: StepperStep[] = $derived(
-		wizardSteps.map((s) => ({
-			id: s,
-			label: $_('screen.setup.step_label_' + s)
-		}))
+		wizardSteps
+			.filter((s) => s !== 'restoring')
+			.map((s) => ({
+				id: s,
+				label: $_('screen.setup.step_label_' + s)
+			}))
 	);
 
 	// TASK-208: whether the "next" control is allowed at the current step.
@@ -251,6 +258,14 @@
 		return () => window.removeEventListener('beforeunload', beforeUnload);
 	});
 
+	// Auto-advance the blocking 'restoring' step once the NUT-9 restore
+	// completes. On error we stay on 'restoring' (user retries or waits).
+	$effect(() => {
+		if (step === 'restoring' && restoreStatus === 'done') {
+			step = 'done';
+		}
+	});
+
 	// ─── Helpers ─────────────────────────────────────────────
 	function clearError() {
 		error = '';
@@ -262,6 +277,7 @@
 		seed = '';
 		recoverWords = emptyRecoverWords();
 		seedError = '';
+		restoreSeedBytes = null;
 	});
 
 	// ─── TASK-209 (D5): Lockout + sharded entry helpers ───────
@@ -374,7 +390,10 @@
 			// Unlock immediately
 			await unlockWallet(pin);
 			clearWizard();
-			step = 'done';
+			// Recover blocks on the 'restoring' step until the NUT-9 fund restore
+			// completes (user must not leave while restore is running); create
+			// goes straight to 'done'.
+			step = mode === 'recover' ? 'restoring' : 'done';
 			// TASK-208 (D4): clear phrase from memory once wallet is finalized
 			seed = '';
 			recoverWords = emptyRecoverWords();
@@ -439,6 +458,7 @@
 		seed = generateMnemonic();
 		recoverWords = emptyRecoverWords();
 		seedError = '';
+		restoreSeedBytes = null;
 		step = 'seed';
 	}
 
@@ -448,6 +468,7 @@
 		seed = '';
 		recoverWords = emptyRecoverWords();
 		seedError = '';
+		restoreSeedBytes = null;
 		step = 'seed';
 	}
 
@@ -569,6 +590,7 @@
 		} catch {
 			return;
 		}
+		restoreSeedBytes = seedBytes;
 		if (mode === 'recover') {
 			void restoreFunds(seedBytes);
 		}
@@ -605,6 +627,9 @@
 
 	function goBack() {
 		clearError();
+		// Block back navigation while the NUT-9 restore is running — the user
+		// must wait for restore to complete (or fail and retry).
+		if (step === 'restoring') return;
 		const idx = stepIndex;
 		if (idx > 0) {
 			step = wizardSteps[idx - 1];
@@ -614,6 +639,14 @@
 
 	function startUsingWallet() {
 		onWalletReady?.(getWalletStatus());
+	}
+
+	// Retry the NUT-9 restore from the blocking 'restoring' step (recover flow).
+	// Reuses the cached seed bytes (the seed string itself is already cleared).
+	function retryRestore() {
+		if (restoreSeedBytes) {
+			void restoreFunds(restoreSeedBytes);
+		}
 	}
 
 	// ─── Language toggle (TASK-207 / D1.1) ───────────────────
@@ -634,7 +667,7 @@
 
 	function persistWizard() {
 		try {
-			if (mode === 'unlock' || step === 'welcome' || step === 'done') {
+			if (mode === 'unlock' || step === 'welcome' || step === 'done' || step === 'restoring') {
 				sessionStorage.removeItem(RESUME_KEY);
 				return;
 			}
@@ -671,6 +704,7 @@
 		step === 'seed' ? $_('screen.setup.seed_title') :
 		step === 'verify' ? $_('screen.setup.verify_title') :
 		step === 'pin' ? $_('screen.register.title') :
+		step === 'restoring' ? $_('screen.setup.restoring_title') :
 		$_('screen.setup.done_title')
 	);
 </script>
@@ -807,6 +841,7 @@
 					{$_('screen.setup.title')}
 				</Body>
 
+			{#if step !== 'restoring'}
 				<ProgressStepper
 					steps={stepperSteps}
 					currentIndex={stepIndex}
@@ -816,6 +851,7 @@
 					onBack={stepIndex > 0 ? goBack : undefined}
 					onNext={step === 'seed' ? continueFromSeed : undefined}
 				/>
+			{/if}
 
 				<Heading level="h2" align="center">{stepTitle}</Heading>
 
@@ -978,45 +1014,57 @@
 						</Button>
 					</div>
 
-				{:else if step === 'done'}
-					<div class="form">
-						<Body size="sm" color="secondary" align="center">
-							{$_('screen.setup.done_message')}
-						</Body>
-
-						<!-- TASK-208: NUT-9 fund restore status (recover path only) -->
-						{#if mode === 'recover' && restoreStatus !== 'idle'}
-							<div class="restore-status" role="status" aria-live="polite">
-							{#if restoreStatus === 'running'}
-								<Body size="sm" color="secondary">{$_('recovery.restore.running')}</Body>
-								{#if restoreProgress}
-									<Body size="sm" color="secondary">{restoreProgress}</Body>
-								{/if}
-							{:else if restoreStatus === 'done'}
-									<Body size="sm" color="secondary">{$_('recovery.restore.done', { values: { count: restoredProofs } })}</Body>
-								{:else}
-									<Body size="sm" color="secondary">{$_('recovery.restore.error')}</Body>
-								{/if}
+			{:else if step === 'restoring'}
+				<!-- Blocking NUT-9 fund restore status (recover flow only) — no
+					 back/next/stepper, no PWA nudge, no "start using". The user
+					 must wait for restore to finish (auto-advance) or fail (retry). -->
+				<div class="form">
+					<div class="restore-status" role="status" aria-live="polite">
+						{#if restoreStatus === 'error'}
+							<Body size="sm" color="secondary">{$_('recovery.restore.error')}</Body>
+							<Button variant="primary" size="lg" onclick={retryRestore}>
+								{#snippet children()}{$_('common.retry')}{/snippet}
+							</Button>
+						{:else if restoreStatus === 'done'}
+							<Body size="sm" color="secondary">{$_('recovery.restore.done', { values: { count: restoredProofs } })}</Body>
+						{:else}
+							<div class="restore-spinner" aria-hidden="true">
+								<svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+									<circle cx="20" cy="20" r="16" stroke="currentColor" stroke-width="3" opacity="0.25" />
+									<path d="M20 4a16 16 0 0 1 13.9 8" stroke="currentColor" stroke-width="3" stroke-linecap="round" />
+								</svg>
 							</div>
+							<Body size="sm" color="secondary">{$_('recovery.restore.running')}</Body>
+							{#if restoreProgress}
+								<Body size="sm" color="secondary">{restoreProgress}</Body>
+							{/if}
 						{/if}
-
-						<!-- TASK-207 (D2): PWA manual install nudge (non-blocking) -->
-						<div class="pwa-nudge" role="note" aria-label={$_('screen.setup.pwa_nudge_title')}>
-							<Heading level="h3">{$_('screen.setup.pwa_nudge_title')}</Heading>
-							<Body size="sm" color="secondary">{$_('screen.setup.pwa_nudge_ios')}</Body>
-							<Body size="sm" color="secondary">{$_('screen.setup.pwa_nudge_android')}</Body>
-							<Body size="sm" color="secondary">{$_('screen.setup.pwa_nudge_desktop')}</Body>
-						</div>
-
-						<Button
-							variant="primary"
-							size="lg"
-							onclick={startUsingWallet}
-						>
-							{#snippet children()}{$_('screen.setup.done_start')}{/snippet}
-						</Button>
 					</div>
-				{/if}
+				</div>
+
+			{:else if step === 'done'}
+				<div class="form">
+					<Body size="sm" color="secondary" align="center">
+						{$_('screen.setup.done_message')}
+					</Body>
+
+					<!-- TASK-207 (D2): PWA manual install nudge (non-blocking) -->
+					<div class="pwa-nudge" role="note" aria-label={$_('screen.setup.pwa_nudge_title')}>
+						<Heading level="h3">{$_('screen.setup.pwa_nudge_title')}</Heading>
+						<Body size="sm" color="secondary">{$_('screen.setup.pwa_nudge_ios')}</Body>
+						<Body size="sm" color="secondary">{$_('screen.setup.pwa_nudge_android')}</Body>
+						<Body size="sm" color="secondary">{$_('screen.setup.pwa_nudge_desktop')}</Body>
+					</div>
+
+					<Button
+						variant="primary"
+						size="lg"
+						onclick={startUsingWallet}
+					>
+						{#snippet children()}{$_('screen.setup.done_start')}{/snippet}
+					</Button>
+				</div>
+			{/if}
 			{/if}
 		</div>
 	</Card>
@@ -1254,10 +1302,34 @@
 	}
 
 	.restore-status {
-		padding: var(--space-sm) var(--space-md);
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		text-align: center;
+		gap: var(--space-sm);
+		padding: var(--space-lg);
 		background: var(--color-surface-variant);
 		border-radius: var(--radius-md);
 		border: 1px solid var(--color-border);
+	}
+
+	.restore-spinner {
+		display: flex;
+		color: var(--color-primary);
+		animation: restore-spin 0.8s linear infinite;
+	}
+
+	@keyframes restore-spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
+	/* WCAG 2.3.3 — disable spinner animation for reduced-motion users */
+	@media (prefers-reduced-motion: reduce) {
+		.restore-spinner {
+			animation: none;
+		}
 	}
 
 	/* PWA nudge */
