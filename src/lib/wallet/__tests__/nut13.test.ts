@@ -118,9 +118,10 @@ describe('NUT-13 determinism', () => {
 describe('NUT-13 version handling', () => {
 	const seed = mnemonicToSeed(V2_MNEMONIC);
 
-	it('should reject legacy keyset version "00" (BIP32 not implemented)', () => {
+	it('should derive via legacy BIP32 for keyset version "00"', () => {
 		const legacyId = '009a1f293253e41e';
-		expect(() => deriveSecretAndR(seed, legacyId, 0)).toThrow(/version "00"/i);
+		const { secret } = deriveSecretAndR(seed, legacyId, 0);
+		expect(secret).toBe('485875df74771877439ac06339e284c3acfcd9be7abf3bc20b516faeadfe77ae');
 	});
 
 	it('should reject unknown keyset versions', () => {

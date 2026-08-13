@@ -25,6 +25,7 @@
 	"dependencies": {
 		"@noble/curves": "^2.2.0",
 		"@noble/hashes": "^2.2.0",
+		"@scure/bip32": "^2.3.0",
 		"@vitest/coverage-v8": "^4.1.10",
 		"capacitor-barcode-scanner": "^8.0.0",
 		"capacitor-secure-storage-plugin": "^0.13.0",

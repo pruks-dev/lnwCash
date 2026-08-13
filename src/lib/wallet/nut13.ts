@@ -1,12 +1,14 @@
 /**
- * NUT-13: Deterministic secrets — HMAC-SHA256 derivation (keyset V2).
+ * NUT-13: Deterministic secrets — versioned derivation.
  *
  * Makes ecash proof `secret` and blinding factor `r` reproducible from a
  * single wallet `seed` (the 64-byte BIP39 seed derived from the 12-word
  * mnemonic). This is the foundation for seed-phrase backup/restore:
  *   mnemonic → seed → { private key, deterministic proof secrets }.
  *
- * Derivation (per NUT-13 "HMAC-SHA256 Derivation", keyset version `01`):
+ * The derivation method depends on the keyset ID version (first two hex chars):
+ * - Keyset version `00` → legacy BIP32 derivation (see deriveSecretAndRBip32).
+ * - Keyset version `01` → HMAC-SHA256 derivation:
  *   message      = "Cashu_KDF_HMAC_SHA256" || keyset_id_bytes || counter_k_bytes || type
  *   secret       = HMAC-SHA256(seed, message || 0x00)                (32 bytes, hex)
  *   r            = OS2IP(HMAC-SHA256(seed, message || 0x01)) mod N   (blinding factor)
@@ -14,11 +16,8 @@
  * - `keyset_id_bytes` are the hex-decoded raw bytes of the keyset ID.
  * - `counter_k_bytes` is the counter encoded as an unsigned 64-bit big-endian.
  * - `type` is `0x00` for secrets, `0x01` for blinded messages.
- *
- * Keyset version `00` (legacy BIP32 derivation) is deprecated by NUT-13 and
- * intentionally NOT implemented here — we throw rather than silently derive
- * incompatible secrets.
  */
+import { HDKey } from '@scure/bip32';
 import { hmac } from '@noble/hashes/hmac.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, hexToBytes, utf8ToBytes, concatBytes } from '@noble/hashes/utils.js';
@@ -40,6 +39,15 @@ const KEYSET_V1_PREFIX = '00';
 /** derivation_type_byte — appended to the KDF message. */
 const DERIVE_SECRET = 0x00;
 const DERIVE_BLINDING_FACTOR = 0x01;
+
+/** BIP32 purpose for NUT-13 legacy derivation (UTF-8 for 🥜), hardened. */
+const BIP32_PURPOSE = 129372;
+/** BIP32 coin type for NUT-13 legacy derivation (always 0), hardened. */
+const BIP32_COIN_TYPE = 0;
+/** BIP32 child index (non-hardened) for the proof `secret` private key. */
+const BIP32_SECRET_INDEX = 0;
+/** BIP32 child index (non-hardened) for the blinding factor `r` private key. */
+const BIP32_R_INDEX = 1;
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -86,12 +94,16 @@ function buildMessage(keysetId: string, counter: number, type: number): Uint8Arr
 
 /**
  * Derive the deterministic proof `secret` and blinding factor `r` for output
- * `counterK` of `keysetId`, per NUT-13 HMAC-SHA256 derivation (keyset V2).
+ * `counterK` of `keysetId`, per NUT-13 (versioned derivation).
  *
- * @param seed    64-byte BIP39 seed (HMAC key).
- * @param keysetId  Keyset ID (hex string, version byte `01`).
+ * - Keyset version `00` → legacy BIP32 derivation.
+ * - Keyset version `01` → HMAC-SHA256 derivation.
+ * - Any other version → throws.
+ *
+ * @param seed    64-byte BIP39 seed (HMAC key / BIP32 master-seed input).
+ * @param keysetId  Keyset ID (hex string, version byte `00` or `01`).
  * @param counterK  Per-keyset counter (0-based output index).
- * @throws if the keyset version is not supported (`00` legacy or unknown).
+ * @throws if the keyset version is unsupported.
  */
 export function deriveSecretAndR(
 	seed: Uint8Array,
@@ -101,9 +113,7 @@ export function deriveSecretAndR(
 	const version = keysetId.slice(0, 2);
 
 	if (version === KEYSET_V1_PREFIX) {
-		throw new Error(
-			'NUT-13: legacy BIP32 derivation for keyset version "00" is not supported'
-		);
+		return deriveSecretAndRBip32(seed, keysetId, counterK);
 	}
 	if (version !== KEYSET_V2_PREFIX) {
 		throw new Error(
@@ -122,6 +132,49 @@ export function deriveSecretAndR(
 	return {
 		secret: bytesToHex(secretDigest),
 		r
+	};
+}
+
+/**
+ * Derive the deterministic proof `secret` and blinding factor `r` for output
+ * `counterK` of a legacy keyset (`00`), per NUT-13 "Legacy Derivation".
+ *
+ * Derivation paths:
+ *   secret_path = m/129372'/0'/{keyset_id_int}'/{counter_k}'/0
+ *   r_path      = m/129372'/0'/{keyset_id_int}'/{counter_k}'/1
+ *
+ * where `keyset_id_int = BigInt('0x' + keysetId) % (2^31 - 1)`.
+ *
+ * `secret` is the 32-byte BIP32 private key at `secret_path` (hex-encoded);
+ * `r` is the 32-byte BIP32 private key at `r_path` interpreted as a bigint.
+ * BIP32 private keys are already valid secp256k1 scalars in [1, N-1], so no
+ * mod-N reduction is applied (unlike the HMAC path).
+ */
+export function deriveSecretAndRBip32(
+	seed: Uint8Array,
+	keysetId: string,
+	counterK: number
+): DerivedSecretAndR {
+	const keysetIdInt = BigInt('0x' + keysetId) % (2n ** 31n - 1n);
+
+	const secretPath = `m/${BIP32_PURPOSE}'/${BIP32_COIN_TYPE}'/${keysetIdInt}'/${counterK}'/${BIP32_SECRET_INDEX}`;
+	const rPath = `m/${BIP32_PURPOSE}'/${BIP32_COIN_TYPE}'/${keysetIdInt}'/${counterK}'/${BIP32_R_INDEX}`;
+
+	const root = HDKey.fromMasterSeed(seed);
+
+	const secretKey = root.derive(secretPath).privateKey;
+	const rKey = root.derive(rPath).privateKey;
+
+	if (secretKey === null || secretKey.length !== 32) {
+		throw new Error('NUT-13: BIP32 derivation produced no secret private key');
+	}
+	if (rKey === null || rKey.length !== 32) {
+		throw new Error('NUT-13: BIP32 derivation produced no r private key');
+	}
+
+	return {
+		secret: bytesToHex(secretKey),
+		r: os2ip(rKey)
 	};
 }
 
