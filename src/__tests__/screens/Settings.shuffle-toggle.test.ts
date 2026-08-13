@@ -43,7 +43,7 @@ vi.mock('$lib/wallet/autolock', () => ({
 	AUTOLOCK_OPTIONS: [1, 5, 15, 30, 60, 0]
 }));
 
-const getToggle = () => screen.getByRole('checkbox', { name: 'settings.pin_shuffle.title' }) as HTMLInputElement;
+const getToggle = () => screen.getByRole('switch', { name: 'settings.pin_shuffle.title' }) as HTMLInputElement;
 
 describe('Settings PIN shuffle toggle (TASK-220)', () => {
 	beforeEach(() => {

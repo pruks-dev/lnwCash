@@ -174,7 +174,8 @@ describe('Setup (TASK-207 wizard + TASK-209 PIN preserved)', () => {
 	// ─── Welcome ────────────────────────────────────────────
 	it('renders welcome with tagline + create/recover + language toggle', () => {
 		render(Setup, {});
-		expect(screen.getByText('screen.setup.title')).toBeTruthy();
+		// NOTE: "Wallet Setup" (screen.setup.title) is NOT on the welcome screen —
+		// it moved to the wizard steps header (Option A redesign).
 		expect(screen.getByText('screen.setup.tagline')).toBeTruthy();
 		expect(screen.getByText('screen.setup.welcome_create')).toBeTruthy();
 		expect(screen.getByText('screen.setup.welcome_recover')).toBeTruthy();

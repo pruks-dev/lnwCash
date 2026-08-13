@@ -18,13 +18,18 @@
 	import ListItem from '$lib/components/ui/ListItem.svelte';
 	import Modal from '$lib/components/ui/Modal.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
-	import Input from '$lib/components/ui/Input.svelte';
+	import Toggle from '$lib/components/ui/Toggle.svelte';
+
+	// TASK-220: PIN entry (numpad) components — shared with Setup
+	import Keypad from '$lib/components/Keypad.svelte';
+	import PinDots from '$lib/components/PinDots.svelte';
 
 	// TASK-050 Icons
 	import Mint from '$lib/components/icons/Mint.svelte';
 	import SettingsIcon from '$lib/components/icons/Settings.svelte';
 	import ArrowRight from '$lib/components/icons/ArrowRight.svelte';
 	import ArrowLeft from '$lib/components/icons/ArrowLeft.svelte';
+	import Check from '$lib/components/icons/Check.svelte';
 
 	// Mint Settings sub-page (F-042: Manage Mint routing)
 	import MintSettings from '../routes/settings/mint/+page.svelte';
@@ -58,6 +63,30 @@
 	let confirmNewPin: string = $state('');
 	let changePinError: string = $state('');
 	let changePinLoading: boolean = $state(false);
+	// TASK-220: 3-step sequential numpad flow (mirrors Setup PIN-entry).
+	const PIN_LENGTH = 4;
+	let changePinStep: 1 | 2 | 3 = $state(1);
+	let changePinShakeKey: number = $state(0);
+
+	// TASK-220: step title + filled-dot count for the current numpad step.
+	const changePinStepTitle = $derived(
+		changePinStep === 1
+			? $_('settings.change_pin.current_pin')
+			: changePinStep === 2
+				? $_('settings.change_pin.new_pin')
+				: $_('settings.change_pin.confirm_new_pin')
+	);
+
+	const changePinDotsLength = $derived(
+		changePinStep === 1
+			? currentPin.length
+			: changePinStep === 2
+				? newPin.length
+				: confirmNewPin.length
+	);
+
+	// Auto-lock timeout picker (bottom-sheet modal) — presentation state only.
+	let showAutolockPicker: boolean = $state(false);
 
 	$effect(() => {
 		try {
@@ -95,6 +124,22 @@
 		setAutolockTimeout(autoLockTimeout);
 	}
 
+	// Auto-lock timeout picker lifecycle (presentation glue only — reuses the
+	// UNCHANGED handleAutoLockChange / setAutolockTimeout logic below).
+	function openAutolockPicker() {
+		showAutolockPicker = true;
+	}
+
+	function closeAutolockPicker() {
+		showAutolockPicker = false;
+	}
+
+	function selectAutolockOption(option: number) {
+		autoLockTimeout = option;
+		handleAutoLockChange();
+		showAutolockPicker = false;
+	}
+
 	// TASK-218: Manual "lock now" — lock immediately + redirect home.
 	function handleLockNow() {
 		lockNow();
@@ -113,6 +158,8 @@
 		confirmNewPin = '';
 		changePinError = '';
 		changePinLoading = false;
+		changePinStep = 1;
+		changePinShakeKey = 0;
 		showChangePin = true;
 	}
 
@@ -122,9 +169,13 @@
 		newPin = '';
 		confirmNewPin = '';
 		changePinError = '';
+		changePinStep = 1;
+		changePinShakeKey = 0;
 	}
 
 	// TASK-220: Change PIN — verify current PIN (via changePin) + set new PIN ×2.
+	// Validation + crypto logic unchanged. On mismatch/wrong-PIN we step back and
+	// clear the relevant field so the user can retry the correct step.
 	async function submitChangePin() {
 		changePinError = '';
 		if (newPin.length < 4) {
@@ -133,6 +184,11 @@
 		}
 		if (newPin !== confirmNewPin) {
 			changePinError = $_('screen.register.error_mismatch');
+			// mismatch → back to step 2 (new PIN), clear new/confirm, shake.
+			changePinStep = 2;
+			newPin = '';
+			confirmNewPin = '';
+			changePinShakeKey += 1;
 			return;
 		}
 
@@ -146,6 +202,12 @@
 		} catch (e) {
 			if (e instanceof InvalidPinError) {
 				changePinError = $_('settings.change_pin.wrong_pin');
+				// wrong current PIN → back to step 1, clear ALL fields, shake.
+				changePinStep = 1;
+				currentPin = '';
+				newPin = '';
+				confirmNewPin = '';
+				changePinShakeKey += 1;
 			} else if (e instanceof WalletNotInitializedError) {
 				changePinError = e.message;
 			} else if (e instanceof Error) {
@@ -155,6 +217,52 @@
 			}
 		} finally {
 			changePinLoading = false;
+		}
+	}
+
+	// TASK-220: 3-step numpad digit entry (mirrors Setup.handlePinDigit).
+	function handlePinDigit(digit: string) {
+		changePinError = '';
+		if (changePinLoading) return;
+		if (changePinStep === 1) {
+			if (currentPin.length >= PIN_LENGTH) return;
+			currentPin += digit;
+			if (currentPin.length === PIN_LENGTH) changePinStep = 2;
+		} else if (changePinStep === 2) {
+			if (newPin.length >= PIN_LENGTH) return;
+			newPin += digit;
+			if (newPin.length === PIN_LENGTH) changePinStep = 3;
+		} else {
+			if (confirmNewPin.length >= PIN_LENGTH) return;
+			confirmNewPin += digit;
+			if (confirmNewPin.length === PIN_LENGTH) void submitChangePin();
+		}
+	}
+
+	// TASK-220: backspace — delete a digit; on an empty field, step back.
+	function handlePinBackspace() {
+		changePinError = '';
+		if (changePinLoading) return;
+		if (changePinStep === 1) {
+			currentPin = currentPin.slice(0, -1);
+		} else if (changePinStep === 2) {
+			newPin = newPin.slice(0, -1);
+			if (newPin.length === 0) changePinStep = 1;
+		} else {
+			confirmNewPin = confirmNewPin.slice(0, -1);
+			if (confirmNewPin.length === 0) changePinStep = 2;
+		}
+	}
+
+	// TASK-220: "←" step-back button (clears the step being left).
+	function handleStepBack() {
+		changePinError = '';
+		if (changePinStep === 3) {
+			changePinStep = 2;
+			confirmNewPin = '';
+		} else if (changePinStep === 2) {
+			changePinStep = 1;
+			newPin = '';
 		}
 	}
 
@@ -276,39 +384,10 @@
 			</div>
 		</Card>
 
-		<!-- ─── Security Section (TASK-210 Auto-lock) ─────── -->
+		<!-- ─── PIN & Security Section (TASK-220) ──────────── -->
 		<Card variant="basic" padding="md">
 			<div class="section">
-				<Heading level="h4">Auto-lock</Heading>
-				<Body size="sm" color="secondary">Lock wallet automatically after inactivity</Body>
-				<select
-					class="autolock-select"
-					aria-label="Auto-lock timeout"
-					bind:value={autoLockTimeout}
-					onchange={handleAutoLockChange}
-				>
-					{#each AUTOLOCK_OPTIONS as option}
-						<option value={option}>
-							{option === 0 ? 'Never' : `${option} min`}
-						</option>
-					{/each}
-				</select>
-				{#if autoLockTimeout === 0}
-					<p class="autolock-warning">
-						Warning: "Never" keeps your wallet unlocked until you lock it manually.
-					</p>
-				{/if}
-				<!-- TASK-218: Manual "lock now" button -->
-				<button
-					type="button"
-					class="lock-now-btn"
-					onclick={handleLockNow}
-					aria-label={$_('settings.lock_now')}
-				>
-					{$_('settings.lock_now')}
-				</button>
-
-				<Divider />
+				<Heading level="h4">{$_('screen.settings.security_section')}</Heading>
 
 				<!-- TASK-220: Change PIN -->
 				<ListItem
@@ -320,20 +399,55 @@
 					{/snippet}
 				</ListItem>
 
+				<Divider />
+
 				<!-- TASK-220: PIN keypad shuffle toggle (default off) -->
-				<label class="shuffle-toggle">
-					<input
-						type="checkbox"
-						class="shuffle-checkbox"
+				<div class="toggle-row">
+					<Toggle
 						checked={pinShuffle}
 						onchange={handlePinShuffleToggle}
-						aria-label={$_('settings.pin_shuffle.title')}
+						ariaLabel={$_('settings.pin_shuffle.title')}
 					/>
-					<span class="shuffle-toggle-body">
+					<div class="toggle-row-body">
 						<Body size="sm" weight="semibold">{$_('settings.pin_shuffle.title')}</Body>
 						<Body size="sm" color="secondary">{$_('settings.pin_shuffle.description')}</Body>
-					</span>
-				</label>
+					</div>
+				</div>
+			</div>
+		</Card>
+
+		<!-- ─── Auto-lock Section (TASK-210) ───────────────── -->
+		<Card variant="basic" padding="md">
+			<div class="section">
+				<Heading level="h4">{$_('screen.settings.autolock_section')}</Heading>
+				<Body size="sm" color="secondary">{$_('screen.settings.autolock_description')}</Body>
+
+				<ListItem
+					title={$_('screen.settings.autolock_section')}
+					onclick={openAutolockPicker}
+				>
+					{#snippet trailing()}
+						<span class="autolock-value">
+							{#if autoLockTimeout === 0}
+								{$_('settings.autolock.never')}
+							{:else}
+								{autoLockTimeout} {$_('settings.autolock.minutes')}
+							{/if}
+						</span>
+						<ArrowRight size={16} />
+					{/snippet}
+				</ListItem>
+
+				{#if autoLockTimeout === 0}
+					<p class="autolock-warning" role="alert">
+						{$_('settings.autolock.warning')}
+					</p>
+				{/if}
+
+				<!-- TASK-218: Manual "lock now" button -->
+				<Button variant="secondary" onclick={handleLockNow} ariaLabel={$_('settings.lock_now')}>
+					{#snippet children()}{$_('settings.lock_now')}{/snippet}
+				</Button>
 			</div>
 		</Card>
 
@@ -359,43 +473,80 @@
 		<div class="bottom-spacer"></div>
 	{/if}
 
-	<!-- TASK-220: Change PIN modal -->
+	<!-- TASK-210: Auto-lock timeout picker (bottom sheet) -->
+	<Modal
+		open={showAutolockPicker}
+		onclose={closeAutolockPicker}
+		variant="bottomsheet"
+		title={$_('screen.settings.autolock_section')}
+	>
+		<div class="autolock-options" role="group" aria-label={$_('screen.settings.autolock_section')}>
+			{#each AUTOLOCK_OPTIONS as option (option)}
+				<button
+					type="button"
+					class="autolock-option-btn"
+					class:active={autoLockTimeout === option}
+					aria-pressed={autoLockTimeout === option}
+					onclick={() => selectAutolockOption(option)}
+				>
+					<span>
+						{#if option === 0}
+							{$_('settings.autolock.never')}
+						{:else}
+							{option} {$_('settings.autolock.minutes')}
+						{/if}
+					</span>
+					{#if autoLockTimeout === option}
+						<Check size={18} />
+					{/if}
+				</button>
+			{/each}
+		</div>
+	</Modal>
+
+	<!-- TASK-220: Change PIN modal (3-step sequential numpad flow) -->
 	<Modal open={showChangePin} onclose={closeChangePin} title={$_('settings.change_pin.title')}>
 		<div class="change-pin-form">
-			<Input
-				type="password"
-				label={$_('settings.change_pin.current_pin')}
-				value={currentPin}
-				oninput={(e) => { currentPin = (e.target as HTMLInputElement).value; changePinError = ''; }}
-				maxlength={6}
-			/>
-			<Input
-				type="password"
-				label={$_('settings.change_pin.new_pin')}
-				value={newPin}
-				oninput={(e) => { newPin = (e.target as HTMLInputElement).value; changePinError = ''; }}
-				maxlength={6}
-			/>
-			<Input
-				type="password"
-				label={$_('settings.change_pin.confirm_new_pin')}
-				value={confirmNewPin}
-				oninput={(e) => { confirmNewPin = (e.target as HTMLInputElement).value; changePinError = ''; }}
-				maxlength={6}
-			/>
+			<!-- step header: back button (steps 2-3) + step indicator -->
+			<div class="change-pin-step-header">
+				{#if changePinStep > 1}
+					<button
+						type="button"
+						class="change-pin-back"
+						onclick={handleStepBack}
+						aria-label={$_('common.back')}
+					>
+						<ArrowLeft size={20} />
+					</button>
+				{:else}
+					<span class="change-pin-back-spacer" aria-hidden="true"></span>
+				{/if}
+				<Body size="sm" color="secondary">
+					{$_('settings.change_pin.step_indicator', { values: { step: changePinStep, total: 3 } })}
+				</Body>
+				<span class="change-pin-back-spacer" aria-hidden="true"></span>
+			</div>
+
+			<Heading level="h4" align="center">{changePinStepTitle}</Heading>
+
+			<div class="change-pin-entry">
+				<PinDots
+					length={changePinDotsLength}
+					total={PIN_LENGTH}
+					error={!!changePinError}
+					shakeKey={changePinShakeKey}
+				/>
+				<Keypad
+					onDigit={handlePinDigit}
+					onBackspace={handlePinBackspace}
+					disabled={changePinLoading}
+					shuffle={pinShuffle}
+				/>
+			</div>
 
 			{#if changePinError}
 				<p class="change-pin-error" role="alert">{changePinError}</p>
 			{/if}
-
-			<div class="change-pin-actions">
-				<Button variant="secondary" onclick={closeChangePin}>
-					{#snippet children()}{$_('common.cancel')}{/snippet}
-				</Button>
-				<Button variant="primary" onclick={submitChangePin} loading={changePinLoading}>
-					{#snippet children()}{$_('common.confirm')}{/snippet}
-				</Button>
-			</div>
 
 			<button type="button" class="forgot-pin-link" onclick={handleForgotPin}>
 				{$_('settings.change_pin.forgot_pin')}
@@ -509,23 +660,11 @@
 		gap: var(--space-sm);
 	}
 
-	/* TASK-210: Auto-lock timeout dropdown */
-	.autolock-select {
-		width: 100%;
-		padding: var(--space-sm) var(--space-md);
-		font-family: var(--font-family);
-		font-size: var(--font-size-md);
-		color: var(--color-text);
-		background: var(--color-surface-variant);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md);
-		cursor: pointer;
-		transition: border-color var(--transition-fast);
-	}
-
-	.autolock-select:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
+	/* Auto-lock timeout current value (trailing) */
+	.autolock-value {
+		font-size: var(--font-size-sm);
+		font-weight: var(--font-weight-medium);
+		color: var(--color-text-secondary);
 	}
 
 	.autolock-warning {
@@ -535,31 +674,43 @@
 		line-height: var(--line-height-normal);
 	}
 
-	/* TASK-218: Manual "lock now" button */
-	.lock-now-btn {
+	/* TASK-210: Auto-lock timeout picker (bottom-sheet options) */
+	.autolock-options {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+	}
+
+	.autolock-option-btn {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
 		width: 100%;
 		padding: var(--space-sm) var(--space-md);
+		min-height: 44px;
 		font-family: var(--font-family);
 		font-size: var(--font-size-md);
-		font-weight: var(--font-weight-semibold);
-		color: var(--color-primary-contrast);
-		background: var(--color-primary);
-		border: none;
+		font-weight: var(--font-weight-medium);
+		color: var(--color-text);
+		background: var(--color-surface-variant);
+		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
 		cursor: pointer;
-		min-height: 44px;
 		transition: all var(--transition-fast);
 	}
 
-	.lock-now-btn:hover:not(:disabled) {
-		background: var(--color-primary-hover);
+	.autolock-option-btn:hover {
+		background: var(--color-surface);
+		border-color: var(--color-primary);
 	}
 
-	.lock-now-btn:active:not(:disabled) {
-		transform: scale(0.97);
+	.autolock-option-btn.active {
+		color: var(--color-primary-contrast);
+		background: var(--color-primary);
+		border-color: var(--color-primary);
 	}
 
-	.lock-now-btn:focus-visible {
+	.autolock-option-btn:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: 2px;
 	}
@@ -569,28 +720,20 @@
 		justify-content: space-between;
 	}
 
-	/* TASK-220: PIN keypad shuffle toggle */
-	.shuffle-toggle {
+	/* TASK-220: PIN keypad shuffle toggle row */
+	.toggle-row {
 		display: flex;
-		align-items: flex-start;
-		gap: var(--space-sm);
+		align-items: center;
+		gap: var(--space-md);
 		padding: var(--space-sm) 0;
-		cursor: pointer;
 	}
 
-	.shuffle-checkbox {
-		margin-top: 3px;
-		width: 20px;
-		height: 20px;
-		accent-color: var(--color-primary);
-		cursor: pointer;
-		flex-shrink: 0;
-	}
-
-	.shuffle-toggle-body {
+	.toggle-row-body {
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
+		flex: 1;
+		min-width: 0;
 	}
 
 	/* TASK-220: Change PIN modal */
@@ -607,11 +750,43 @@
 		color: var(--color-error);
 	}
 
-	.change-pin-actions {
+	.change-pin-step-header {
 		display: flex;
-		justify-content: flex-end;
+		align-items: center;
+		justify-content: space-between;
 		gap: var(--space-sm);
-		margin-top: var(--space-sm);
+	}
+
+	.change-pin-back {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 36px;
+		height: 36px;
+		padding: 0;
+		border: none;
+		border-radius: var(--radius-full);
+		background: transparent;
+		color: var(--color-text-secondary);
+		cursor: pointer;
+		flex-shrink: 0;
+	}
+
+	.change-pin-back:hover,
+	.change-pin-back:focus-visible {
+		background: var(--color-surface-variant);
+		color: var(--color-text);
+	}
+
+	.change-pin-back-spacer {
+		width: 36px;
+		flex-shrink: 0;
+	}
+
+	.change-pin-entry {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-xs);
 	}
 
 	.forgot-pin-link {

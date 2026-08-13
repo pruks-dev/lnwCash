@@ -677,8 +677,6 @@
 
 <div class="setup-screen" role="main" aria-label={$_('screen.setup.title')}>
 
-	<Heading level="h1" align="center">{$_('screen.setup.title')}</Heading>
-
 	<Card variant="basic" padding="lg">
 		<div class="auth-card">
 
@@ -805,6 +803,10 @@
 
 			{:else}
 				<!-- ─── Wizard (create/recover) ─── -->
+				<Body size="sm" weight="semibold" color="secondary" align="center">
+					{$_('screen.setup.title')}
+				</Body>
+
 				<ProgressStepper
 					steps={stepperSteps}
 					currentIndex={stepIndex}

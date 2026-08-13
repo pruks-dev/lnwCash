@@ -1,16 +1,18 @@
 /**
- * Test: Settings.svelte — TASK-220 Change PIN flow.
+ * Test: Settings.svelte — TASK-220 Change PIN flow (3-step numpad).
  *
  * Covers:
- *   - "Change PIN" ListItem opens a modal with current/new/confirm inputs.
- *   - verify → set new PIN ×2 → changePin(current, new) is called with the
- *     correct args, a success toast fires, and the modal closes.
- *   - wrong current PIN (InvalidPinError) shows the wrong-PIN error.
- *   - new PIN mismatch is rejected before calling changePin.
+ *   - "Change PIN" ListItem opens a modal with a numpad (step 1 = current PIN).
+ *   - the 3-step flow auto-advances current → new → confirm, and on confirm
+ *     changePin(current, new) is called with the correct args, a success toast
+ *     fires, and the modal closes.
+ *   - wrong current PIN (InvalidPinError) resets to step 1 and shows the error.
+ *   - new PIN mismatch resets to step 2 and is rejected before calling changePin.
+ *   - the "←" step-back button returns to the previous step.
  *   - "forgot PIN" link navigates to the setup (seed recovery) route.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/svelte';
+import { render, screen, within, cleanup, fireEvent, waitFor } from '@testing-library/svelte';
 import Settings from '../../screens/Settings.svelte';
 import { InvalidPinError } from '$lib/wallet/errors';
 
@@ -67,10 +69,11 @@ async function openChangePinModal() {
 	await fireEvent.click(screen.getByText('settings.change_pin.title'));
 }
 
-async function fillPinForm(current = '1234', next = '5678', confirm = '5678') {
-	await fireEvent.input(screen.getByLabelText('settings.change_pin.current_pin'), { target: { value: current } });
-	await fireEvent.input(screen.getByLabelText('settings.change_pin.new_pin'), { target: { value: next } });
-	await fireEvent.input(screen.getByLabelText('settings.change_pin.confirm_new_pin'), { target: { value: confirm } });
+// Tap each digit on the (unshuffled) numpad in sequence.
+async function tapDigits(digits: string) {
+	for (const d of digits) {
+		await fireEvent.click(screen.getByRole('button', { name: d }));
+	}
 }
 
 describe('Settings Change PIN (TASK-220)', () => {
@@ -86,44 +89,60 @@ describe('Settings Change PIN (TASK-220)', () => {
 		expect(screen.getByText('settings.change_pin.title')).toBeTruthy();
 	});
 
-	it('opens a modal with current/new/confirm PIN inputs', async () => {
+	it('opens a modal with a current-PIN step and numpad', async () => {
 		await openChangePinModal();
-		expect(screen.getByLabelText('settings.change_pin.current_pin')).toBeTruthy();
-		expect(screen.getByLabelText('settings.change_pin.new_pin')).toBeTruthy();
-		expect(screen.getByLabelText('settings.change_pin.confirm_new_pin')).toBeTruthy();
+		// Step 1 title + numpad (PinDots progressbar + digit keypad)
+		expect(screen.getByText('settings.change_pin.current_pin')).toBeTruthy();
+		expect(screen.getByRole('group', { name: 'PIN keypad' })).toBeTruthy();
+		expect(screen.getByRole('progressbar')).toBeTruthy();
 	});
 
-	it('verify → set → confirm calls changePin with the correct args, toasts, and closes', async () => {
+	it('auto-advances through current → new → confirm and calls changePin with correct args', async () => {
 		await openChangePinModal();
-		await fillPinForm('1234', '5678', '5678');
-		await fireEvent.click(screen.getByText('common.confirm'));
+		await tapDigits('1234'); // step 1 → advances to step 2
+		expect(screen.getByText('settings.change_pin.new_pin')).toBeTruthy();
+		await tapDigits('5678'); // step 2 → advances to step 3
+		expect(screen.getByText('settings.change_pin.confirm_new_pin')).toBeTruthy();
+		await tapDigits('5678'); // step 3 → auto-submit
 
 		await waitFor(() => expect(changePinMock).toHaveBeenCalledWith('1234', '5678'));
 		expect(changePinMock).toHaveBeenCalledOnce();
 		await waitFor(() => expect(showToastMock).toHaveBeenCalledWith('settings.change_pin.success', 'success'));
 		// Modal closes after success
-		expect(screen.queryByLabelText('settings.change_pin.new_pin')).toBeNull();
+		expect(screen.queryByText('settings.change_pin.new_pin')).toBeNull();
 	});
 
-	it('shows wrong-PIN error when current PIN is invalid (InvalidPinError)', async () => {
+	it('shows wrong-PIN error and resets to step 1 when current PIN is invalid', async () => {
 		changePinMock.mockRejectedValue(new InvalidPinError());
 		await openChangePinModal();
-		await fillPinForm('0000', '5678', '5678');
-		await fireEvent.click(screen.getByText('common.confirm'));
+		await tapDigits('0000');
+		await tapDigits('5678');
+		await tapDigits('5678');
 
 		await waitFor(() => expect(screen.getByText('settings.change_pin.wrong_pin')).toBeTruthy());
 		expect(showToastMock).not.toHaveBeenCalled();
-		// Modal stays open
-		expect(screen.getByLabelText('settings.change_pin.new_pin')).toBeTruthy();
+		// Reset back to step 1 (current PIN) — modal stays open
+		expect(screen.getByText('settings.change_pin.current_pin')).toBeTruthy();
 	});
 
-	it('rejects a mismatched new PIN without calling changePin', async () => {
+	it('rejects a mismatched new PIN without calling changePin and resets to step 2', async () => {
 		await openChangePinModal();
-		await fillPinForm('1234', '5678', '9999');
-		await fireEvent.click(screen.getByText('common.confirm'));
+		await tapDigits('1234');
+		await tapDigits('5678');
+		await tapDigits('9999'); // mismatch → rejected before changePin
 
 		await waitFor(() => expect(screen.getByText('screen.register.error_mismatch')).toBeTruthy());
 		expect(changePinMock).not.toHaveBeenCalled();
+		// Reset back to step 2 (new PIN)
+		expect(screen.getByText('settings.change_pin.new_pin')).toBeTruthy();
+	});
+
+	it('lets the user step back with the "←" back button', async () => {
+		await openChangePinModal();
+		await tapDigits('1234'); // now on step 2
+		const modal = screen.getByRole('dialog');
+		await fireEvent.click(within(modal).getByRole('button', { name: 'common.back' }));
+		expect(screen.getByText('settings.change_pin.current_pin')).toBeTruthy();
 	});
 
 	it('"forgot PIN" link navigates to the setup (seed recovery) route', async () => {
