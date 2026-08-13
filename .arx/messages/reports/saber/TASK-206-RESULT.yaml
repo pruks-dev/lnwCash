@@ -1,0 +1,103 @@
+message_id: TASK-206-RESULT
+type: RESULT
+sender: saber
+receiver: orion
+task_id: TASK-206
+verdict: COMPLETE
+
+summary: |
+  NUT-13 Option A (Commander D6): seed = complete backup. Implemented deterministic
+  HMAC-SHA256 KDF so proof `secret` + blinding factor `r` are reproducible from the
+  64-byte BIP39 seed, plus NUT-9 POST /v1/restore client + full restore flow +
+  per-keyset counter_k tracking. All wallet-side (no mint change).
+
+  Key changes:
+  - nut13.ts (NEW): deriveSecretAndR() / deriveSecret() per NUT-13 "HMAC-SHA256
+    Derivation" — message = "Cashu_KDF_HMAC_SHA256" || keyset_id_bytes || counter_k(8B BE)
+    || type (0x00 secret, 0x01 r = OS2IP(HMAC) % N). Version-gated: "01"→HMAC, "00"→throw
+    (legacy BIP32), else throw. seedFromMnemonic() + in-memory setActiveSeed/getActiveSeed.
+  - counterK.ts (NEW): per-keyset counter_k in localStorage `lnwcash_counter_k`
+    (get/set/increment/reset/getAll/clear).
+  - restore.ts (NEW): restoreBatch() (derive→blind→POST /v1/restore→unblind) and
+    restoreWallet() (batch loop, stop after 3 empty batches, NUT-7 spent filter,
+    record counter_k).
+  - client.ts: STANDARD_PATHS.restore='/v1/restore', resolveEndpointPath 'restore' case,
+    restoreOutputs() + Restore* types.
+  - mint.ts: generateSecret() → deterministic KDF from seed; createOutputs/completeMint
+    use per-keyset counters + advance counter_k after successful mint. Random fallback
+    retained when no seed is active (backward compatible).
+
+  Verification:
+  - Official NUT-13 V2 test vectors (cashubtc/nuts tests/13-tests.md): 5/5 secrets AND
+    5/5 blinding factors match byte-for-byte → proves spec compliance.
+  - Restore round-trip (real secp256k1 blind/unblind + mocked mint): PASS.
+  - Full backend suites: 425 passed / 425 (27 files) — no regressions.
+  - svelte-check: 0 errors in TASK-206 files (16 pre-existing errors elsewhere, untouched).
+  - Mint NUT-09 verify: REAL (live https://mint.lnw.cash/v1/info) → "9":{"supported":true},
+    "7":{"supported":true}. NOT mocked.
+
+files_changed:
+  modified:
+    - src/lib/wallet/mint.ts
+    - src/lib/cashu/client.ts
+  added:
+    - src/lib/wallet/nut13.ts
+    - src/lib/wallet/counterK.ts
+    - src/lib/wallet/restore.ts
+    - src/lib/wallet/__tests__/nut13.test.ts
+    - src/lib/wallet/__tests__/counterK.test.ts
+    - src/lib/wallet/__tests__/restore.test.ts
+    - src/lib/wallet/__tests__/mint-nut13.test.ts
+    - src/lib/cashu/__tests__/restore-client.test.ts
+
+proof_list:
+  - nut13-derivation.diff
+  - nut9-client.diff
+  - counter-k-tracking.md
+  - deterministic-test.log
+  - restore-roundtrip-test.log
+  - mint-restore-verify.txt
+  - verification-summary.md
+
+evidence_count: 7
+
+test_results:
+  new_tests:
+    files: 5
+    tests: 38
+    passed: 38
+    failed: 0
+  nut13_vectors:
+    source: cashubtc/nuts tests/13-tests.md (V2)
+    secrets: "5/5 match"
+    blinding_factors: "5/5 match"
+  restore_roundtrip:
+    status: PASS
+    crypto: real secp256k1 (blinding + unblinding + verifySignature)
+  full_backend_suite:
+    files: 27
+    tests: 425
+    passed: 425
+    failed: 0
+  svelte_check:
+    errors_in_changed_files: 0
+    pre_existing_errors_elsewhere: 16
+  mint_nut09_verify:
+    status: REAL (not mocked)
+    mint_url: https://mint.lnw.cash
+    nut9: '{"supported":true}'
+    nut7: '{"supported":true}'
+    version: Nutshell/0.20.1
+
+design_notes:
+  - Deterministic because secret/r are pure functions of (seed, keyset_id, counter_k):
+    same inputs → identical BlindedMessages → mint can re-issue signatures (NUT-09) after
+    device loss. This is the "seed = complete backup" model.
+  - seed = 64-byte BIP39 seed (mnemonicToSeed from TASK-205), NOT the 32-byte private key,
+    to stay byte-compatible with NUT-13 reference vectors.
+  - Integration follow-up (non-blocking): app layer should call
+    setActiveSeed(seedFromMnemonic(mnemonic)) at unlock (state.ts is out of TASK-206 scope);
+    until then mint.ts falls back to random secrets (existing behavior, no breakage).
+  - Legacy keyset version "00" (BIP32) throws by design — deprecated by NUT-13.
+
+blockers: []

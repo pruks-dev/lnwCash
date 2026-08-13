@@ -1,0 +1,24 @@
+{
+  "home_1_tx": {
+    "render_wait_ms": 16.299999952316284,
+    "wall_ms": 53,
+    "threshold_ms": 100,
+    "pass": true
+  },
+  "history_100_tx": {
+    "render_wait_ms": 17.200000047683716,
+    "click_ms": 799,
+    "wall_ms": 853,
+    "count_found": 100,
+    "threshold_ms": 500,
+    "pass": true
+  },
+  "history_500_tx": {
+    "render_wait_ms": 20.90000009536743,
+    "click_ms": 2947,
+    "wall_ms": 3049,
+    "count_found": 500,
+    "threshold_ms": 1500,
+    "pass": true
+  }
+}

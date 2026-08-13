@@ -19,6 +19,8 @@
 	import { onMount } from 'svelte';
 	import { scannedQRValue } from '$lib/stores/scannedQR';
 	import { meltFlow, type MeltResult } from '$lib/wallet/melt';
+	// TASK-218: wrap melt in a transaction guard so auto-lock defers mid-melt
+	import { withTransactionGuard } from '$lib/wallet/autolock';
 	import { sendTokens, type SendResult } from '$lib/wallet/transfer';
 	import { InsufficientFundsError, WalletLockedError } from '$lib/wallet/errors';
 	import { requestMeltQuote, CashuError } from '$lib/cashu/client';
@@ -359,10 +361,14 @@
 		lightningError = '';
 
 		try {
-			const res = await meltFlow(
-				mintUrl.trim(),
-				lightningInvoiceInput.trim(),
-				lightningInvoiceAmount || 1
+			// TASK-218: withTransactionGuard defers auto-lock while the melt
+			// is in flight so the wallet is never locked mid-transaction.
+			const res = await withTransactionGuard(async () =>
+				meltFlow(
+					mintUrl.trim(),
+					lightningInvoiceInput.trim(),
+					lightningInvoiceAmount || 1
+				)
 			);
 			lightningResult = res;
 
@@ -631,15 +637,15 @@
 							oninput={handleInvoiceInput}
 							placeholder={$_('screen.send.invoice_placeholder')}
 							rows={3}
-							disabled={lightningState === 'fee-calculating' || lightningState === 'sending'}
+							disabled={lightningState === 'fee-calculating'}
 							aria-label={$_('screen.send.enter_invoice')}
 						></textarea>
 						<div class="invoice-input-actions">
-							<Button variant="ghost" size="sm" onclick={handlePasteInvoice} disabled={lightningState === 'sending'}>
+							<Button variant="ghost" size="sm" onclick={handlePasteInvoice}>
 								{#snippet children()}<span class="btn-icon-text"><span class="btn-icon-label">{$_('common.paste')}</span></span>{/snippet}
 							</Button>
 							{#if onQRScan}
-								<Button variant="ghost" size="sm" onclick={onQRScan} disabled={lightningState === 'sending'}>
+								<Button variant="ghost" size="sm" onclick={onQRScan}>
 									{#snippet children()}<span class="btn-icon-text"><Iconly name="Scan" size={14} /><span class="btn-icon-label">{$_('screen.send.scan_qr')}</span></span>{/snippet}
 								</Button>
 							{/if}
@@ -689,14 +695,13 @@
 					{/if}
 
 					<div class="action-buttons">
-						<Button variant="ghost" size="md" onclick={handleCheckFee} loading={lightningState === 'fee-calculating'} disabled={lightningState === 'sending'}>
+						<Button variant="ghost" size="md" onclick={handleCheckFee} loading={lightningState === 'fee-calculating'}>
 							{#snippet children()}{$_('screen.send.check_fee')}{/snippet}
 						</Button>
 						<button
 							type="button"
 							class="send-confirm-btn"
 							onclick={handleConfirmSend}
-							disabled={lightningState === 'sending'}
 						>
 							<SendIcon size={18} />
 							{$_('screen.send.confirm_send')}

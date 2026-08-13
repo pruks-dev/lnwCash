@@ -1,0 +1,13 @@
+TASK-213 i18n parity check (th == en)
+Command: node flatten compare of src/locales/en.json vs src/locales/th.json
+
+RESULT: PASS — parity holds (0 missing keys in either direction)
+
+  en keys: 349
+  th keys: 349
+  in en but NOT th: 0  []
+  in th but NOT en: 0  []
+
+NOTE (truth): task brief stated "350=350"; actual measured count is 349=349.
+  Parity (th==en, zero missing) is satisfied either way. The locale JSON uses
+  flat dot-notation keys (e.g. "app.name", "nav.home") — 349 top-level keys each.

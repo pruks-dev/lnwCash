@@ -1,0 +1,115 @@
+message_id: TASK-220-RESULT
+type: RESULT
+sender: saber
+receiver: orion
+task_id: TASK-220
+verdict: COMPLETE
+
+summary: |
+  Settings → Security: "เปลี่ยน PIN" (Change PIN) flow + PIN keypad shuffle toggle.
+
+  Change PIN flow (modal in Settings.svelte):
+    - current PIN + new PIN ×2 (confirm) password inputs.
+    - validates new PIN >= 4 chars and new == confirm BEFORE calling backend.
+    - calls changePin(currentPin, newPin) from $lib/wallet/state (TASK-219, UNCHANGED).
+    - InvalidPinError -> wrong-PIN error, modal stays open; success -> showToast + close.
+    - "Forgot PIN?" link -> navigateTo('setup') + #/setup?recover=1 -> Setup seed recovery.
+
+  Shuffle toggle:
+    - Security section checkbox bound to settings.pin_shuffle (default OFF).
+    - persisted via setSettings({ pin_shuffle }) (local.ts DEFAULT_SETTINGS + merge).
+    - Keypad.svelte `shuffle?: boolean` prop: false -> fixed 1-9+0; true -> Fisher-Yates
+      via crypto.getRandomValues (CSPRNG), $effect reshuffles on prop flip.
+    - Setup.svelte passes shuffle={pinShuffle} to both PIN keypads (create/recover/unlock).
+
+  Constraints honored: changePin() backend (state.ts) and encrypt.ts NOT touched;
+  shuffle defaults OFF; no plaintext PIN storage (in-memory component state only,
+  cleared on close).
+
+files_changed:
+  modified:
+    - src/lib/types.ts                     # WalletSettings + pin_shuffle: boolean
+    - src/lib/storage/local.ts             # DEFAULT_SETTINGS.pin_shuffle=false + merge
+    - src/screens/Setup.svelte             # shuffle prop wiring + #/setup?recover=1
+    - src/screens/Settings.svelte          # Change PIN modal + shuffle toggle + forgot link
+    - src/App.svelte                       # render Setup on 'setup' route
+    - src/locales/en.json                  # +9 settings.change_pin.*/pin_shuffle.*
+    - src/locales/th.json                  # +9 keys (en/th parity)
+  added:
+    - src/lib/components/Keypad.svelte             # (untracked, net-new) shuffle prop
+    - src/__tests__/screens/Settings.change-pin.test.ts
+    - src/__tests__/screens/Settings.shuffle-toggle.test.ts
+  updated:
+    - src/lib/components/__tests__/keypad.test.ts  # shuffle prop tests
+
+proof_list:
+  - Settings.svelte.diff            # git diff
+  - Keypad.svelte.diff              # full file diff (untracked)
+  - change-pin-ui-test.log          # 6/6 PASS
+  - shuffle-toggle-test.log         # 5/5 (toggle) + 10/10 (keypad) PASS
+  - svelte-check.txt                # 14 err + 2 warn (0 new in TASK-220 files)
+  - screenshot-change-pin.note.txt  # headless -> no screenshot possible
+  - verification-summary.md
+
+evidence_count: 7
+
+test_results:
+  change_pin_ui:
+    file: src/__tests__/screens/Settings.change-pin.test.ts
+    tests: 6
+    passed: 6
+    failed: 0
+  shuffle_toggle:
+    file: src/__tests__/screens/Settings.shuffle-toggle.test.ts
+    tests: 5
+    passed: 5
+    failed: 0
+  keypad_shuffle_prop:
+    file: src/lib/components/__tests__/keypad.test.ts
+    tests: 10
+    passed: 10
+    failed: 0
+  i18n_parity:
+    file: src/__tests__/lib/i18n-parity.test.ts
+    passed: true
+  settings_autolock_regression:
+    file: src/__tests__/screens/Settings.autolock.test.ts
+    passed: true
+  full_suite:
+    files: 92
+    tests: 1099
+    passed: 1094
+    failed: 5   # all pre-existing, files NOT touched by TASK-220
+    note: >
+      Pre-existing failures: ErrorBoundary.test.ts (retry button), Home.test.ts
+      (3 tx-list tests), Setup.test.ts (autocomplete trailing-space). Verified the
+      Setup autocomplete failure persists with the recover-param check disabled.
+
+  svelte_check:
+    total_errors: 14
+    total_warnings: 2
+    new_errors_in_task220_files: 0
+    note: >
+      14 errors / 2 warnings are pre-existing in unrelated files (theme.ts,
+      QRDisplay.svelte, Send.svelte, TransactionDetailSheet.svelte, History.svelte,
+      client.test.ts, pending-tx-resolver.test.ts). Settings.svelte / Keypad.svelte /
+      types.ts / local.ts add 0.
+
+acceptance_criteria:
+  - change_pin_list_item_opens_modal: PASS
+  - verify_set_confirm_calls_changePin: PASS   # changePin('1234','5678') asserted
+  - wrong_current_pin_shows_error: PASS        # InvalidPinError
+  - new_pin_mismatch_rejected: PASS            # no backend call
+  - success_toast_and_close: PASS
+  - forgot_pin_navigates_to_recovery: PASS     # navigateTo('setup') + ?recover=1
+  - shuffle_default_off: PASS
+  - shuffle_toggle_persists: PASS              # setSettings({ pin_shuffle })
+  - keypad_shuffle_prop_csprng: PASS           # Fisher-Yates + getRandomValues
+  - keypad_fixed_when_false: PASS
+  - pin_shuffle_type_and_storage_merge: PASS
+  - shuffle_wired_to_setup_keypads: PASS
+  - i18n_en_th_parity: PASS
+  - no_plaintext_pin_storage: PASS
+  - state_ts_and_encrypt_ts_untouched: PASS
+
+blockers: []

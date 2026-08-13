@@ -264,6 +264,7 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 {#if open && tx}
+	{@const t = tx}
 	<div
 		class="sheet-backdrop"
 		onclick={handleBackdropClick}
@@ -407,7 +408,7 @@
 									type="button"
 									class="copy-btn"
 									aria-label={$_('common.copy') + ' ' + $_('detail.field_invoice')}
-									onclick={() => copyToClipboard(tx.invoice!, 'invoice')}
+									onclick={() => copyToClipboard(t.invoice!, 'invoice')}
 								>
 									<Iconly name={copiedField === 'invoice' ? 'Check' : 'Copy'} size={14} />
 								</button>
@@ -424,7 +425,7 @@
 									type="button"
 									class="copy-btn"
 									aria-label={$_('common.copy') + ' ' + $_('detail.field_cashu_token')}
-									onclick={() => copyToClipboard(tx.token_hash!, 'token_hash')}
+									onclick={() => copyToClipboard(t.token_hash!, 'token_hash')}
 								>
 									<Iconly name={copiedField === 'token_hash' ? 'Check' : 'Copy'} size={14} />
 								</button>
@@ -448,7 +449,7 @@
 								type="button"
 								class="copy-btn"
 								aria-label={$_('common.copy') + ' ' + $_('detail.field_preimage')}
-								onclick={() => copyToClipboard(tx.preimage!, 'preimage')}
+								onclick={() => copyToClipboard(t.preimage!, 'preimage')}
 							>
 								<Iconly name={copiedField === 'preimage' ? 'Check' : 'Copy'} size={14} />
 							</button>
@@ -473,7 +474,7 @@
 							type="button"
 							class="copy-btn"
 							aria-label={$_('common.copy') + ' ' + $_('detail.field_mint_url')}
-							onclick={() => copyToClipboard(tx.mint_url, 'mint_url')}
+							onclick={() => copyToClipboard(t.mint_url, 'mint_url')}
 						>
 							<Iconly name={copiedField === 'mint_url' ? 'Check' : 'Copy'} size={14} />
 						</button>
@@ -489,7 +490,7 @@
 							type="button"
 							class="copy-btn"
 							aria-label={$_('common.copy') + ' ' + $_('detail.field_tx_id')}
-							onclick={() => copyToClipboard(tx.id, 'tx_id')}
+							onclick={() => copyToClipboard(t.id, 'tx_id')}
 						>
 							<Iconly name={copiedField === 'tx_id' ? 'Check' : 'Copy'} size={14} />
 						</button>

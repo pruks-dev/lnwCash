@@ -1,0 +1,18 @@
+TASK-220 — screenshot-change-pin.png (NOTE: screenshot not possible)
+
+Environment is headless (no browser / display server available), so no PNG
+screenshot could be captured. The Change PIN UI is covered by component tests
+instead (see change-pin-ui-test.log — 6 passing tests):
+
+  - "Change PIN" ListItem renders in the Security section.
+  - Modal opens with current / new / confirm PIN password inputs.
+  - verify → set → confirm calls changePin with the correct args, toasts, closes.
+  - InvalidPinError → wrong-PIN error shown, modal stays open.
+  - mismatched new PIN rejected without calling changePin.
+  - "forgot PIN" link navigates to the setup (seed recovery) route.
+
+Visual structure (Settings → Security section):
+  1. Auto-lock heading + dropdown + "Lock now" button
+  2. Divider
+  3. "Change PIN" ListItem (opens modal)
+  4. "Shuffle PIN keypad" checkbox toggle (default OFF)

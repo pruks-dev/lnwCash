@@ -293,7 +293,7 @@ describe('Cashu mint HTTP client', () => {
 		it('should melt tokens and receive change', async () => {
 			const mockResponse = {
 				paid: true,
-				preimage: 'preimage-123',
+				payment_preimage: 'preimage-123',
 				change: [{ id: 'ks-001', amount: 100, C_: 'change-sig' }]
 			};
 
@@ -307,7 +307,7 @@ describe('Cashu mint HTTP client', () => {
 			const response = await meltTokens(MINT_A, 'melt-quote', inputs, outputs);
 
 			expect(response.paid).toBe(true);
-			expect(response.preimage).toBe('preimage-123');
+			expect(response.payment_preimage).toBe('preimage-123');
 			expect(response.change).toHaveLength(1);
 		});
 

@@ -11,8 +11,21 @@
  *   Import:  seed phrase → convert to private key → encrypt with new PIN → save wallet
  */
 import { decryptKey, encryptKey, hashPin } from '../crypto/encrypt';
-import { privateKeyToSeed, seedToPrivateKey } from './keys';
-import { getEncryptedKey, setEncryptedKey, setPinHash, getWalletState, setWalletState } from './storage';
+import {
+	privateKeyToSeed,
+	seedToPrivateKey,
+	BIP39_SEED_WORD_COUNT
+} from './keys';
+import {
+	getEncryptedKey,
+	getEncryptedMnemonic,
+	setEncryptedKey,
+	setEncryptedMnemonic,
+	clearEncryptedMnemonic,
+	setPinHash,
+	getWalletState,
+	setWalletState
+} from './storage';
 import { setWalletMetadata } from '../storage/local';
 import { InvalidPinError, SeedImportError, WalletLockedError } from './errors';
 
@@ -28,7 +41,7 @@ import { InvalidPinError, SeedImportError, WalletLockedError } from './errors';
  * - Only call this in a secure, private environment.
  *
  * @param pin - The wallet PIN (re-verified for security)
- * @returns 24-word BIP39 seed phrase
+ * @returns 12-word BIP39 seed phrase (or 24-word legacy phrase for old wallets)
  * @throws InvalidPinError if PIN is wrong
  * @throws WalletLockedError if wallet is not initialized
  */
@@ -53,13 +66,16 @@ export async function exportSeed(pin: string): Promise<string> {
 		throw new InvalidPinError();
 	}
 
-	// Decrypt private key
+	// New wallets store the BIP39 mnemonic (encrypted) — return it directly.
+	// A BIP39 mnemonic cannot be reverse-derived from the private key.
+	const encryptedMnemonic = getEncryptedMnemonic();
+	if (encryptedMnemonic) {
+		return await decryptKey(encryptedMnemonic, pin);
+	}
+
+	// Legacy (24-word) wallets: re-derive the direct-mapped phrase from the key
 	const privateKey = await decryptKey(encryptedKey, pin);
-
-	// Convert to seed phrase
-	const seed = privateKeyToSeed(privateKey);
-
-	return seed;
+	return privateKeyToSeed(privateKey);
 }
 
 /**
@@ -74,8 +90,8 @@ export async function exportSeed(pin: string): Promise<string> {
  * 4. Save wallet metadata + encrypted key + PIN hash
  * 5. Set state to LOCKED
  *
- * @param seed - 24-word BIP39 seed phrase
- * @param newPin - New PIN (6+ characters) for the imported wallet
+ * @param seed - 12-word BIP39 seed phrase (or 24-word legacy phrase)
+ * @param newPin - New PIN (4+ characters) for the imported wallet
  * @param walletName - Name for the wallet
  * @returns The public key derived from the seed
  * @throws SeedImportError if seed phrase is invalid
@@ -85,11 +101,13 @@ export async function importSeed(
 	newPin: string,
 	walletName: string
 ): Promise<{ publicKey: string }> {
-	if (newPin.length < 6) {
-		throw new SeedImportError('PIN must be at least 6 characters');
+	if (newPin.length < 4) {
+		throw new SeedImportError('PIN must be at least 4 characters');
 	}
 
-	// Convert seed to private key
+	const words = seed.trim().toLowerCase().split(/\s+/);
+
+	// Convert seed to private key (auto-detects 12-word BIP39 vs 24-word legacy)
 	let privateKey: string;
 	try {
 		privateKey = seedToPrivateKey(seed);
@@ -112,6 +130,16 @@ export async function importSeed(
 	// Save everything
 	setPinHash(pinHashValue);
 	setEncryptedKey(encryptedKey);
+
+	// Persist the mnemonic for 12-word BIP39 so it can be re-exported verbatim.
+	// (Legacy 24-word phrases are re-derived from the key on export instead.)
+	if (words.length === BIP39_SEED_WORD_COUNT) {
+		const encryptedMnemonic = await encryptKey(words.join(' '), newPin);
+		setEncryptedMnemonic(encryptedMnemonic);
+	} else {
+		clearEncryptedMnemonic();
+	}
+
 	setWalletMetadata({ name: walletName, created_at: Date.now() });
 	setWalletState('LOCKED');
 

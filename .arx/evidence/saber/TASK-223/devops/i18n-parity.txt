@@ -1,0 +1,6 @@
+TASK-223 i18n parity check (th = en)
+en.json keys: 361
+th.json keys: 361
+missing in th: 0 
+missing in en: 0 
+PARITY: PASS (0 missing both ways)

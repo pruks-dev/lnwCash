@@ -25,7 +25,7 @@ import {
 	InvalidPinError
 } from '../errors';
 
-const TEST_PIN = '123456';
+const TEST_PIN = '1234';
 const TEST_NAME = 'Test Wallet';
 
 describe('Wallet lifecycle', () => {
@@ -63,8 +63,13 @@ describe('Wallet lifecycle', () => {
 			expect(getStoredState()).toBe('LOCKED');
 		});
 
-		it('should reject PIN shorter than 6 chars', async () => {
-			await expect(createWallet('123', TEST_NAME)).rejects.toThrow(/at least 6/i);
+		it('should reject PIN shorter than 4 chars', async () => {
+			await expect(createWallet('123', TEST_NAME)).rejects.toThrow(/at least 4/i);
+		});
+
+		it('should accept a 4-digit PIN (TASK-209 D5)', async () => {
+			const result = await createWallet('9876', TEST_NAME);
+			expect(result.state).toBe('LOCKED');
 		});
 
 		it('should reject duplicate wallet creation', async () => {

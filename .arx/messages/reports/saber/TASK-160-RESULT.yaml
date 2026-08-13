@@ -1,0 +1,153 @@
+message_id: TASK-160-RESULT
+type: RESULT
+sender: saber
+receiver: orion
+task_id: TASK-160
+verdict: COMPLETE
+
+summary: |
+  v20: Replaced 19 self-claimed 'Iconly 3.0 Bold' icons with verified Solar Linear SVG paths
+  (api.iconify.design/solar, CC BY 4.0). Each icon component preserves its <script lang="ts">
+  props interface, <svg> wrapper attributes (xmlns, width, height, viewBox, fill, stroke,
+  stroke-width, stroke-linecap, stroke-linejoin, class, aria-hidden, role), and PascalCase
+  IconName registration in Icon.svelte.
+
+  Build verification:
+  - svelte-check: 0 errors, 5 pre-existing tsconfig warnings (unrelated)
+  - vite build: PASS (built in 2.03s, 305 modules, 20 entries PWA precache)
+  - All 23 component references across screens/components still compile
+
+  Atomic commit: e7d9d92 — 20 files (17 modified + 3 new untracked)
+  Co-authored-by: Saber <saber@arx.dev>
+
+files_changed:
+  modified:
+    - src/lib/components/icons/ArrowLeft.svelte
+    - src/lib/components/icons/ArrowRight.svelte
+    - src/lib/components/icons/Check.svelte
+    - src/lib/components/icons/Close.svelte
+    - src/lib/components/icons/Copy.svelte
+    - src/lib/components/icons/History.svelte
+    - src/lib/components/icons/Icon.svelte
+    - src/lib/components/icons/Mint.svelte
+    - src/lib/components/icons/Minus.svelte
+    - src/lib/components/icons/Plus.svelte
+    - src/lib/components/icons/Receive.svelte
+    - src/lib/components/icons/Scan.svelte
+    - src/lib/components/icons/Send.svelte
+    - src/lib/components/icons/Settings.svelte
+    - src/lib/components/icons/Swap.svelte
+    - src/lib/components/icons/Time.svelte
+    - src/lib/components/icons/Wallet.svelte
+  added:
+    - src/lib/components/icons/Banknote.svelte
+    - src/lib/components/icons/Lightning.svelte
+    - src/lib/components/icons/Warning.svelte
+
+  total: 270 insertions(+), 74 deletions(-) — 20 files
+
+proof_list:
+  - svelte-check.log
+  - vite-build.log
+  - vitest-icons.log
+  - commit-stat.txt
+
+evidence_count: 4
+
+mapping:
+  Wallet:      wallet-linear
+  History:     history-linear
+  Send:        arrow-up-linear
+  Receive:     arrow-down-linear
+  Swap:        transfer-horizontal-linear
+  Settings:    settings-linear
+  Scan:        scanner-linear
+  Mint:        banknote-2-linear
+  Check:       check-circle-linear
+  Copy:        copy-linear
+  Close:       close-square-linear
+  ArrowLeft:   arrow-left-linear
+  ArrowRight:  arrow-right-linear
+  Plus:        add-circle-linear
+  Minus:       minus-circle-linear
+  Time:        clock-circle-linear
+  Lightning:   bolt-linear
+  Banknote:    banknote-linear
+  Warning:     danger-triangle-linear
+
+test_results:
+  svelte_check:
+    errors: 0
+    warnings: 5
+    warning_source: pre-existing tsconfig.json (deprecated moduleResolution=node10, project references)
+  vite_build:
+    status: PASS
+    duration: 2.03s
+    modules_transformed: 305
+    bundle_index_js: 486.71 kB (gzip: 154.77 kB)
+    bundle_css: 84.33 kB (gzip: 12.73 kB)
+    pwa_precache_entries: 20
+    unrelated_warnings:
+      - INEFFECTIVE_DYNAMIC_IMPORT for idb (pre-existing)
+      - INEFFECTIVE_DYNAMIC_IMPORT for proofsDb (pre-existing)
+  vitest_icons_only:
+    files: 6
+    tests: 69
+    passed: 64
+    failed: 5
+    failed_test_ids:
+      - src/__tests__/components/icons/Banknote.test.ts > should have rectangle path + 2 circles
+      - src/__tests__/components/icons/Icon.test.ts > should render Lightning icon (TASK-157)
+      - src/__tests__/components/icons/Icon.test.ts > should render Banknote icon (TASK-157)
+      - src/__tests__/components/icons/Iconly.test.ts > should render Scan icon at 28px with white color (FAB use case)
+      - src/__tests__/components/icons/Warning.test.ts > should have triangle path + exclamation (2 paths)
+    failure_cause: tests written for OLD Iconly paths (specific shape signatures: 2 circles for Banknote,
+                   "L4 14" zigzag for Lightning, ≥4 paths for Scan, 3 paths for Warning) — Solar Linear paths
+                   use different structure (no circles for Banknote, smooth path for Lightning, 1 path for
+                   Scan, 2 paths + 1 circle for Warning). Tests check OLD geometry, not behavior.
+    in_scope_to_fix: false (tests are in src/__tests__/components/icons/, NOT in src/lib/components/icons/)
+    follow_up_recommendation: a separate task should update these brittle shape assertions to verify
+                              new Solar Linear geometry (e.g., "l5-5" for Check tick, "m14.5 9.5" for Close,
+                              or just drop path-data string assertions and check SVG/shape rendering behavior)
+
+references_still_compile_cleanly: true
+  files_importing_icons: 14 files (App.svelte, TopAppBar.svelte, Fab.svelte, QRDisplay.svelte,
+                              Settings.svelte, Send.svelte, Receive.svelte, Home.svelte,
+                              F007-QRScan.svelte, BottomNav.svelte via Iconly, Iconly.svelte)
+  svelte_check_errors: 0
+
+out_of_scope_items_not_modified:
+  - src/__tests__/components/icons/Banknote.test.ts (untracked, pre-existing TASK-157)
+  - src/__tests__/components/icons/Lightning.test.ts (untracked, pre-existing TASK-157)
+  - src/__tests__/components/icons/Warning.test.ts (untracked, pre-existing TASK-157)
+  - src/__tests__/components/icons/Icon.test.ts (modified by TASK-157 — out of scope)
+  - src/components/BottomNav.svelte (modified by TASK-159)
+  - src/screens/Receive.svelte (modified by TASK-159)
+  - src/screens/Send.svelte (modified by TASK-159)
+  - src/lib/design/tokens.css (modified by TASK-159)
+  - src/lib/iconly/Iconly.svelte (wrapper — preserved unchanged per task constraints)
+  - src/lib/components/icons/Menu.svelte (not in 19-icon mapping, also Iconly-stamped but
+    out of scope per task mapping)
+
+commit:
+  hash: e7d9d92ef2bf2cc155ff3f0163a6b486f42a7895
+  short: e7d9d92
+  message: v20: Replace all icons with verified Solar Linear (api.iconify.design/solar)
+  author: Saber <saber@arx.dev>
+
+issues_encountered:
+  - description: 5 vitest icon tests fail because they assert OLD Iconly path geometry
+                  (circle counts, zigzag path data strings, path element counts).
+    impact: none on build (vite build + svelte-check both PASS)
+    resolution: flagged as out-of-scope follow-up — tests are in src/__tests__/, not in
+                the task's bounded slice src/lib/components/icons/
+
+  - description: pnpm binary not available in PATH — used npx vite build instead.
+    impact: none (npx finds vite from local node_modules/.bin)
+    resolution: used npx vite build successfully
+
+  - description: src/lib/components/icons/Menu.svelte also has the false 'Iconly 3.0 Bold'
+                  comment but is NOT in the 19-icon mapping.
+    impact: 1 file in icons/ remains with unverified Iconly claim
+    resolution: not modified per task constraints (only 19 icons in mapping). Flagged
+                as potential follow-up task for Menu icon (hamburger-menu-linear from Solar)

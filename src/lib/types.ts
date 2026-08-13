@@ -42,6 +42,8 @@ export interface WalletSettings {
 	language: string;
 	theme: ThemeMode;
 	default_mint: string;
+	/** TASK-220: shuffle PIN keypad button positions (default off per Commander). */
+	pin_shuffle: boolean;
 }
 
 export interface KeysetCacheEntry {

@@ -77,7 +77,8 @@ describe('ErrorBoundary', () => {
 		window.dispatchEvent(errorEvent);
 
 		await vi.waitFor(() => {
-			expect(screen.getByText('common.retry')).toBeTruthy();
+			// ErrorBoundary uses hardcoded Thai fallback (no i18n `_` import)
+			expect(screen.getByText('ลองใหม่')).toBeTruthy();
 		}, { timeout: 500 });
 	});
 });

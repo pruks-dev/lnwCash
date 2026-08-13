@@ -1,0 +1,152 @@
+================================================================================
+TASK-213 svelte-check — Build Verification Gate v1.1
+Working tree: /home/debian/arx-projects/lnw-cash  (HEAD = 644f56c, uncommitted Wave 1-3 on top)
+Command: npx svelte-check --tsconfig ./tsconfig.app.json
+Result : 16 errors + 2 warnings in 8 files  (exit code 1)
+================================================================================
+
+VERDICT FOR THIS CHECK: RED — 16 PRE-EXISTING errors, 0 NEW errors.
+
+Classification method:
+  - Errors were compared byte-for-byte against a clean git worktree checked out at
+    HEAD = 644f56c (the pre-INTENT-003 baseline). See svelte-check-HEAD-baseline.txt.
+  - Normalized (path-stripped) output of working tree == HEAD baseline. The ONLY
+    diff is the boilerplate "Loading svelte-check in workspace" header line.
+  - Therefore all 16 errors + 2 warnings are PRE-EXISTING, NOT introduced by
+    Wave 1-3 work. 0 new errors.
+
+Pre-existing error files (all UNMODIFIED vs HEAD — `git diff HEAD -- <file>` is empty):
+  1.  src/lib/cashu/__tests__/client.test.ts           1 error
+  2.  src/lib/components/QRDisplay.svelte               1 error
+  3.  src/lib/components/TransactionDetailSheet.svelte  5 errors
+  4.  src/lib/design/theme.ts                           1 error
+  5.  src/lib/wallet/__tests__/pending-tx-resolver.test.ts  1 error
+  6.  src/screens/Receive.svelte                        2 errors
+  7.  src/screens/Send.svelte                           5 errors
+  = 16 errors
+  8.  src/screens/History.svelte                        2 warnings (unused CSS, not errors)
+
+Wave 1-3 modified/new files: 0 svelte-check errors (no overlap with the 8 files above).
+  Modified files: src/lib/cashu/client.ts, src/lib/wallet/{index,keys,mint,seed,state,storage,wordlist}.ts,
+                  src/screens/{Settings,Setup}.svelte, src/locales/{en,th}.json + new wallet modules + tests.
+
+================================================================================
+FULL ERROR LIST (working tree)
+================================================================================
+Loading svelte-check in workspace: /home/debian/arx-projects/lnw-cash
+Getting Svelte diagnostics...
+
+/home/debian/arx-projects/lnw-cash/src/lib/design/theme.ts:45:38
+Error: Type 'string' does not satisfy the constraint 'Stores'.
+  Type 'string' is not assignable to type 'Stores'. 
+/** Resolved theme actually applied to DOM */
+export const resolvedTheme = derived<ThemeMode, ResolvedTheme>(
+	themeMode,
+
+/home/debian/arx-projects/lnw-cash/src/lib/components/QRDisplay.svelte:94:47
+Error: This condition will always return true since this function is always defined. Did you mean to call it instead? (ts)
+				</button>
+				{#if typeof navigator !== 'undefined' && (navigator.share)}
+					<button type="button" class="qr-action-btn" onclick={handleShare} title={$_('common.share')}>
+
+/home/debian/arx-projects/lnw-cash/src/screens/Receive.svelte:417:29
+Error: Argument of type 'string | null' is not assignable to parameter of type 'string'.
+  Type 'null' is not assignable to type 'string'. (ts)
+			try {
+				await updateTransaction(pendingTxId, { status: 'confirmed' });
+				notifyMintConfirmed(pendingAmount);
+
+/home/debian/arx-projects/lnw-cash/src/screens/Receive.svelte:450:34
+Error: Argument of type 'string | null' is not assignable to parameter of type 'string'.
+  Type 'null' is not assignable to type 'string'. (ts)
+			// Mark pending transaction as failed
+			try { await updateTransaction(pendingTxId, { status: 'failed' }); } catch { /* best-effort */ }
+		}
+
+/home/debian/arx-projects/lnw-cash/src/screens/Send.svelte:634:58
+Error: This comparison appears to be unintentional because the types '"error" | "idle" | "validating" | "confirming"' and '"sending"' have no overlap. (ts)
+							rows={3}
+							disabled={lightningState === 'fee-calculating' || lightningState === 'sending'}
+							aria-label={$_('screen.send.enter_invoice')}
+
+/home/debian/arx-projects/lnw-cash/src/screens/Send.svelte:638:81
+Error: This comparison appears to be unintentional because the types '"error" | "idle" | "validating" | "fee-calculating" | "confirming"' and '"sending"' have no overlap. (ts)
+						<div class="invoice-input-actions">
+							<Button variant="ghost" size="sm" onclick={handlePasteInvoice} disabled={lightningState === 'sending'}>
+								{#snippet children()}<span class="btn-icon-text"><span class="btn-icon-label">{$_('common.paste')}</span></span>{/snippet}
+
+/home/debian/arx-projects/lnw-cash/src/screens/Send.svelte:642:72
+Error: This comparison appears to be unintentional because the types '"error" | "idle" | "validating" | "fee-calculating" | "confirming"' and '"sending"' have no overlap. (ts)
+							{#if onQRScan}
+								<Button variant="ghost" size="sm" onclick={onQRScan} disabled={lightningState === 'sending'}>
+									{#snippet children()}<span class="btn-icon-text"><Iconly name="Scan" size={14} /><span class="btn-icon-label">{$_('screen.send.scan_qr')}</span></span>{/snippet}
+
+/home/debian/arx-projects/lnw-cash/src/screens/Send.svelte:692:123
+Error: This comparison appears to be unintentional because the types '"error" | "idle" | "validating" | "fee-calculating" | "confirming"' and '"sending"' have no overlap. (ts)
+					<div class="action-buttons">
+						<Button variant="ghost" size="md" onclick={handleCheckFee} loading={lightningState === 'fee-calculating'} disabled={lightningState === 'sending'}>
+							{#snippet children()}{$_('screen.send.check_fee')}{/snippet}
+
+/home/debian/arx-projects/lnw-cash/src/screens/Send.svelte:699:18
+Error: This comparison appears to be unintentional because the types '"error" | "idle" | "validating" | "fee-calculating" | "confirming"' and '"sending"' have no overlap. (ts)
+							onclick={handleConfirmSend}
+							disabled={lightningState === 'sending'}
+						>
+
+/home/debian/arx-projects/lnw-cash/src/lib/components/TransactionDetailSheet.svelte:410:41
+Error: 'tx' is possibly 'null'. (ts)
+									aria-label={$_('common.copy') + ' ' + $_('detail.field_invoice')}
+									onclick={() => copyToClipboard(tx.invoice!, 'invoice')}
+								>
+
+/home/debian/arx-projects/lnw-cash/src/lib/components/TransactionDetailSheet.svelte:427:41
+Error: 'tx' is possibly 'null'. (ts)
+									aria-label={$_('common.copy') + ' ' + $_('detail.field_cashu_token')}
+									onclick={() => copyToClipboard(tx.token_hash!, 'token_hash')}
+								>
+
+/home/debian/arx-projects/lnw-cash/src/lib/components/TransactionDetailSheet.svelte:451:40
+Error: 'tx' is possibly 'null'. (ts)
+								aria-label={$_('common.copy') + ' ' + $_('detail.field_preimage')}
+								onclick={() => copyToClipboard(tx.preimage!, 'preimage')}
+							>
+
+/home/debian/arx-projects/lnw-cash/src/lib/components/TransactionDetailSheet.svelte:476:39
+Error: 'tx' is possibly 'null'. (ts)
+							aria-label={$_('common.copy') + ' ' + $_('detail.field_mint_url')}
+							onclick={() => copyToClipboard(tx.mint_url, 'mint_url')}
+						>
+
+/home/debian/arx-projects/lnw-cash/src/lib/components/TransactionDetailSheet.svelte:492:39
+Error: 'tx' is possibly 'null'. (ts)
+							aria-label={$_('common.copy') + ' ' + $_('detail.field_tx_id')}
+							onclick={() => copyToClipboard(tx.id, 'tx_id')}
+						>
+
+/home/debian/arx-projects/lnw-cash/src/screens/History.svelte:558:2
+Warn: Unused CSS selector "[data-theme='dark'] .tx-type-icon.tx-receive"
+https://svelte.dev/e/css_unused_selector (svelte)
+
+	[data-theme='dark'] .tx-type-icon.tx-receive {
+		background: rgba(77, 182, 172, 0.18);
+
+/home/debian/arx-projects/lnw-cash/src/screens/History.svelte:642:2
+Warn: Unused CSS selector "[data-theme='dark'] .tx-status-badge.status-confirmed"
+https://svelte.dev/e/css_unused_selector (svelte)
+
+	[data-theme='dark'] .tx-status-badge.status-confirmed {
+		background: rgba(77, 182, 172, 0.18);
+
+/home/debian/arx-projects/lnw-cash/src/lib/cashu/__tests__/client.test.ts:310:20
+Error: Property 'preimage' does not exist on type 'PostMeltResponse'. 
+			expect(response.paid).toBe(true);
+			expect(response.preimage).toBe('preimage-123');
+			expect(response.change).toHaveLength(1);
+
+/home/debian/arx-projects/lnw-cash/src/lib/wallet/__tests__/pending-tx-resolver.test.ts:35:34
+Error: Cannot find module '../../../types' or its corresponding type declarations. 
+import { resolvePendingTransactions } from '../pending-tx-resolver';
+import type { Transaction } from '../../../types';
+
+====================================
+svelte-check found 16 errors and 2 warnings in 8 files

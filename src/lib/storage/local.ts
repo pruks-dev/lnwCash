@@ -99,7 +99,9 @@ export function clearWalletMetadata(): boolean {
 const DEFAULT_SETTINGS: WalletSettings = {
 	language: 'en',
 	theme: 'dark',
-	default_mint: ''
+	default_mint: '',
+	// TASK-220: PIN keypad shuffle — default OFF per Commander.
+	pin_shuffle: false
 };
 
 export function getSettings(): WalletSettings {
@@ -111,7 +113,9 @@ export function getSettings(): WalletSettings {
 		language: typeof data.language === 'string' ? data.language : DEFAULT_SETTINGS.language,
 		theme: validThemes.includes(data.theme as ThemeMode) ? (data.theme as ThemeMode) : DEFAULT_SETTINGS.theme,
 		default_mint:
-			typeof data.default_mint === 'string' ? data.default_mint : DEFAULT_SETTINGS.default_mint
+			typeof data.default_mint === 'string' ? data.default_mint : DEFAULT_SETTINGS.default_mint,
+		pin_shuffle:
+			typeof data.pin_shuffle === 'boolean' ? data.pin_shuffle : DEFAULT_SETTINGS.pin_shuffle
 	};
 }
 

@@ -1,0 +1,32 @@
+AREA 4 — MINT KEYSET FETCH
+Generated: 2026-08-10T17:58:02.950Z
+URL: https://100.86.66.4:5173 (dev) + direct mint API
+Profile: Pixel 5, no throttling (raw latency on container network)
+
+1 mint (mint.lnw.cash via /api/mint proxy):
+  samples: [752, 274, 276, 270, 306] ms
+  summary: {
+  "n": 5,
+  "min": 270.19999980926514,
+  "max": 752,
+  "mean": 375.5799999713898,
+  "median": 276,
+  "p95": 752
+}
+  threshold: ≤ 2000 ms (p95)
+  verdict: PASS
+
+3 mints (sequential direct: mint.lnw.cash, stablenut.umint.cash, mint.minibits.cash):
+  samples: [1378, 1661, 1534, 1882, 1745] ms
+  summary: {
+  "n": 5,
+  "min": 1378.2999999523163,
+  "max": 1881.5,
+  "mean": 1640.0599999904632,
+  "median": 1661.1000001430511,
+  "p95": 1881.5
+}
+  threshold: ≤ 5000 ms (p95)
+  verdict: PASS
+
+Overall Area 4: PASS

@@ -1,0 +1,83 @@
+message_id: TASK-215-RESULT
+type: RESULT
+sender: saber
+receiver: orion
+task_id: TASK-215
+verdict: COMPLETE
+
+summary: |
+  F-027-001 part 1 — NUT-13 seed wiring at the wallet lifecycle level.
+
+  state.ts:
+    - import setActiveSeed / clearActiveSeed / seedFromMnemonic from ./nut13
+    - unlockWallet(): after private-key decrypt, decrypts stored BIP39 mnemonic
+      (getEncryptedMnemonic) and calls setActiveSeed(seedFromMnemonic(mnemonic))
+      inside try/catch — graceful skip on corrupt/missing mnemonic (legacy 24-word
+      wallets store none). No crypto derivation changed.
+    - lockWallet() + deleteWallet(): added clearActiveSeed() alongside
+      unlockedPrivateKey = null.
+
+  Consequence handled: setting the active seed flips the mint path to deterministic
+  NUT-13 derivation (mint.ts:273 already reads `seed ?? getActiveSeed()`). The
+  pre-existing mint.test.ts used a fake keyset ID 'keyset-abc123' that is NOT a
+  valid NUT-13 v2 keyset, so deriveSecretAndR (correctly) rejected it. Updated the
+  test fixture to the official v2 keyset ID (same as mint-nut13.test.ts) — a
+  fixture correction only, no production code changed.
+
+  Pre-existing flaky failures (verified by reverting my change, still fail):
+    - lockout.test.ts  1-2 tests — "Test timed out in 5000ms" (PBKDF2 600k iters)
+    - autolock.test.ts — flaky under full-suite load (passes in isolation)
+  Both unrelated to seed wiring.
+
+files_changed:
+  modified:
+    - src/lib/wallet/state.ts                    # seed wiring (import + unlock/lock/delete)
+    - src/lib/wallet/__tests__/mint.test.ts      # KEYSET_ID → valid NUT-13 v2 (fixture fix)
+  added:
+    - src/lib/wallet/__tests__/state-seed-wiring.test.ts
+
+proof_list:
+  - state.ts.diff                  # git diff src/lib/wallet/state.ts
+  - seed-wiring-test.log           # lifecycle unlock/lock/delete (10/10)
+  - legacy-24word-test.log         # 24-word legacy unlock (2/2)
+  - mnemonic-missing-fallback.log  # missing/corrupt mnemonic fallback (4/4)
+  - wallet-suite.log               # full src/lib/wallet run (pre-existing timeouts)
+  - verification-summary.md
+
+evidence_count: 6
+
+test_results:
+  targeted_tests:
+    files: 2                        # state.test.ts + state-seed-wiring.test.ts
+    tests: 28
+    passed: 28
+    failed: 0
+  seed_wiring_file:
+    tests: 10
+    passed: 10
+    failed: 0
+  mint_fixture:
+    file: src/lib/wallet/__tests__/mint.test.ts
+    tests: 18
+    passed: 18
+    failed: 0
+  full_suite:
+    passed: 310
+    failed: 0
+    note: >
+      Final clean run: 20/20 files, 310/310 tests green. Intermittent flakiness is
+      pre-existing and unrelated: lockout.test.ts can hit "Test timed out in 5000ms"
+      (PBKDF2 600k-iteration counter encryption under load — reproduces with my change
+      REVERTED), and autolock.test.ts can flake under full-suite load (passes 28/28 in
+      isolation). Neither involves unlockWallet/lockWallet/deleteWallet seed behavior.
+
+acceptance_criteria:
+  - unlock_sets_active_seed: PASS              # getActiveSeed() non-null after unlock
+  - lock_clears_active_seed: PASS              # getActiveSeed() null after lock
+  - delete_clears_active_seed: PASS            # getActiveSeed() null after delete
+  - legacy_24word_no_regression: PASS          # unlock works, no crash, seed null
+  - missing_or_corrupt_mnemonic_graceful: PASS # unlock succeeds, no throw
+  - crypto_derivation_unchanged: PASS          # BIP39/PBKDF2/NUT-13 KDF untouched
+  - no_ui_files_touched: PASS
+
+blockers: []

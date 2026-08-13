@@ -1,0 +1,115 @@
+diff --git a/src/screens/Settings.svelte b/src/screens/Settings.svelte
+index 03163a4..06dc9f7 100644
+--- a/src/screens/Settings.svelte
++++ b/src/screens/Settings.svelte
+@@ -26,6 +26,9 @@
+ 	// Mint Settings sub-page (F-042: Manage Mint routing)
+ 	import MintSettings from '../routes/settings/mint/+page.svelte';
+ 
++	// TASK-210: Auto-lock timer + timeout config
++	import { getAutolockTimeout, setAutolockTimeout, startAutoLock, AUTOLOCK_OPTIONS } from '$lib/wallet/autolock';
++
+ 	interface Props {
+ 		onBack?: () => void;
+ 	}
+@@ -35,6 +38,7 @@
+ 	let currentLang: string = $state('en');
+ 	let currentTheme: ThemeMode = $state('system');
+ 	let showMintManage: boolean = $state(false); // F-042: sub-view for Manage Mint
++	let autoLockTimeout: number = $state(5); // TASK-210: auto-lock timeout (minutes)
+ 
+ 	$effect(() => {
+ 		try {
+@@ -45,6 +49,14 @@
+ 			currentLang = 'en';
+ 			currentTheme = 'system';
+ 		}
++
++		// TASK-210: initialise auto-lock from persisted config + arm the timer
++		try {
++			autoLockTimeout = getAutolockTimeout();
++		} catch {
++			autoLockTimeout = 5;
++		}
++		startAutoLock();
+ 	});
+ 
+ 	function switchLanguage(lang: string) {
+@@ -58,6 +70,12 @@
+ 		setTheme(theme);
+ 	}
+ 
++	function handleAutoLockChange(event: Event) {
++		const value = Number((event.currentTarget as HTMLSelectElement).value);
++		autoLockTimeout = value;
++		setAutolockTimeout(value);
++	}
++
+ 	function handleBack() {
+ 		onBack?.();
+ 	}
+@@ -163,6 +181,31 @@
+ 			</div>
+ 		</Card>
+ 
++		<!-- ─── Security Section (TASK-210 Auto-lock) ─────── -->
++		<Card variant="basic" padding="md">
++			<div class="section">
++				<Heading level="h4">Auto-lock</Heading>
++				<Body size="sm" color="secondary">Lock wallet automatically after inactivity</Body>
++				<select
++					class="autolock-select"
++					aria-label="Auto-lock timeout"
++					value={String(autoLockTimeout)}
++					onchange={handleAutoLockChange}
++				>
++					{#each AUTOLOCK_OPTIONS as option}
++						<option value={option}>
++							{option === 0 ? 'Never' : `${option} min`}
++						</option>
++					{/each}
++				</select>
++				{#if autoLockTimeout === 0}
++					<p class="autolock-warning">
++						Warning: "Never" keeps your wallet unlocked until you lock it manually.
++					</p>
++				{/if}
++			</div>
++		</Card>
++
+ 		<!-- ─── About Section ─────────────────────────────── -->
+ 		<Card variant="basic" padding="md">
+ 			<div class="section">
+@@ -291,6 +334,32 @@
+ 		gap: var(--space-sm);
+ 	}
+ 
++	/* TASK-210: Auto-lock timeout dropdown */
++	.autolock-select {
++		width: 100%;
++		padding: var(--space-sm) var(--space-md);
++		font-family: var(--font-family);
++		font-size: var(--font-size-md);
++		color: var(--color-text);
++		background: var(--color-surface-variant);
++		border: 1px solid var(--color-border);
++		border-radius: var(--radius-md);
++		cursor: pointer;
++		transition: border-color var(--transition-fast);
++	}
++
++	.autolock-select:focus-visible {
++		outline: 2px solid var(--color-primary);
++		outline-offset: -2px;
++	}
++
++	.autolock-warning {
++		margin: 0;
++		font-size: var(--font-size-sm);
++		color: var(--color-warning);
++		line-height: var(--line-height-normal);
++	}
++
+ 	.detail-row {
+ 		display: flex;
+ 		justify-content: space-between;

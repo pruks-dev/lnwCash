@@ -22,6 +22,29 @@ import type {
 import { hash_to_curve } from './blind';
 import { hexToBytes } from '@noble/hashes/utils.js';
 
+// ─── NUT-09: Restore types ───────────────────────────────────
+
+/** A blinded output sent to POST /v1/restore (amount is a placeholder). */
+export interface RestoreBlindedMessage {
+	amount: number;
+	id: string;
+	B_: string;
+}
+
+/** A blind signature returned by POST /v1/restore. */
+export interface RestoreBlindSignature {
+	id: string;
+	amount: number;
+	C_: string;
+	dleq?: { e: string; s: string };
+}
+
+/** POST /v1/restore response (outputs + signatures aligned 1:1). */
+export interface PostRestoreResponse {
+	outputs?: RestoreBlindedMessage[];
+	signatures: RestoreBlindSignature[];
+}
+
 // ─── Error types ─────────────────────────────────────────────
 
 export class CashuError extends Error {
@@ -69,6 +92,8 @@ const STANDARD_PATHS: Record<string, string> = {
 	melt_operation: '/v1/melt/bolt11',
 	check_state: '/v1/checkstate',
 	swap: '/v1/swap',
+	/** NUT-09: restore previously-issued blind signatures (TASK-206) */
+	restore: '/v1/restore',
 	/** TASK-084: quote status check endpoints */
 	mint_quote_check: '/v1/mint/quote/bolt11',
 	melt_quote_check: '/v1/melt/quote/bolt11',
@@ -172,7 +197,13 @@ function resolveQuotePath(
  */
 export function resolveEndpointPath(
 	mintInfo: MintInfo | undefined,
-	operationKey: 'mint_operation' | 'mint_quote' | 'melt_operation' | 'melt_quote' | 'swap'
+	operationKey:
+		| 'mint_operation'
+		| 'mint_quote'
+		| 'melt_operation'
+		| 'melt_quote'
+		| 'swap'
+		| 'restore'
 ): string {
 	const standardPath = STANDARD_PATHS[operationKey] ?? '/v1/info';
 
@@ -193,6 +224,9 @@ export function resolveEndpointPath(
 
 		case 'swap':
 			return resolveOperationPath(mintInfo, 'POST', standardPath, ['/swap']);
+
+		case 'restore':
+			return resolveOperationPath(mintInfo, 'POST', standardPath, ['/restore']);
 
 		default:
 			return standardPath;
@@ -404,6 +438,30 @@ export async function checkState(
 		}
 		throw e;
 	}
+}
+
+/**
+ * NUT-09: Request the mint to re-issue previously-issued blind signatures.
+ *
+ * Used for wallet recovery (NUT-13): the wallet regenerates the same
+ * `BlindedMessages` from its seed and asks the mint to return the
+ * `BlindSignatures` it originally issued for those blinded messages.
+ *
+ * @param mintUrl - The Cashu mint URL
+ * @param outputs - Regenerated blinded outputs ({ amount, id, B_ })
+ * @param mintInfo - Optional; resolves the path via NUT-19 cached_endpoints
+ * @returns { outputs, signatures } — signatures aligned 1:1 with outputs
+ */
+export async function restoreOutputs(
+	mintUrl: string,
+	outputs: RestoreBlindedMessage[],
+	mintInfo?: MintInfo
+): Promise<PostRestoreResponse> {
+	const path = resolveEndpointPath(mintInfo, 'restore');
+	return fetchFromMint<PostRestoreResponse>(mintUrl, path, {
+		method: 'POST',
+		body: { outputs }
+	});
 }
 
 /**

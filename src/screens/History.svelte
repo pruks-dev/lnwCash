@@ -555,11 +555,6 @@
 		color: var(--color-secondary);
 	}
 
-	[data-theme='dark'] .tx-type-icon.tx-receive {
-		background: rgba(77, 182, 172, 0.18);
-		color: var(--color-secondary-light);
-	}
-
 	:global([data-theme='dark']) .tx-type-icon.tx-send {
 		background: rgba(38, 198, 218, 0.28);
 		color: var(--color-primary-light);
@@ -637,11 +632,6 @@
 	.tx-status-badge.status-confirmed {
 		background: rgba(20, 184, 166, 0.22);
 		color: var(--color-secondary);
-	}
-
-	[data-theme='dark'] .tx-status-badge.status-confirmed {
-		background: rgba(77, 182, 172, 0.18);
-		color: var(--color-secondary-light);
 	}
 	.tx-status-badge.status-failed {
 		background: var(--color-error);

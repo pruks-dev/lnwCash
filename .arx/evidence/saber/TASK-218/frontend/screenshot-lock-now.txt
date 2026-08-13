@@ -1,0 +1,18 @@
+Screenshot not possible — headless CI/sandbox environment (no display / no browser session).
+
+Manual "lock now" button verification is instead covered by unit tests:
+
+1. src/__tests__/screens/Settings.autolock.test.ts
+   - "renders a manual 'lock now' button" (getByRole button name 'settings.lock_now')
+   - "clicking 'lock now' calls lockNow (which locks + redirects)"
+
+2. src/lib/wallet/__tests__/autolock.test.ts
+   - "manual lock (lockNow) locks + clears session PIN + redirects home + flips store"
+
+Button markup (src/screens/Settings.svelte, Security section):
+  <button type="button" class="lock-now-btn" onclick={handleLockNow}
+          aria-label={$_('settings.lock_now')}>{$_('settings.lock_now')}</button>
+
+i18n keys (en/th parity):
+  en: "settings.lock_now": "Lock now"
+  th: "settings.lock_now": "ล็อกทันที"

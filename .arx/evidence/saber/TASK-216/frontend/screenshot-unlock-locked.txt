@@ -1,0 +1,27 @@
+# Screenshot note — UnlockPrompt locked (countdown) state
+
+No screenshot was captured. Reason (honest):
+
+1. Rendering the locked state visually requires booting the Vite dev server
+   (which demands the local HTTPS cert at cert/key.pem) and driving a headless
+   browser (Playwright) to open the unlock modal, seed the encrypted lockout
+   counter, and trigger a lock — outside this task's bounded frontend slice and
+   not covered by the existing test harness.
+
+2. The lockout UI is instead proven at the component level with jsdom tests
+   (src/components/__tests__/unlock-prompt.test.ts), which assert the rendered
+   DOM when `getLockoutStatus()` returns a locked status:
+     - a `<p class="unlock-locked" role="alert" aria-live="polite">` is rendered
+     - it contains the soft-lock message key `unlock.locked_soft` (or
+       `unlock.locked_hard` for the hard tier)
+     - the message interpolates `{time}` as `mm:ss` via `formatCountdown(remainingMs)`
+     - the PIN input is `disabled` and the confirm button is `disabled`
+
+Countdown behavior: the component tracks `lockUntil` (absolute epoch ms) and a
+`nowTick` that advances via a 1-second `setInterval` (`$effect`), deriving
+`remainingMs` and formatting it as `m:ss`. When `remainingMs` reaches 0 the lock
+is cleared and the input re-enables.
+
+Rendered example (soft lock, ~5:00 remaining):
+  "Too many attempts — try again in 5:00"
+  (th) "พยายามผิดหลายครั้งเกินไป — ลองอีกครั้งใน 5:00"

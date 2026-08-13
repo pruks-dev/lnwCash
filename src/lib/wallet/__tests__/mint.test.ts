@@ -41,7 +41,7 @@ vi.mock('../../cashu/client', () => {
 	return {
 		getMintInfo: vi.fn(),
 		getKeysets: vi.fn().mockResolvedValue([
-			{ id: 'keyset-abc123', unit: 'sat', active: true }
+			{ id: '015ba18a8adcd02e715a58358eb618da4a4b3791151a4bee5e968bb88406ccf76a', unit: 'sat', active: true }
 		]),
 		getKeys: vi.fn(),
 		requestMintQuote,
@@ -73,10 +73,10 @@ vi.mock('../../cashu/blind', () => ({
 // Mock keyset module — fetchAndCacheKeysets is called directly by requestMint
 vi.mock('../../cashu/keyset', () => ({
 	fetchAndCacheKeysets: vi.fn().mockResolvedValue([
-		{ id: 'keyset-abc123', unit: 'sat', active: true, input_fee_ppk: 0, keys: { '1': '02' + 'ff'.repeat(32) }, last_updated: Date.now() }
+		{ id: '015ba18a8adcd02e715a58358eb618da4a4b3791151a4bee5e968bb88406ccf76a', unit: 'sat', active: true, input_fee_ppk: 0, keys: { '1': '02' + 'ff'.repeat(32) }, last_updated: Date.now() }
 	]),
 	getKeysetById: vi.fn().mockReturnValue({
-		id: 'keyset-abc123', unit: 'sat', active: true, input_fee_ppk: 0, keys: { '1': '02' + 'ff'.repeat(32) }, last_updated: Date.now()
+		id: '015ba18a8adcd02e715a58358eb618da4a4b3791151a4bee5e968bb88406ccf76a', unit: 'sat', active: true, input_fee_ppk: 0, keys: { '1': '02' + 'ff'.repeat(32) }, last_updated: Date.now()
 	}),
 	getAllKeysets: vi.fn().mockReturnValue([]),
 	rotateKeysets: vi.fn(),
@@ -96,7 +96,11 @@ import { getTransactions, clearTransactions } from '../../storage/db';
 const TEST_PIN = '123456';
 const TEST_NAME = 'Test Wallet';
 const MINT_URL = 'https://mint.example.com';
-const KEYSET_ID = 'keyset-abc123';
+// TASK-215: valid NUT-13 v2 keyset ID (version byte "01") — required now that
+// unlockWallet() sets the active seed and the mint path derives deterministic
+// secrets. The previous fake ID ("keyset-abc123") is not a valid v2 keyset and
+// the deterministic path correctly rejects it.
+const KEYSET_ID = '015ba18a8adcd02e715a58358eb618da4a4b3791151a4bee5e968bb88406ccf76a';
 
 // Create mock signatures matching the output amounts
 function makeMockSignatures(amounts: number[]) {
@@ -164,7 +168,7 @@ describe('Mint flow', () => {
 		const keysetModule = await import('../../cashu/keyset');
 		const mockFetchKeysets = keysetModule.fetchAndCacheKeysets as ReturnType<typeof vi.fn>;
 		mockFetchKeysets.mockResolvedValue([
-			{ id: 'keyset-abc123', unit: 'sat', active: true, input_fee_ppk: 0, keys: { '1': '02' + 'ff'.repeat(32) }, last_updated: Date.now() }
+			{ id: '015ba18a8adcd02e715a58358eb618da4a4b3791151a4bee5e968bb88406ccf76a', unit: 'sat', active: true, input_fee_ppk: 0, keys: { '1': '02' + 'ff'.repeat(32) }, last_updated: Date.now() }
 		]);
 
 		await createWallet(TEST_PIN, TEST_NAME);

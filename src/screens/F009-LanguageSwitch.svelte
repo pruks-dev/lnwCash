@@ -74,6 +74,7 @@
 	}
 
 	.lang-btn {
+		min-width: 6rem;
 		padding: 0.35rem 0.75rem;
 		font-size: 0.8rem;
 		font-weight: 600;
@@ -81,6 +82,8 @@
 		background: #f8f8f8;
 		border: none;
 		cursor: pointer;
+		text-align: center;
+		white-space: nowrap;
 		transition: all 0.2s;
 	}
 

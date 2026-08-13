@@ -1,0 +1,53 @@
+commit e7d9d92ef2bf2cc155ff3f0163a6b486f42a7895
+Author: Saber <saber@arx.dev>
+Date:   Sun Aug 9 23:28:09 2026 -0400
+
+    v20: Replace all icons with verified Solar Linear (api.iconify.design/solar)
+    
+    Replaces 19 self-claimed 'Iconly 3.0 Bold' icons with verified SVG paths from the Solar Linear collection (CC BY 4.0). Each icon component preserves its <script lang="ts"> props interface, <svg> wrapper (xmlns, width, height, viewBox, fill, stroke, stroke-width, stroke-linecap, stroke-linejoin, class, aria-hidden, role), and PascalCase IconName registration in Icon.svelte.
+    
+    Mapping (current → Solar Linear):
+    - Wallet      → wallet-linear
+    - History     → history-linear
+    - Send        → arrow-up-linear
+    - Receive     → arrow-down-linear
+    - Swap        → transfer-horizontal-linear
+    - Settings    → settings-linear
+    - Scan        → scanner-linear
+    - Mint        → banknote-2-linear
+    - Check       → check-circle-linear
+    - Copy        → copy-linear
+    - Close       → close-square-linear
+    - ArrowLeft   → arrow-left-linear
+    - ArrowRight  → arrow-right-linear
+    - Plus        → add-circle-linear
+    - Minus       → minus-circle-linear
+    - Time        → clock-circle-linear
+    - Lightning   → bolt-linear
+    - Banknote    → banknote-linear
+    - Warning     → danger-triangle-linear
+    
+    Co-authored-by: Saber <saber@arx.dev>
+    Signed-off-by: Saber <saber@arx.dev>
+
+ src/lib/components/icons/ArrowLeft.svelte  | 13 ++++++++---
+ src/lib/components/icons/ArrowRight.svelte | 12 ++++++++--
+ src/lib/components/icons/Banknote.svelte   | 35 ++++++++++++++++++++++++++++
+ src/lib/components/icons/Check.svelte      | 10 ++++----
+ src/lib/components/icons/Close.svelte      | 13 +++++++----
+ src/lib/components/icons/Copy.svelte       | 14 +++++++----
+ src/lib/components/icons/History.svelte    | 19 +++++++++++----
+ src/lib/components/icons/Icon.svelte       | 16 +++++++++++--
+ src/lib/components/icons/Lightning.svelte  | 34 +++++++++++++++++++++++++++
+ src/lib/components/icons/Mint.svelte       | 17 ++++++++++----
+ src/lib/components/icons/Minus.svelte      | 10 ++++----
+ src/lib/components/icons/Plus.svelte       | 11 +++++----
+ src/lib/components/icons/Receive.svelte    | 13 ++++++++---
+ src/lib/components/icons/Scan.svelte       | 16 +++++++------
+ src/lib/components/icons/Send.svelte       | 13 ++++++++---
+ src/lib/components/icons/Settings.svelte   | 15 ++++++------
+ src/lib/components/icons/Swap.svelte       | 16 ++++++++-----
+ src/lib/components/icons/Time.svelte       | 11 +++++----
+ src/lib/components/icons/Wallet.svelte     | 19 +++++++++++----
+ src/lib/components/icons/Warning.svelte    | 37 ++++++++++++++++++++++++++++++
+ 20 files changed, 270 insertions(+), 74 deletions(-)

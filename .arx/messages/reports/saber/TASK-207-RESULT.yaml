@@ -1,0 +1,93 @@
+message_id: TASK-207-RESULT
+type: RESULT
+sender: saber
+receiver: orion
+task_id: TASK-207
+verdict: COMPLETE
+
+summary: |
+  D1/D1.1/D2/D3 — Multi-step setup wizard (TASK-207, Wave 2 frontend P0).
+
+  Rewrote Setup.svelte into a 4+ step wizard:
+    Welcome (tagline + create/recover + TH/EN language toggle)
+      → Seed (create: show 12-word phrase | recover: enter phrase)
+      → Verify (create only: tap words in order)
+      → PIN (4-digit keypad + lockout — TASK-209 PRESERVED)
+      → Done (PWA manual-install nudge, non-blocking)
+  Create = 5 steps; recover = 4 steps. Existing wallet skips straight to PIN unlock.
+
+  New ProgressStepper.svelte (step dots + labels + progress bar + back/forward).
+  Tagline: th 'ใช้บิตคอยน์อย่างอิสระ ด้วยความเป็นส่วนตัว' / en 'Free Your Bitcoin with Privacy'
+  (grep clean — no 'ไม่มีคนกลาง'/'ควบคุมเอง').
+
+  TASK-209 PIN work preserved verbatim: PIN_LENGTH=4, randomized Keypad, PinDots,
+  lockout rate-limit (encrypted counter), input-mode fallback, mismatch reset+shake.
+  No crypto-layer file modified; wallet finalize uses TASK-205 API only
+  (generateMnemonic → importSeed(seed, pin, 'LNWCASH Wallet') → resetLockout →
+  setActiveMintUrl(default) → unlockWallet).
+
+files_changed:
+  modified:
+    - src/screens/Setup.svelte                 # rewritten as wizard (PIN step preserved)
+    - src/locales/en.json                       # +27 keys (tagline, labels, nudge, common.next)
+    - src/locales/th.json                       # +27 keys
+    - src/__tests__/screens/Setup.test.ts       # rewritten for wizard
+  added:
+    - src/lib/components/ProgressStepper.svelte
+    - src/lib/components/__tests__/progress-stepper.test.ts
+
+proof_list:
+  - Setup.svelte.diff
+  - ProgressStepper.svelte
+  - locales.diff
+  - git-diff-stat.txt
+  - svelte-check.txt
+  - wizard-tests.log
+  - verification-summary.md
+
+evidence_count: 7
+
+test_results:
+  targeted_tests:
+    files: 5
+    tests: 41
+    passed: 41
+    failed: 0
+    note: Setup(11) + progress-stepper(7) + keypad(6) + pindots + lockout (TASK-209 untouched)
+  full_suite:
+    passed: 1030
+    failed: 4
+    failed_files:
+      - src/__tests__/components/ErrorBoundary.test.ts
+      - src/__tests__/screens/Home.test.ts
+    note: pre-existing UI failures (unrelated to Setup/wizard; same files in TASK-205 run)
+  svelte_check:
+    errors_in_changed_files: 0
+    pre_existing_errors_elsewhere: 16
+    pre_existing_error_files:
+      - src/lib/cashu/__tests__/client.test.ts
+      - src/lib/components/QRDisplay.svelte
+      - src/lib/components/TransactionDetailSheet.svelte
+      - src/lib/design/theme.ts
+      - src/lib/wallet/__tests__/pending-tx-resolver.test.ts
+      - src/screens/History.svelte
+      - src/screens/Receive.svelte
+      - src/screens/Send.svelte
+
+task209_pin_preserved:
+  - pin_length: 4                      # unchanged
+  - keypad: "randomized CSPRNG reshuffle on remount (#key attemptKey)"  # preserved
+  - pindots: "4 dots + shake"          # preserved
+  - lockout: "getLockoutStatus/recordFailure/recordSuccess/resetLockout + countdown"  # preserved
+  - input_fallback: "pinEntryMode keypad/input toggle"  # preserved
+  - files_untouched:
+      - src/lib/wallet/lockout.ts
+      - src/lib/components/Keypad.svelte
+      - src/lib/components/PinDots.svelte
+
+known_discrepancy_non_blocker:
+  - locale keys screen.register.pin_placeholder / screen.register.error_too_short still
+    worded "6-digit" (TASK-209 deferred 6→4 locale fix per order; my scope = add keys only).
+    Recommend follow-up task update those two values to "4-digit".
+
+blockers: []

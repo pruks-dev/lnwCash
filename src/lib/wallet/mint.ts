@@ -16,6 +16,8 @@ import {
 import { fetchAndCacheKeysets, getAllKeysets, getMintPubkey } from '../cashu/keyset';
 import { blindMessage, unblindSignature, deterministicBlindingFactor, blindingFactorToHex } from '../cashu/blind';
 import { getPrivateKey } from './state';
+import { deriveSecret, deriveSecretAndR, getActiveSeed } from './nut13';
+import { getCounterK, incrementCounterK } from './counterK';
 import { addProofs } from './proofsDb';
 import { addTransaction } from '../storage/db';
 import type { TokenProof, MintQuote, Transaction } from '../types';
@@ -54,10 +56,13 @@ export interface MintCompleteResult {
 
 /**
  * Generate a cryptographically random 32-byte secret for an ecash proof.
- * TASK-084: Use base64url encoding for Cashu protocol compatibility.
- * Uses crypto.getRandomValues() — never contains the wallet private key.
+ *
+ * TASK-206: This is now the *fallback* path. When a deterministic seed is
+ * available (see generateSecret), NUT-13 derivation is used instead so proofs
+ * can be recovered from the wallet seed. This random path remains for
+ * backward compatibility when no seed is active.
  */
-function generateSecret(): string {
+function generateRandomSecret(): string {
 	const bytes = new Uint8Array(32);
 	crypto.getRandomValues(bytes);
 	// NUT-00 recommends 64-char hex string from 32 random bytes
@@ -65,16 +70,38 @@ function generateSecret(): string {
 }
 
 /**
+ * TASK-206 / NUT-13: deterministically derive a proof secret from the wallet
+ * seed. `secret = HMAC-SHA256(seed, "Cashu_KDF_HMAC_SHA256" || keyset_id ||
+ * counter_k || 0x00)`. Same seed + keyset_id + counter → same secret.
+ */
+function generateSecret(seed: Uint8Array, keysetId: string, counterK: number): string {
+	return deriveSecret(seed, keysetId, counterK);
+}
+
+/**
  * Create blinded outputs for given amounts.
+ *
+ * When `seed` is provided, outputs are derived deterministically (NUT-13) with
+ * per-keyset counters; otherwise falls back to random secrets (legacy path).
  */
 function createOutputs(
 	amounts: number[],
 	mintUrl: string,
 	keysetId: string,
+	seed?: Uint8Array,
 ): Array<{ amount: number; id: string; B_: string; secret: string; blindingFactor: string }> {
-	return amounts.map((amount) => {
-		const secret = generateSecret();
-		const r = deterministicBlindingFactor(secret);
+	const startCounter = seed ? getCounterK(keysetId) : 0;
+	return amounts.map((amount, i) => {
+		let secret: string;
+		let r: bigint;
+		if (seed) {
+			const derived = deriveSecretAndR(seed, keysetId, startCounter + i);
+			secret = derived.secret;
+			r = derived.r;
+		} else {
+			secret = generateRandomSecret();
+			r = deterministicBlindingFactor(secret);
+		}
 		const { B_, blindingFactor } = blindMessage(secret, r);
 		return {
 			amount,
@@ -207,6 +234,8 @@ export async function requestMint(
  * @param amount - Amount in sats (must match request)
  * @param keysetId - Keyset ID from requestMint()
  * @param waitForPayment - If true, poll until PAID (default: true, max 120s)
+ * @param seed - Optional 64-byte BIP39 seed for NUT-13 deterministic outputs.
+ *   Defaults to the in-memory active seed when omitted.
  * @returns { success, proofs, quote, amount, error? }
  */
 export async function completeMint(
@@ -214,7 +243,8 @@ export async function completeMint(
 	quoteId: string,
 	amount: number,
 	keysetId: string,
-	waitForPayment: boolean = true
+	waitForPayment: boolean = true,
+	seed?: Uint8Array
 ): Promise<MintCompleteResult> {
 	try {
 		getPrivateKey(); // throws if wallet is locked
@@ -239,8 +269,9 @@ export async function completeMint(
 		// Step 2: Decompose amount into outputs
 		const amounts = decomposeAmount(amount);
 
-		// Step 3: Create blinded outputs
-		const outputs = createOutputs(amounts, mintUrl, keysetId);
+		// Step 3: Create blinded outputs (deterministic NUT-13 when a seed is available)
+		const resolvedSeed = seed ?? getActiveSeed() ?? undefined;
+		const outputs = createOutputs(amounts, mintUrl, keysetId, resolvedSeed);
 
 		// Step 4: Submit outputs to mint
 		const postBody = outputs.map(o => ({
@@ -279,6 +310,11 @@ export async function completeMint(
 
 		// Step 6: Store proofs
 		await addProofs(proofs, mintUrl, keysetId);
+
+		// Step 6.5: Advance counter_k for this keyset (NUT-13 deterministic mint)
+		if (resolvedSeed) {
+			incrementCounterK(keysetId, amounts.length);
+		}
 
 		// Step 7: Record transaction (F-063) — non-blocking, best-effort
 		try {

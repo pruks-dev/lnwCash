@@ -16,17 +16,16 @@
 	import { _ } from 'svelte-i18n';
 	import { onMount } from 'svelte';
 	import { scannedQRValue } from '$lib/stores/scannedQR';
-	import { mintFlow, decomposeAmount, type MintResult } from '$lib/wallet/mint';
+	import { completeMint, type MintResult } from '$lib/wallet/mint';
 	import { receiveTokens, type ReceiveResult } from '$lib/wallet/tokenStore';
 	import { isCashuToken, getTokenAmount, decodeToken } from '$lib/cashu/token';
-	import { requestMintQuote, mintTokens, CashuError } from '$lib/cashu/client';
-	import { fetchAndCacheKeysets, getMintPubkey } from '$lib/cashu/keyset';
-	import { blindMessage, unblindSignature, deterministicBlindingFactor, blindingFactorToHex } from '$lib/cashu/blind';
-	import { addProofs } from '$lib/wallet/proofsDb';
+	import { CashuError } from '$lib/cashu/client';
+	import { fetchAndCacheKeysets } from '$lib/cashu/keyset';
 	import { addTransaction, updateTransaction } from '$lib/storage/db';
 	import { getBalance } from '$lib/wallet/balance';
 	import { getPrivateKey, storeSessionPin, unlockWallet } from '$lib/wallet/state';
 	import { WalletLockedError } from '$lib/wallet/errors';
+	import { withTransactionGuard } from '$lib/wallet/autolock';
 	import { getMintConfig } from '$lib/wallet/store';
 	import { navigateTo, getHashParam, clearHashParams } from '$lib/router';
 	import { notifyMintConfirmed } from '$lib/stores/mint-events';
@@ -360,16 +359,18 @@
 
 	/**
 	 * Phase 2: Complete mint after quote is PAID.
-	 * Creates blinded outputs, submits to mint, unblinds signatures, stores proofs.
+	 * Delegates output creation (deterministic NUT-13), submit, unblind and
+	 * store to `completeMint()` in mint.ts. Auto-lock is suspended while the
+	 * mint is in flight (F-027-004).
 	 */
 	async function completeMintAfterPayment() {
 		lightningState = 'loading';
 
 		try {
 			const mintUrlClean = mintUrl.trim();
-			getPrivateKey(); // ensure wallet is unlocked
+			getPrivateKey(); // ensure wallet is unlocked (throws WalletLockedError → unlock prompt)
 
-			// Step 1: Get keysets
+			// Step 1: Get keysets (completeMint requires the keysetId)
 			const keysets = await fetchAndCacheKeysets(mintUrlClean);
 			const activeKeysets = keysets.filter(k => k.active);
 			if (activeKeysets.length === 0) {
@@ -377,51 +378,36 @@
 			}
 			const keysetId = activeKeysets[0].id;
 
-			// Step 2: Decompose amount into outputs
-			const amounts = decomposeAmount(pendingAmount);
+			// Step 2: Complete the mint via the deterministic mint.ts path.
+			// Blinded-output creation (NUT-13 from the active seed), submit,
+			// unblind, store and counter_k advancement all happen inside
+			// completeMint(). wrap with withTransactionGuard() so the wallet is
+			// never auto-locked mid-mint (F-027-004 mint half).
+			const result = await withTransactionGuard(() =>
+				completeMint(mintUrlClean, pendingQuoteId, pendingAmount, keysetId, true)
+			);
 
-			// Step 3: Create blinded outputs
-			const outputs = amounts.map(amt => {
-				const secret = Array.from(crypto.getRandomValues(new Uint8Array(32)))
-					.map(b => b.toString(16).padStart(2, '0'))
-					.join('');
-				const r = deterministicBlindingFactor(secret);
-				const { B_, blindingFactor } = blindMessage(secret, r);
-				return { amount: amt, id: keysetId, B_, secret, blindingFactor };
-			});
-
-			// Step 4: Submit to mint
-			const postBody = outputs.map(o => ({ amount: o.amount, id: o.id, B_: o.B_ }));
-			const response = await mintTokens(mintUrlClean, pendingQuoteId, postBody);
-
-			// Step 5: Unblind signatures → proofs (use keyset-specific denomination key)
-			const proofs = response.signatures.map((sig, i) => {
-				const output = outputs[i];
-				const pubkey = getMintPubkey(mintUrlClean, keysetId, sig.amount);
-				const C = unblindSignature(sig.C_, output.blindingFactor, pubkey);
-				const rHex = blindingFactorToHex(output.blindingFactor);
-				const proof: { id: string; amount: number; secret: string; C: string; dleq?: { e: string; s: string; r: string } } = {
-					id: sig.id, amount: sig.amount, secret: output.secret, C
-				};
-				if (sig.dleq) {
-					proof.dleq = { e: sig.dleq.e, s: sig.dleq.s, r: rHex };
+			if (!result.success) {
+				// completeMint returns (does not throw) on failure. Surface a
+				// locked-wallet error as WalletLockedError so the unlock-prompt
+				// retry flow still works.
+				if (result.error && result.error.toLowerCase().includes('wallet is locked')) {
+					throw new WalletLockedError();
 				}
-				return proof;
-			});
-
-			// Step 6: Store proofs in IndexedDB
-			await addProofs(proofs, mintUrlClean, keysetId);
+				throw new Error(result.error ?? $_('screen.receive.error_mint_fail'));
+			}
+			const proofs = result.proofs;
 
 			// Step 6.5: Update pending transaction to confirmed — best-effort
 			try {
-				await updateTransaction(pendingTxId, { status: 'confirmed' });
+				if (pendingTxId) await updateTransaction(pendingTxId, { status: 'confirmed' });
 				notifyMintConfirmed(pendingAmount);
 			} catch {
 				// IndexedDB may be unavailable — transaction recording is best-effort
 			}
 
 			// Step 7: Update balance
-			const newBalance = await updateBalanceDisplay();
+			await updateBalanceDisplay();
 
 			// Set result for display
 			lightningResult = {
@@ -447,7 +433,7 @@
 			showToast(lightningError, 'error');
 
 			// Mark pending transaction as failed
-			try { await updateTransaction(pendingTxId, { status: 'failed' }); } catch { /* best-effort */ }
+			try { if (pendingTxId) await updateTransaction(pendingTxId, { status: 'failed' }); } catch { /* best-effort */ }
 		}
 	}
 

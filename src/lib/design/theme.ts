@@ -42,7 +42,7 @@ export function applyThemeDom(theme: ResolvedTheme) {
 export const themeMode = writable<ThemeMode>(loadInitialMode());
 
 /** Resolved theme actually applied to DOM */
-export const resolvedTheme = derived<ThemeMode, ResolvedTheme>(
+export const resolvedTheme = derived<typeof themeMode, ResolvedTheme>(
 	themeMode,
 	($mode, set) => {
 		const resolved = resolveTheme($mode);

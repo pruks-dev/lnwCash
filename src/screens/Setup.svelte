@@ -1,17 +1,45 @@
 <script lang="ts">
 	/**
-	 * Setup Screen — consolidate Register + CreateWallet
-	 * Step 1: PIN setup (Register/Unlock)
-	 * Step 2: Create wallet (name + mints)
-	 * Uses TASK-050: Card, Button, Input, Heading, Body, Icons
+	 * Setup Screen — multi-step wallet setup wizard (TASK-207 / D1, D1.1, D2, D3
+	 * + TASK-208 / D3, D4).
+	 *
+	 * Flow:
+	 *   Welcome (create/recover + language toggle)
+	 *     → Seed (create: 12-word SeedGrid + paper-only ack | recover: BIP39 autocomplete import)
+	 *     → Verify (create only: random 3-word quiz — TASK-208 D4)
+	 *     → PIN (4-digit sharded keypad + OWASP lockout — TASK-209, PRESERVED)
+	 *     → Done (PWA manual install nudge; recover shows NUT-9 restore status)
+	 *
+	 * Existing wallet → skips straight to PIN entry (unlock).
+	 *
+	 * ⚠️ TASK-209 (D5) PIN work is preserved verbatim: 4-digit PIN, randomized
+	 * Keypad, PinDots, lockout rate-limit, encrypted attempt counter, and the
+	 * input-mode fallback. See the "─── PIN (TASK-209, preserved) ───" sections.
 	 */
-	import { _ } from 'svelte-i18n';
-	import { createWallet, unlockWallet, getWalletStatus, storeSessionPin, type WalletState } from '$lib/wallet/state';
-	import { WalletNotInitializedError, InvalidPinError } from '$lib/wallet/errors';
+	import { onDestroy } from 'svelte';
+	import { _, locale } from 'svelte-i18n';
+	import {
+		unlockWallet,
+		getWalletStatus,
+		storeSessionPin,
+		type WalletState
+	} from '$lib/wallet/state';
+	import { importSeed, seedToPrivateKey } from '$lib/wallet/seed';
+	import { generateMnemonic } from '$lib/wallet/keys';
+	import { InvalidPinError, WalletNotInitializedError } from '$lib/wallet/errors';
+	import { setActiveMintUrl, getAllMintConfigs } from '$lib/wallet/store';
 	import { DEFAULT_MINT_CONFIG } from '$lib/wallet/config';
-	import { setActiveMintUrl } from '$lib/wallet/store';
-	import { validateMintUrl } from '$lib/wallet/mint-validation';
-	import type { MintConfig } from '$lib/wallet/config';
+	import { getSettings, setSettings } from '$lib/storage/local';
+	// TASK-220: "forgot PIN" → seed recovery via #/setup?recover=1
+	import { getHashParam } from '$lib/router';
+
+	// TASK-208 (D3/D4): dedicated recovery phrase backup flow
+	import { WORDLIST } from '$lib/wallet/wordlist';
+	import { restoreWallet } from '$lib/wallet/restore';
+	import { setActiveSeed, seedFromMnemonic } from '$lib/wallet/nut13';
+	import { fetchAndCacheKeysets } from '$lib/cashu/keyset';
+	import SeedGrid from '$lib/components/SeedGrid.svelte';
+	import SeedVerifyQuiz from '$lib/components/SeedVerifyQuiz.svelte';
 
 	// TASK-050 Design System Components
 	import Card from '$lib/components/ui/Card.svelte';
@@ -20,65 +48,359 @@
 	import Heading from '$lib/components/ui/Heading.svelte';
 	import Body from '$lib/components/ui/Body.svelte';
 
+	// TASK-207 (D1): wizard progress stepper
+	import ProgressStepper, { type StepperStep } from '$lib/components/ProgressStepper.svelte';
+
+	// TASK-209 (D5): 4-digit sharded PIN entry + OWASP lockout
+	import Keypad from '$lib/components/Keypad.svelte';
+	import PinDots from '$lib/components/PinDots.svelte';
+	import {
+		getLockoutStatus,
+		recordFailure,
+		recordSuccess,
+		resetLockout,
+		MAX_ATTEMPTS,
+		type LockoutStatus
+	} from '$lib/wallet/lockout';
+
 	interface Props {
 		onWalletReady?: (state: WalletState) => void;
 	}
 
 	let { onWalletReady }: Props = $props();
 
-	type SetupStep = 'register' | 'unlock' | 'create-wallet';
+	// ─── Wizard model ─────────────────────────────────────────
+	type SetupMode = 'create' | 'recover' | 'unlock';
+	type WizardStep = 'welcome' | 'seed' | 'verify' | 'pin' | 'done';
+	type PinEntryMode = 'keypad' | 'input';
 
-	let step: SetupStep = $state('register');
-	let isReturning: boolean = $state(false);
+	const CREATE_STEPS: WizardStep[] = ['welcome', 'seed', 'verify', 'pin', 'done'];
+	const RECOVER_STEPS: WizardStep[] = ['welcome', 'seed', 'pin', 'done'];
+
+	// TASK-209 (D5): PIN is 4 digits (was 6)
+	const PIN_LENGTH = 4;
+	const DEFAULT_WALLET_NAME = 'LNWCASH Wallet';
+
+	let mode: SetupMode = $state('create');
+	let step: WizardStep = $state('welcome');
+	let currentLang: string = $state('en');
+	// TASK-220: PIN keypad shuffle setting (persisted, default off).
+	let pinShuffle: boolean = $state(false);
+
+	// Seed phrase (create: generated; recover: entered)
+	let seed: string = $state('');
+	let seedError: string = $state('');
+
+	// TASK-208 (D3): recover seed entered as 12 individual words (per-word autocomplete).
+	const RECOVER_WORD_COUNT = 12;
+	function emptyRecoverWords(): string[] {
+		return Array.from({ length: RECOVER_WORD_COUNT }, () => '');
+	}
+	let recoverWords: string[] = $state(emptyRecoverWords());
+	let activeWordIndex: number = $state(-1); // index of the focused word box (-1 = none)
+
+	// TASK-208 (D3): paper-only ack — user must confirm writing phrase on paper
+	let seedAckChecked: boolean = $state(false);
+
+	// TASK-208: restore funds (NUT-9) status after recover finalize
+	type RestoreStatus = 'idle' | 'running' | 'done' | 'error';
+	let restoreStatus: RestoreStatus = $state('idle');
+	let restoredProofs: number = $state(0);
+	// TASK-217: per-mint restore progress (which mint is being restored)
+	let restoreProgress: string = $state('');
+
+	// PIN state (TASK-209 preserved)
 	let pin: string = $state('');
 	let confirmPin: string = $state('');
 	let error: string = $state('');
 	let loading: boolean = $state(false);
 
-	// Wallet creation fields
-	let walletName: string = $state('');
-	let mintUrls: string[] = $state([DEFAULT_MINT_CONFIG.url]);
-	let newMintUrl: string = $state('');
-	let mintInfoMap: Record<string, { name: string; keysets: string[] }> = $state({});
+	// TASK-209 (D5): sharded entry + lockout state
+	let pinEntryMode: PinEntryMode = $state('keypad');
+	let registerPhase: 'enter' | 'confirm' = $state('enter');
+	let shakeKey: number = $state(0);
+	let attemptKey: number = $state(0);
+	let lockout: LockoutStatus = $state(emptyLockout());
+	let lockNow: number = $state(Date.now());
 
-	// Check wallet status on mount
+	// ─── Derived navigation ──────────────────────────────────
+	const wizardSteps = $derived((mode as SetupMode) === 'recover' ? RECOVER_STEPS : CREATE_STEPS);
+	const stepIndex = $derived(Math.max(0, wizardSteps.indexOf(step)));
+	const isUnlock = $derived((mode as SetupMode) === 'unlock');
+
+	const stepperSteps: StepperStep[] = $derived(
+		wizardSteps.map((s) => ({
+			id: s,
+			label: $_('screen.setup.step_label_' + s)
+		}))
+	);
+
+	// TASK-208: whether the "next" control is allowed at the current step.
+	// Create seed step is gated on the paper-only checkbox (D3); recover seed
+	// stays enabled (validated on click); PIN requires a full 4-digit pair.
+	const canContinue = $derived(
+		(step as WizardStep) === 'pin'
+			? pin.length === PIN_LENGTH && confirmPin.length === PIN_LENGTH
+			: (step as WizardStep) === 'seed' && mode === 'create'
+				? seedAckChecked
+				: true
+	);
+
+	// TASK-208: normalized phrase words (used by SeedGrid + SeedVerifyQuiz).
+	const seedWords = $derived(seed.trim().split(/\s+/).filter(Boolean));
+
+	// TASK-208: canonical space-separated recover phrase, derived from the 12
+	// individual word boxes (used for validation + finalize; crypto API unchanged).
+	const seedInput = $derived(recoverWords.map((w) => w.trim()).join(' '));
+
+	// TASK-208: per-box autocomplete — the word currently being typed in the
+	// focused box, and the matching BIP39 suggestions from the 2048-word list.
+	const activeWordFragment = $derived(
+		activeWordIndex >= 0 && activeWordIndex < RECOVER_WORD_COUNT
+			? (recoverWords[activeWordIndex] ?? '').trim()
+			: ''
+	);
+
+	const seedSuggestions = $derived(
+		activeWordIndex >= 0 && activeWordFragment.length >= 1
+			? WORDLIST.filter(
+					(w) =>
+						w.startsWith(activeWordFragment.toLowerCase()) &&
+						w !== activeWordFragment.toLowerCase()
+				).slice(0, 8)
+			: []
+	);
+
+	// ─── Mount: detect existing wallet + resume + language ────
 	$effect(() => {
+		// Language + PIN-shuffle preference from persisted settings
+		try {
+			const settings = getSettings();
+			currentLang = settings.language || 'en';
+			locale.set(currentLang);
+			pinShuffle = settings.pin_shuffle ?? false;
+		} catch {
+			currentLang = 'en';
+			pinShuffle = false;
+		}
+
+		// TASK-220: "forgot PIN" → jump straight into seed recovery
+		// (recover mode + seed step), bypassing the unlock shortcut.
+		if (getHashParam('recover') === '1') {
+			mode = 'recover';
+			step = 'seed';
+			seed = '';
+			recoverWords = emptyRecoverWords();
+			seedError = '';
+			return;
+		}
+
+		// Existing wallet → skip straight to PIN unlock
 		try {
 			const status = getWalletStatus();
 			if (status.state !== 'UNINITIALIZED') {
-				isReturning = true;
-				step = 'unlock';
+				mode = 'unlock';
+				step = 'pin';
+				return;
 			}
 		} catch {
-			// UNINITIALIZED — stay on register
+			// UNINITIALIZED — continue to welcome/resume
+		}
+
+		// sessionStorage resume (TASK-207: resume + exit warning)
+		const resumed = loadWizard();
+		if (resumed) {
+			mode = resumed.mode === 'recover' ? 'recover' : 'create';
+			step = resumed.step;
+			if (resumed.seed) seed = resumed.seed;
 		}
 	});
 
+	// TASK-209: load persisted lockout on mount.
+	$effect(() => {
+		getLockoutStatus().then((s) => {
+			lockout = s;
+		});
+	});
+
+	// TASK-209: countdown tick while locked.
+	$effect(() => {
+		if (!lockout.locked) return;
+		const id = setInterval(() => {
+			lockNow = Date.now();
+			if (lockNow >= lockout.lockUntil) {
+				lockout = { ...lockout, locked: false, remainingMs: 0 };
+			}
+		}, 1000);
+		return () => clearInterval(id);
+	});
+
+	// TASK-207: persist wizard progress to sessionStorage on every step change.
+	$effect(() => {
+		persistWizard();
+	});
+
+	// TASK-207: exit warning while setup is in progress.
+	$effect(() => {
+		if (mode === 'unlock' || step === 'welcome' || step === 'done') return;
+		function beforeUnload(e: BeforeUnloadEvent) {
+			e.preventDefault();
+			e.returnValue = '';
+		}
+		window.addEventListener('beforeunload', beforeUnload);
+		return () => window.removeEventListener('beforeunload', beforeUnload);
+	});
+
+	// ─── Helpers ─────────────────────────────────────────────
 	function clearError() {
 		error = '';
 	}
 
-	// ─── PIN Registration ─────────────────────────────────
+	// TASK-208 (D4): clear the seed from component state on unmount so the
+	// recovery phrase never lingers in the DOM after the setup screen is gone.
+	onDestroy(() => {
+		seed = '';
+		recoverWords = emptyRecoverWords();
+		seedError = '';
+	});
+
+	// ─── TASK-209 (D5): Lockout + sharded entry helpers ───────
+
+	function emptyLockout(): LockoutStatus {
+		return {
+			attempts: 0,
+			maxAttempts: MAX_ATTEMPTS,
+			locked: false,
+			lockUntil: 0,
+			remainingMs: 0,
+			level: 'none'
+		};
+	}
+
+	function formatDuration(ms: number): string {
+		const totalSeconds = Math.ceil(ms / 1000);
+		const minutes = Math.floor(totalSeconds / 60);
+		const seconds = totalSeconds % 60;
+		if (minutes >= 60) {
+			const hours = Math.floor(minutes / 60);
+			const mins = minutes % 60;
+			return `${hours}h ${mins}m`;
+		}
+		if (minutes > 0) return `${minutes}m ${seconds}s`;
+		return `${seconds}s`;
+	}
+
+	function lockoutMessage(status: LockoutStatus): string {
+		return `Failed too many times — locked. Try again in ${formatDuration(status.remainingMs)}`;
+	}
+
+	function resetPinEntry() {
+		pin = '';
+		confirmPin = '';
+		registerPhase = 'enter';
+		shakeKey += 1;
+		attemptKey += 1; // remount keypad (shake reset; layout now fixed)
+	}
+
+	function togglePinMode() {
+		clearError();
+		pin = '';
+		confirmPin = '';
+		registerPhase = 'enter';
+		pinEntryMode = pinEntryMode === 'keypad' ? 'input' : 'keypad';
+	}
+
+	// ─── PIN digit entry (TASK-209 preserved) ────────────────
+	function handlePinDigit(digit: string) {
+		clearError();
+		if (mode === 'unlock') {
+			if (pin.length >= PIN_LENGTH) return;
+			pin += digit;
+			if (pin.length === PIN_LENGTH) void handleUnlock();
+			return;
+		}
+		// register
+		if (registerPhase === 'enter') {
+			if (pin.length >= PIN_LENGTH) return;
+			pin += digit;
+			if (pin.length === PIN_LENGTH) registerPhase = 'confirm';
+		} else {
+			if (confirmPin.length >= PIN_LENGTH) return;
+			confirmPin += digit;
+			if (confirmPin.length === PIN_LENGTH) void handleRegister();
+		}
+	}
+
+	function handlePinBackspace() {
+		clearError();
+		if (mode === 'unlock') {
+			pin = pin.slice(0, -1);
+			return;
+		}
+		if (registerPhase === 'confirm') {
+			confirmPin = confirmPin.slice(0, -1);
+			if (confirmPin.length === 0) registerPhase = 'enter';
+		} else {
+			pin = pin.slice(0, -1);
+		}
+	}
+
+	// ─── PIN Registration → finalize wallet (TASK-207) ───────
 	async function handleRegister() {
 		clearError();
-		if (pin.length < 6) {
+		if (pin.length < PIN_LENGTH) {
 			error = $_('screen.register.error_too_short');
 			return;
 		}
 		if (pin !== confirmPin) {
 			error = $_('screen.register.error_mismatch');
+			// TASK-209 (D5): mismatch → reset + shake
+			resetPinEntry();
 			return;
 		}
-		// TASK-092 (F-061): Store PIN in sessionStorage for auto-unlock on refresh
-		storeSessionPin(pin);
-		step = 'create-wallet';
+
+		loading = true;
+		try {
+			// TASK-092 (F-061): Store PIN in sessionStorage for auto-unlock on refresh
+			storeSessionPin(pin);
+			// TASK-207: create/recover wallet from the seed (TASK-205 API)
+			await importSeed(seed, pin, DEFAULT_WALLET_NAME);
+			// TASK-209 (D5): fresh wallet → clear any stale lockout
+			await resetLockout();
+			// F-067: activate default mint so Receive/Send pick it up
+			setActiveMintUrl(DEFAULT_MINT_CONFIG.url);
+			// TASK-208: activate NUT-13 deterministic seed + trigger NUT-9 restore
+			activateSeedAndRestore();
+			// Unlock immediately
+			await unlockWallet(pin);
+			clearWizard();
+			step = 'done';
+			// TASK-208 (D4): clear phrase from memory once wallet is finalized
+			seed = '';
+			recoverWords = emptyRecoverWords();
+		} catch (e) {
+			error = e instanceof Error ? e.message : $_('common.error');
+		} finally {
+			loading = false;
+		}
 	}
 
-	// ─── PIN Unlock ──────────────────────────────────────
+	// ─── PIN Unlock (existing wallet, TASK-209 preserved) ────
 	async function handleUnlock() {
 		clearError();
-		if (pin.length < 6) {
+		if (pin.length < PIN_LENGTH) {
 			error = $_('screen.register.error_too_short');
+			return;
+		}
+
+		// TASK-209 (D5): enforce lockout before attempting
+		const current = await getLockoutStatus();
+		if (current.locked) {
+			lockout = current;
+			lockNow = Date.now();
+			error = lockoutMessage(current);
+			pin = '';
+			shakeKey += 1;
 			return;
 		}
 
@@ -86,11 +408,18 @@
 		try {
 			const result = await unlockWallet(pin);
 			// TASK-092 (F-061): Store PIN in sessionStorage for auto-unlock on refresh
+			await recordSuccess();
+			lockout = emptyLockout();
 			storeSessionPin(pin);
 			onWalletReady?.(result);
 		} catch (e) {
 			if (e instanceof InvalidPinError) {
-				error = e.message;
+				lockout = await recordFailure();
+				lockNow = Date.now();
+				pin = '';
+				shakeKey += 1;
+				attemptKey += 1;
+				error = lockout.locked ? lockoutMessage(lockout) : e.message;
 			} else if (e instanceof WalletNotInitializedError) {
 				error = e.message;
 			} else if (e instanceof Error) {
@@ -103,101 +432,246 @@
 		}
 	}
 
-	function switchToUnlock() {
+	// ─── Wizard navigation (TASK-207) ────────────────────────
+	function chooseCreate() {
 		clearError();
-		pin = '';
-		step = 'unlock';
+		mode = 'create';
+		seed = generateMnemonic();
+		recoverWords = emptyRecoverWords();
+		seedError = '';
+		step = 'seed';
 	}
 
-	function switchToRegister() {
+	function chooseRecover() {
 		clearError();
-		pin = '';
-		confirmPin = '';
-		step = 'register';
+		mode = 'recover';
+		seed = '';
+		recoverWords = emptyRecoverWords();
+		seedError = '';
+		step = 'seed';
 	}
 
-	function backToPin() {
-		clearError();
-		step = 'register';
-	}
-
-	// ─── Wallet Creation ─────────────────────────────────
-	async function addMint() {
-		clearError();
-		const url = newMintUrl.trim();
-		if (!url) return;
-
-		// F-060: /v1/info validation via shared validateMintUrl()
-		loading = true;
+	function validateRecoverSeed(input: string): boolean {
+		const trimmed = input.trim();
+		if (!trimmed) return false;
 		try {
-			const result = await validateMintUrl(url, mintUrls);
-			if (!result.success) {
-				error = result.error || 'Mint URL ไม่ตอบสนอง — ตรวจสอบอีกครั้ง';
+			seedToPrivateKey(trimmed);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	function continueFromSeed() {
+		clearError();
+		if (mode === 'create') {
+			// TASK-208 (D3): require the paper-only ack before advancing
+			if (!seedAckChecked) return;
+			seedError = '';
+			step = 'verify';
+			return;
+		}
+		// recover — validate entered phrase before proceeding
+		if (!validateRecoverSeed(seedInput)) {
+			seedError = $_('screen.setup.seed_invalid');
+			return;
+		}
+		seed = seedInput.trim().toLowerCase().replace(/\s+/g, ' ');
+		seedError = '';
+		step = 'pin';
+	}
+
+	// TASK-208: focus a specific recover word box (by index).
+	function focusRecoverWord(index: number) {
+		if (index < 0 || index >= RECOVER_WORD_COUNT) return;
+		activeWordIndex = index;
+		requestAnimationFrame(() => {
+			document.getElementById(`recover-word-${index}`)?.focus();
+		});
+	}
+
+	// TASK-208: advance focus to the next empty word box after `index`.
+	function advanceRecoverWord(index: number) {
+		for (let i = index + 1; i < RECOVER_WORD_COUNT; i++) {
+			if ((recoverWords[i] ?? '').trim() === '') {
+				focusRecoverWord(i);
 				return;
 			}
+		}
+		activeWordIndex = -1;
+	}
 
-			// Validation passed — add mint with info from /v1/info
-			const validatedConfig = result.config!;
-			mintUrls = [...mintUrls, validatedConfig.url];
-			newMintUrl = '';
-			error = '';
+	// TASK-208: handle per-box input (single word, or a pasted multi-word phrase).
+	function onRecoverWordInput(index: number, value: string) {
+		seedError = '';
+		const words = value.split(/\s+/).filter(Boolean);
+		if (words.length === 0) {
+			recoverWords[index] = '';
+			activeWordIndex = index;
+			return;
+		}
+		let i = index;
+		for (const w of words) {
+			if (i >= RECOVER_WORD_COUNT) break;
+			recoverWords[i] = w;
+			i++;
+		}
+		activeWordIndex = index;
+		if (words.length > 1) advanceRecoverWord(i - 1);
+	}
 
-			// Display mint info (name, version) from /v1/info
-			mintInfoMap = {
-				...mintInfoMap,
-				[validatedConfig.url]: {
-					name: validatedConfig.name || validatedConfig.url,
-					keysets: validatedConfig.supported_nuts
-				}
-			};
-		} catch (e) {
-			error = 'Mint URL ไม่ตอบสนอง — ตรวจสอบอีกครั้ง';
-		} finally {
-			loading = false;
+	// TASK-208: keyboard navigation — space/enter completes a word, backspace on
+	// an empty box steps back to the previous box.
+	function onRecoverWordKeydown(index: number, e: KeyboardEvent) {
+		const el = e.target as HTMLInputElement;
+		if (e.key === ' ' || e.key === 'Enter') {
+			e.preventDefault();
+			const val = el.value.trim();
+			if (val) {
+				recoverWords[index] = val;
+				advanceRecoverWord(index);
+			}
+		} else if (e.key === 'Backspace' && el.value === '') {
+			e.preventDefault();
+			if (index > 0) {
+				focusRecoverWord(index - 1);
+				requestAnimationFrame(() => {
+					const prev = document.getElementById(
+						`recover-word-${index - 1}`
+					) as HTMLInputElement | null;
+					prev?.select();
+				});
+			}
 		}
 	}
 
-	function removeMint(url: string) {
-		mintUrls = mintUrls.filter((u) => u !== url);
-		const newMap = { ...mintInfoMap };
-		delete newMap[url];
-		mintInfoMap = newMap;
+	// TASK-208: complete the active word from an autocomplete suggestion.
+	function completeSeedWord(index: number, word: string) {
+		recoverWords[index] = word;
+		seedError = '';
+		advanceRecoverWord(index);
 	}
 
-	async function handleCreateWallet() {
-		error = '';
-		// F-045: walletName optional — default to 'LNWCASH Wallet'
-		const effectiveName = walletName.trim() || 'LNWCASH Wallet';
-		// F-060: Allow setup with 1 mint minimum (previously required 2)
-		if (mintUrls.length < 1) {
-			error = $_('screen.wallet.error_no_mint');
-			return;
+	// TASK-208: verify quiz completion (create flow).
+	function onVerifyComplete(passed: boolean) {
+		if (passed) {
+			step = 'pin';
 		}
-		if (pin.length < 6) {
-			error = $_('screen.register.error_too_short');
-			return;
-		}
+	}
 
-		loading = true;
+	// TASK-208: activate the deterministic seed + (recover) restore funds via NUT-9.
+	function activateSeedAndRestore() {
+		const mnemonic = seed.trim();
+		let seedBytes: Uint8Array;
 		try {
-			await createWallet(pin, effectiveName);
-			// F-067: Set active mint on wallet creation — uses first mint URL
-			// so App.svelte's reactive store picks it up for Receive/Send
-			setActiveMintUrl(mintUrls[0]);
-			// After creating, unlock immediately
-			await unlockWallet(pin);
-			onWalletReady?.(getWalletStatus());
-		} catch (e) {
-			error = e instanceof Error ? e.message : $_('common.error');
-		} finally {
-			loading = false;
+			seedBytes = seedFromMnemonic(mnemonic);
+			setActiveSeed(seedBytes);
+		} catch {
+			return;
+		}
+		if (mode === 'recover') {
+			void restoreFunds(seedBytes);
+		}
+	}
+
+	async function restoreFunds(seedBytes: Uint8Array) {
+		restoreStatus = 'running';
+		restoredProofs = 0;
+		restoreProgress = '';
+		try {
+			// TASK-217: restore across ALL configured mints, not just the active one.
+			const mints = getAllMintConfigs();
+			let total = 0;
+			for (let i = 0; i < mints.length; i++) {
+				const mint = mints[i];
+				const mintUrl = mint.url.replace(/\/+$/, '');
+				// Per-mint progress (honest status): show which mint is being restored.
+				restoreProgress = `${i + 1}/${mints.length}: ${mint.name || mintUrl}`;
+				const keysets = await fetchAndCacheKeysets(mintUrl);
+				const active = keysets.filter((k) => k.active);
+				for (const ks of active) {
+					const res = await restoreWallet(mintUrl, seedBytes, ks.id, {});
+					if (res.success) total += res.proofs.length;
+				}
+				restoredProofs = total;
+			}
+			restoreStatus = 'done';
+			restoreProgress = '';
+		} catch {
+			restoreStatus = 'error';
+			restoreProgress = '';
+		}
+	}
+
+	function goBack() {
+		clearError();
+		const idx = stepIndex;
+		if (idx > 0) {
+			step = wizardSteps[idx - 1];
+			seedError = '';
+		}
+	}
+
+	function startUsingWallet() {
+		onWalletReady?.(getWalletStatus());
+	}
+
+	// ─── Language toggle (TASK-207 / D1.1) ───────────────────
+	function switchLanguage(lang: string) {
+		currentLang = lang;
+		locale.set(lang);
+		setSettings({ language: lang });
+	}
+
+	// ─── sessionStorage resume + exit warning (TASK-207) ─────
+	const RESUME_KEY = 'lnwcash_setup_wizard';
+
+	interface ResumeState {
+		mode: SetupMode;
+		step: WizardStep;
+		seed?: string;
+	}
+
+	function persistWizard() {
+		try {
+			if (mode === 'unlock' || step === 'welcome' || step === 'done') {
+				sessionStorage.removeItem(RESUME_KEY);
+				return;
+			}
+			sessionStorage.setItem(
+				RESUME_KEY,
+				JSON.stringify({ mode, step, seed } satisfies ResumeState)
+			);
+		} catch {
+			// sessionStorage unavailable
+		}
+	}
+
+	function loadWizard(): ResumeState | null {
+		try {
+			const raw = sessionStorage.getItem(RESUME_KEY);
+			if (!raw) return null;
+			return JSON.parse(raw) as ResumeState;
+		} catch {
+			return null;
+		}
+	}
+
+	function clearWizard() {
+		try {
+			sessionStorage.removeItem(RESUME_KEY);
+		} catch {
+			// ignore
 		}
 	}
 
 	let stepTitle = $derived(
-		(step as string) === 'unlock' ? $_('screen.register.unlock_title') :
-		(step as string) === 'create-wallet' ? $_('screen.wallet.create_title') :
-		$_('screen.register.title')
+		isUnlock ? $_('screen.register.unlock_title') :
+		step === 'welcome' ? $_('screen.setup.title') :
+		step === 'seed' ? $_('screen.setup.seed_title') :
+		step === 'verify' ? $_('screen.setup.verify_title') :
+		step === 'pin' ? $_('screen.register.title') :
+		$_('screen.setup.done_title')
 	);
 </script>
 
@@ -207,26 +681,45 @@
 
 	<Card variant="basic" padding="lg">
 		<div class="auth-card">
-			<Heading level="h2" align="center">{stepTitle}</Heading>
 
-			{#if step === 'register'}
-				<!-- ─── Register PIN ─────────────────────── -->
+			{#if isUnlock}
+				<!-- ─── Unlock PIN (existing wallet, TASK-209 preserved) ─── -->
+				<Heading level="h2" align="center">{stepTitle}</Heading>
 				<div class="form">
-					<Input
-						type="password"
-						label={$_('screen.register.pin_placeholder')}
-						placeholder="------"
-						disabled={loading}
-						oninput={(e) => { pin = (e.target as HTMLInputElement).value; clearError(); }}
-					/>
+					<Body size="sm" color="secondary" align="center">
+						{$_('screen.register.unlock_prompt')}
+					</Body>
 
-					<Input
-						type="password"
-						label={$_('screen.register.confirm_pin')}
-						placeholder="------"
-						disabled={loading}
-						oninput={(e) => { confirmPin = (e.target as HTMLInputElement).value; clearError(); }}
-					/>
+					{#if pinEntryMode === 'keypad'}
+						<div class="pin-entry">
+							<Body size="sm" weight="medium" align="center">
+								{$_('screen.register.pin_placeholder')}
+							</Body>
+							{#key attemptKey}
+								<PinDots
+									length={pin.length}
+									total={PIN_LENGTH}
+									error={!!error}
+									shakeKey={shakeKey}
+								/>
+								<Keypad
+									onDigit={handlePinDigit}
+									onBackspace={handlePinBackspace}
+									disabled={loading || lockout.locked}
+									shuffle={pinShuffle}
+								/>
+							{/key}
+						</div>
+					{:else}
+						<Input
+							type="password"
+							label={$_('screen.register.pin_placeholder')}
+							placeholder="----"
+							maxlength={PIN_LENGTH}
+							disabled={loading || lockout.locked}
+							oninput={(e) => { pin = (e.target as HTMLInputElement).value; clearError(); }}
+						/>
+					{/if}
 
 					{#if error}
 						<div class="error-banner" role="alert">
@@ -234,38 +727,11 @@
 						</div>
 					{/if}
 
-					<Button
-						variant="primary"
-						size="lg"
-						onclick={handleRegister}
-						disabled={loading || pin.length < 6 || confirmPin.length < 6}
-					>
-						{#snippet children()}{$_('screen.register.submit')}{/snippet}
-					</Button>
-
-					<Button variant="ghost" size="sm" onclick={switchToUnlock}>
-						{#snippet children()}{$_('screen.register.returning_user')}{/snippet}
-					</Button>
-				</div>
-
-			{:else if step === 'unlock'}
-				<!-- ─── Unlock PIN ───────────────────────── -->
-				<div class="form">
-					<Body size="sm" color="secondary" align="center">
-						{$_('screen.register.unlock_prompt')}
-					</Body>
-
-					<Input
-						type="password"
-						label={$_('screen.register.pin_placeholder')}
-						placeholder="------"
-						disabled={loading}
-						oninput={(e) => { pin = (e.target as HTMLInputElement).value; clearError(); }}
-					/>
-
-					{#if error}
-						<div class="error-banner" role="alert">
-							<Body size="sm">{error}</Body>
+					{#if lockout.locked}
+						<div class="lockout-banner" role="alert">
+							<Body size="sm">
+								Failed too many times — locked. Try again in {formatDuration(Math.max(0, lockout.lockUntil - lockNow))}
+							</Body>
 						</div>
 					{/if}
 
@@ -274,84 +740,281 @@
 						size="lg"
 						loading={loading}
 						onclick={handleUnlock}
-						disabled={loading || pin.length < 6}
+						disabled={loading || pin.length < PIN_LENGTH || lockout.locked}
 					>
 						{#snippet children()}{$_('screen.register.unlock_title')}{/snippet}
 					</Button>
 
-					<Button variant="ghost" size="sm" onclick={switchToRegister}>
-						{#snippet children()}{$_('screen.register.title')}{/snippet}
+					<Button variant="ghost" size="sm" onclick={togglePinMode}>
+						{#snippet children()}{pinEntryMode === 'keypad' ? 'ใช้ช่องกรอก PIN' : 'ใช้แป้นตัวเลขสุ่ม'}{/snippet}
 					</Button>
 				</div>
 
-			{:else if step === 'create-wallet'}
-				<!-- ─── Create Wallet ─────────────────────── -->
-				<div class="form">
-					<Input
-						type="text"
-						label={$_('screen.wallet.name_label')}
-						placeholder="LNWCASH Wallet (default)"
-						disabled={loading}
-						oninput={(e) => walletName = (e.target as HTMLInputElement).value}
-					/>
-
-					<div class="mint-section">
-						<Body size="sm" weight="medium">{$_('screen.wallet.mint_url_label')}</Body>
-						<div class="mint-input-row">
-						<Input
-							type="text"
-							placeholder={$_('common.placeholder_mint_url')}
-							disabled={loading}
-							oninput={(e) => newMintUrl = (e.target as HTMLInputElement).value}
+			{:else if step === 'welcome'}
+				<!-- ─── Welcome: create/recover + tagline + language ─── -->
+				<div class="welcome">
+					<div class="welcome-brand">
+						<img
+							src="/lnw-logo-144.png"
+							alt="LNWCASH"
+							class="welcome-logo"
+							width={96}
+							height={96}
 						/>
-							<Button variant="secondary" size="md" onclick={addMint} disabled={loading || !newMintUrl.trim()}>
-								{#snippet children()}{$_('screen.wallet.add_mint')}{/snippet}
-							</Button>
-						</div>
+						<span class="welcome-wordmark">LNWCASH</span>
 					</div>
 
-					{#if mintUrls.length > 0}
-						<div class="mint-list">
-							{#each mintUrls as url (url)}
-								<div class="mint-item">
-									<div class="mint-info">
-										<Body size="sm" truncate>{url}</Body>
-										{#if mintInfoMap[url]?.keysets?.length}
-											<Body size="sm" color="disabled">
-												{$_('screen.wallet.keyset_label')}: {mintInfoMap[url].keysets.length}
-											</Body>
+					<Heading level="h2" align="center">{$_('screen.setup.tagline')}</Heading>
+
+					<div class="language-toggle" role="group" aria-label={$_('screen.language.title')}>
+						<button
+							type="button"
+							class="lang-btn"
+							class:active={currentLang === 'th'}
+							aria-pressed={currentLang === 'th'}
+							onclick={() => switchLanguage('th')}
+						>
+							{$_('screen.language.th')}
+						</button>
+						<button
+							type="button"
+							class="lang-btn"
+							class:active={currentLang === 'en'}
+							aria-pressed={currentLang === 'en'}
+							onclick={() => switchLanguage('en')}
+						>
+							{$_('screen.language.en')}
+						</button>
+					</div>
+
+					<div class="choice-list">
+						<Card variant="interactive" padding="lg" onclick={chooseCreate}>
+							<div class="choice">
+								<Heading level="h3">{$_('screen.setup.welcome_create')}</Heading>
+								<Body size="sm" color="secondary">{$_('screen.setup.welcome_create_desc')}</Body>
+							</div>
+						</Card>
+						<Card variant="interactive" padding="lg" onclick={chooseRecover}>
+							<div class="choice">
+								<Heading level="h3">{$_('screen.setup.welcome_recover')}</Heading>
+								<Body size="sm" color="secondary">{$_('screen.setup.welcome_recover_desc')}</Body>
+							</div>
+						</Card>
+					</div>
+				</div>
+
+			{:else}
+				<!-- ─── Wizard (create/recover) ─── -->
+				<ProgressStepper
+					steps={stepperSteps}
+					currentIndex={stepIndex}
+					canContinue={canContinue}
+					backLabel={$_('common.back')}
+					nextLabel={$_('common.next')}
+					onBack={stepIndex > 0 ? goBack : undefined}
+					onNext={step === 'seed' ? continueFromSeed : undefined}
+				/>
+
+				<Heading level="h2" align="center">{stepTitle}</Heading>
+
+				{#if step === 'seed'}
+					<div class="form">
+						{#if mode === 'create'}
+							<Body size="sm" color="secondary" align="center">
+								{$_('screen.setup.seed_create_prompt')}
+							</Body>
+
+							<!-- TASK-208 (D3): no-screenshot banner -->
+							<div class="no-screenshot-banner" role="note">
+								<Body size="sm" weight="medium">{$_('recovery.warning.title')}</Body>
+								<Body size="sm" color="secondary">{$_('recovery.warning.no_screenshot')}</Body>
+							</div>
+
+							<SeedGrid words={seedWords} />
+
+							<!-- TASK-208 (D3): paper-only prohibitions -->
+							<ul class="paper-warnings">
+								<li><Body size="sm" color="secondary">{$_('recovery.warning.paper_only')}</Body></li>
+								<li><Body size="sm" color="secondary">{$_('recovery.warning.never_share')}</Body></li>
+								<li><Body size="sm" color="secondary">{$_('recovery.warning.anyone_access')}</Body></li>
+								<li><Body size="sm" color="secondary">{$_('recovery.warning.lose_access')}</Body></li>
+							</ul>
+
+							<label class="seed-ack">
+								<input type="checkbox" bind:checked={seedAckChecked} />
+								<Body size="sm">{$_('recovery.warning.checkbox_label')}</Body>
+							</label>
+						{:else}
+							<Body size="sm" color="secondary" align="center">
+								{$_('screen.setup.seed_recover_prompt')}
+							</Body>
+							<!-- TASK-208: BIP39 per-word autocomplete import (Recover path) -->
+							<div class="seed-import" role="group" aria-label={$_('screen.setup.seed_title')}>
+								{#each recoverWords as word, i (i)}
+									<div class="seed-word-cell">
+										<label class="seed-word-number" for={`recover-word-${i}`}>{i + 1}</label>
+										<input
+											id={`recover-word-${i}`}
+											type="text"
+											class="seed-word-input"
+											autocomplete="off"
+											autocapitalize="none"
+											autocorrect="off"
+											spellcheck="false"
+											disabled={loading}
+											value={word}
+											aria-label={`${$_('screen.setup.seed_title')} ${i + 1}`}
+											oninput={(e) => onRecoverWordInput(i, (e.target as HTMLInputElement).value)}
+											onfocus={() => { activeWordIndex = i; }}
+											onblur={() => { activeWordIndex = -1; }}
+											onkeydown={(e) => onRecoverWordKeydown(i, e)}
+										/>
+										{#if activeWordIndex === i && seedSuggestions.length > 0}
+											<ul class="seed-suggestions" role="listbox" aria-label={$_('recovery.import.placeholder')}>
+												{#each seedSuggestions as s (s)}
+													<li role="option" aria-selected="false">
+														<button
+															type="button"
+															class="suggestion"
+															onmousedown={(e) => e.preventDefault()}
+															onclick={() => completeSeedWord(i, s)}
+														>
+															{s}
+														</button>
+													</li>
+												{/each}
+											</ul>
 										{/if}
 									</div>
-									<Button variant="ghost" size="sm" onclick={() => removeMint(url)} disabled={loading}>
-										{#snippet children()}{$_('screen.wallet.remove_mint')}{/snippet}
-									</Button>
-								</div>
-							{/each}
+								{/each}
+							</div>
+						{/if}
+
+						{#if seedError}
+							<div class="error-banner" role="alert">
+								<Body size="sm">{seedError}</Body>
+							</div>
+						{/if}
+					</div>
+
+				{:else if step === 'verify'}
+					<div class="form">
+						<!-- TASK-208 (D4): random 3-word verification quiz -->
+						<SeedVerifyQuiz
+							words={seedWords}
+							prompt={$_('recovery.quiz.prompt')}
+							wordLabelPrefix={$_('recovery.quiz.word_label_prefix')}
+							wrongLabel={$_('recovery.quiz.wrong')}
+							retryLabel={$_('recovery.quiz.retry')}
+							onComplete={onVerifyComplete}
+						/>
+					</div>
+
+				{:else if step === 'pin'}
+					<div class="form">
+						{#if pinEntryMode === 'keypad'}
+							<div class="pin-entry">
+								<Body size="sm" weight="medium" align="center">
+									{registerPhase === 'enter'
+										? $_('screen.register.pin_placeholder')
+										: $_('screen.register.confirm_pin')}
+								</Body>
+								{#key attemptKey}
+									<PinDots
+										length={registerPhase === 'enter' ? pin.length : confirmPin.length}
+										total={PIN_LENGTH}
+										error={!!error}
+										shakeKey={shakeKey}
+									/>
+									<Keypad
+										onDigit={handlePinDigit}
+										onBackspace={handlePinBackspace}
+										disabled={loading}
+										shuffle={pinShuffle}
+									/>
+								{/key}
+							</div>
+						{:else}
+							<Input
+								type="password"
+								label={$_('screen.register.pin_placeholder')}
+								placeholder="----"
+								maxlength={PIN_LENGTH}
+								disabled={loading}
+								oninput={(e) => { pin = (e.target as HTMLInputElement).value; clearError(); }}
+							/>
+
+							<Input
+								type="password"
+								label={$_('screen.register.confirm_pin')}
+								placeholder="----"
+								maxlength={PIN_LENGTH}
+								disabled={loading}
+								oninput={(e) => { confirmPin = (e.target as HTMLInputElement).value; clearError(); }}
+							/>
+						{/if}
+
+						{#if error}
+							<div class="error-banner" role="alert">
+								<Body size="sm">{error}</Body>
+							</div>
+						{/if}
+
+						{#if pinEntryMode === 'input'}
+							<Button
+								variant="primary"
+								size="lg"
+								onclick={handleRegister}
+								disabled={loading || pin.length < PIN_LENGTH || confirmPin.length < PIN_LENGTH}
+							>
+								{#snippet children()}{$_('screen.register.submit')}{/snippet}
+							</Button>
+						{/if}
+
+						<Button variant="ghost" size="sm" onclick={togglePinMode}>
+							{#snippet children()}{pinEntryMode === 'keypad' ? 'ใช้ช่องกรอก PIN' : 'ใช้แป้นตัวเลขสุ่ม'}{/snippet}
+						</Button>
+					</div>
+
+				{:else if step === 'done'}
+					<div class="form">
+						<Body size="sm" color="secondary" align="center">
+							{$_('screen.setup.done_message')}
+						</Body>
+
+						<!-- TASK-208: NUT-9 fund restore status (recover path only) -->
+						{#if mode === 'recover' && restoreStatus !== 'idle'}
+							<div class="restore-status" role="status" aria-live="polite">
+							{#if restoreStatus === 'running'}
+								<Body size="sm" color="secondary">{$_('recovery.restore.running')}</Body>
+								{#if restoreProgress}
+									<Body size="sm" color="secondary">{restoreProgress}</Body>
+								{/if}
+							{:else if restoreStatus === 'done'}
+									<Body size="sm" color="secondary">{$_('recovery.restore.done', { values: { count: restoredProofs } })}</Body>
+								{:else}
+									<Body size="sm" color="secondary">{$_('recovery.restore.error')}</Body>
+								{/if}
+							</div>
+						{/if}
+
+						<!-- TASK-207 (D2): PWA manual install nudge (non-blocking) -->
+						<div class="pwa-nudge" role="note" aria-label={$_('screen.setup.pwa_nudge_title')}>
+							<Heading level="h3">{$_('screen.setup.pwa_nudge_title')}</Heading>
+							<Body size="sm" color="secondary">{$_('screen.setup.pwa_nudge_ios')}</Body>
+							<Body size="sm" color="secondary">{$_('screen.setup.pwa_nudge_android')}</Body>
+							<Body size="sm" color="secondary">{$_('screen.setup.pwa_nudge_desktop')}</Body>
 						</div>
-					{:else}
-						<Body size="sm" color="disabled">{$_('screen.wallet.error_no_mint')}</Body>
-					{/if}
 
-					{#if error}
-						<div class="error-banner" role="alert">
-							<Body size="sm">{error}</Body>
-						</div>
-					{/if}
-
-					<Button
-						variant="primary"
-						size="lg"
-						loading={loading}
-						onclick={handleCreateWallet}
-						disabled={loading || mintUrls.length < 1}
-					>
-						{#snippet children()}{$_('screen.wallet.create_button')}{/snippet}
-					</Button>
-
-					<Button variant="ghost" size="sm" onclick={backToPin}>
-						{#snippet children()}{$_('screen.setup.back_to_pin')}{/snippet}
-					</Button>
-				</div>
+						<Button
+							variant="primary"
+							size="lg"
+							onclick={startUsingWallet}
+						>
+							{#snippet children()}{$_('screen.setup.done_start')}{/snippet}
+						</Button>
+					</div>
+				{/if}
 			{/if}
 		</div>
 	</Card>
@@ -359,7 +1022,8 @@
 
 <style>
 	.setup-screen {
-		max-width: 480px;
+		width: 100%;
+		max-width: 680px;
 		margin: 0 auto;
 		padding: var(--space-xl) var(--space-md);
 		display: flex;
@@ -386,44 +1050,222 @@
 		border: 1px solid var(--color-error);
 	}
 
-	/* Mint section */
-	.mint-section {
+	/* TASK-209 (D5): sharded PIN entry + lockout */
+	.pin-entry {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-sm);
+		gap: var(--space-xs);
 	}
 
-	.mint-input-row {
-		display: flex;
-		gap: var(--space-sm);
-		align-items: flex-start;
+	.lockout-banner {
+		padding: var(--space-sm) var(--space-md);
+		background: var(--color-error-light);
+		border-radius: var(--radius-md);
+		border: 1px solid var(--color-error);
 	}
 
-	.mint-input-row :global(.input-wrapper) {
-		flex: 1;
-	}
-
-	.mint-list {
+	/* Welcome */
+	.welcome {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-sm);
+		gap: var(--space-md);
 	}
 
-	.mint-item {
+	.welcome-brand {
 		display: flex;
-		justify-content: space-between;
+		flex-direction: column;
 		align-items: center;
+		gap: var(--space-xs);
+		align-self: center;
+	}
+
+	.welcome-logo {
+		width: 96px;
+		height: 96px;
+		aspect-ratio: 1 / 1;
+		object-fit: contain;
+		flex-shrink: 0;
+	}
+
+	.welcome-wordmark {
+		font-size: 1.5rem;
+		font-weight: 700;
+		color: var(--color-primary);
+	}
+
+	.language-toggle {
+		display: flex;
+		gap: 0;
+		justify-content: center;
+		align-self: center;
+		width: fit-content;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		overflow: hidden;
+	}
+
+	.lang-btn {
+		min-width: 6rem;
+		padding: 0.4rem 1rem;
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--color-text-secondary);
+		background: var(--color-surface-variant);
+		border: none;
+		cursor: pointer;
+		text-align: center;
+		white-space: nowrap;
+		transition: all var(--transition-fast);
+	}
+
+	.lang-btn.active {
+		color: var(--color-primary-contrast, #ffffff);
+		background: var(--color-primary-dark, #00838f);
+	}
+
+	.choice-list {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+	}
+
+	.choice {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		text-align: left;
+	}
+
+	/* Seed words (TASK-208: rendered by SeedGrid) */
+	.no-screenshot-banner {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		padding: var(--space-sm) var(--space-md);
+		background: var(--color-surface-variant);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+	}
+
+	.paper-warnings {
+		margin: 0;
+		padding-left: var(--space-lg);
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-xs);
+	}
+
+	.seed-ack {
+		display: flex;
+		align-items: flex-start;
+		gap: var(--space-sm);
+		cursor: pointer;
+	}
+
+	.seed-ack input {
+		margin-top: 3px;
+		accent-color: var(--color-primary);
+	}
+
+	/* Seed import — 12 individual word boxes in a responsive grid (TASK-208) */
+	.seed-import {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+		gap: var(--space-sm);
+	}
+
+	.seed-word-cell {
+		position: relative;
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-xs);
+	}
+
+	.seed-word-number {
+		font-size: var(--font-size-xs);
+		font-weight: var(--font-weight-medium);
+		color: var(--color-text-secondary);
+	}
+
+	.seed-word-input {
+		width: 100%;
+		padding: var(--space-sm) var(--space-md);
+		font-family: var(--font-family-mono, ui-monospace, monospace);
+		font-size: var(--font-size-md);
+		color: var(--color-text);
+		background: var(--color-surface);
+		border: 1.5px solid var(--color-border);
+		border-radius: var(--radius-md);
+		transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+		outline: none;
+		line-height: var(--line-height-normal);
+	}
+
+	.seed-word-input::placeholder {
+		color: var(--color-text-disabled);
+	}
+
+	.seed-word-input:focus {
+		border-color: var(--color-border-focus);
+		box-shadow: 0 0 0 3px rgba(0, 188, 212, 0.15);
+	}
+
+	.seed-word-input:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+		background: var(--color-surface-variant);
+	}
+
+	.seed-suggestions {
+		position: absolute;
+		top: 100%;
+		left: 0;
+		right: 0;
+		z-index: var(--z-dropdown, 100);
+		margin: 4px 0 0;
+		padding: 0;
+		list-style: none;
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.12));
+		max-height: 220px;
+		overflow-y: auto;
+	}
+
+	.suggestion {
+		display: block;
+		width: 100%;
+		padding: var(--space-xs) var(--space-md);
+		font-family: var(--font-family-mono, ui-monospace, monospace);
+		font-size: 0.85rem;
+		text-align: left;
+		color: var(--color-text);
+		background: transparent;
+		border: none;
+		cursor: pointer;
+	}
+
+	.suggestion:hover,
+	.suggestion:focus-visible {
+		background: var(--color-surface-variant);
+	}
+
+	.restore-status {
 		padding: var(--space-sm) var(--space-md);
 		background: var(--color-surface-variant);
 		border-radius: var(--radius-md);
 		border: 1px solid var(--color-border);
 	}
 
-	.mint-info {
+	/* PWA nudge */
+	.pwa-nudge {
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
-		overflow: hidden;
-		flex: 1;
+		gap: var(--space-xs);
+		padding: var(--space-md);
+		background: var(--color-surface-variant);
+		border-radius: var(--radius-md);
+		border: 1px solid var(--color-border);
 	}
 </style>

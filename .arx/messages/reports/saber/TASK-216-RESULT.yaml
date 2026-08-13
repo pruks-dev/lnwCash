@@ -1,0 +1,85 @@
+message_id: TASK-216-RESULT
+type: RESULT
+sender: saber
+receiver: orion
+task_id: TASK-216
+verdict: COMPLETE
+
+summary: |
+  Close F-027-002 (lockout bypass on re-auth surface) + F-027-008 (6-digit remnant).
+  UnlockPrompt.svelte previously called unlockWallet() directly with NO lockout
+  check — 4-digit PIN brute-force on unlock was unrate-limited. Wired the shared
+  lockout counter into the unlock surface and fixed maxlength 6→4.
+
+  Wiring:
+  - import getLockoutStatus / recordFailure / recordSuccess (+ LockoutStatus) from
+    $lib/wallet/lockout
+  - $effect on open → refreshLockout() → getLockoutStatus()
+  - handleSubmit re-checks getLockoutStatus() FIRST: locked → block + return
+    (never reaches unlockWallet)
+  - InvalidPinError → recordFailure() → locked? show countdown : wrong-PIN error
+  - success → recordSuccess() (reset) BEFORE onunlock()
+  - locked state disables input + confirm, renders <p class="unlock-locked"
+    role="alert" aria-live="polite"> with unlock.locked_soft / unlock.locked_hard
+    (interpolates {time} as mm:ss via a 1s ticking derived countdown)
+  - maxlength 6→4 (F-027-008)
+
+  i18n: added unlock.locked_soft + unlock.locked_hard to BOTH en.json and th.json.
+  Parity kept: en 351 keys == th 351 keys (identical key sets).
+
+  Did NOT touch unlockWallet() (state.ts = TASK-215). No plaintext PIN/counter.
+
+files_changed:
+  modified:
+    - src/components/UnlockPrompt.svelte     # lockout wiring + maxlength 4 + countdown
+    - src/locales/en.json                    # +2 keys (unlock.locked_soft/hard)
+    - src/locales/th.json                    # +2 keys (parity)
+  added:
+    - src/components/__tests__/unlock-prompt.test.ts   # 6 tests
+
+proof_list:
+  - UnlockPrompt.svelte.diff
+  - lockout-reauth-test.log
+  - lockout-success-reset.log
+  - svelte-check.txt
+  - screenshot-unlock-locked.txt
+  - verification-summary.md
+
+evidence_count: 6
+
+test_results:
+  new_test_file: src/components/__tests__/unlock-prompt.test.ts
+  tests: 6
+  passed: 6
+  failed: 0
+  coverage:
+    - "4-digit maxlength (F-027-008)"
+    - "blocks submit when lockout active (submit-time re-check → no unlockWallet)"
+    - "5 failures → soft lock + re-auth blocked"
+    - "hard tier renders unlock.locked_hard"
+    - "wrong PIN below threshold → recordFailure, stays unlocked, error shown"
+    - "success → recordSuccess before onunlock"
+  svelte_check:
+    errors_in_changed_files: 0
+    warnings_in_changed_files: 0
+    pre_existing_errors_elsewhere: 16
+    pre_existing_warnings_elsewhere: 2
+    note: matches known baseline (16 errors / 2 warnings in 8 other files)
+  full_suite:
+    passed: 1065
+    failed: 8
+    failed_files_notes:
+      - src/__tests__/components/ErrorBoundary.test.ts   # pre-existing (i18n-not-loaded)
+      - src/__tests__/screens/Home.test.ts               # 3 pre-existing UI timing failures
+      - src/__tests__/screens/Setup.test.ts              # BIP39 autocomplete (pre-existing, Setup touched by another task)
+      - src/lib/components/__tests__/keypad.test.ts      # CSPRNG test obsolete (shuffle removed per Commander directive 2026-08-13)
+      - src/lib/wallet/__tests__/lockout.test.ts         # 2 timeouts — PASS in isolation (CPU contention under full parallel run)
+    note: none in files changed by TASK-216; lockout.test.ts passes 10/10 in isolation
+
+i18n_parity:
+  en_keys: 351
+  th_keys: 351
+  same_key_set: true
+  added_keys: [unlock.locked_soft, unlock.locked_hard]
+
+blockers: []

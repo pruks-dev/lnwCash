@@ -1,0 +1,98 @@
+message_id: TASK-209-RESULT
+type: RESULT
+sender: saber
+receiver: orion
+task_id: TASK-209
+verdict: COMPLETE
+
+summary: |
+  D5 — PIN 4 หลัก แทน 6 หลัก + sharded entry + OWASP lockout rate-limit.
+
+  Deliverables:
+  - Keypad.svelte (ใหม่): keypad ป้อน PIN 4 หลัก, สุ่ม layout ด้วย crypto.getRandomValues
+    (Fisher–Yates CSPRNG) ทุกครั้งที่ (re)mount — ไม่มีจุดทศนิยม/ปุ่มยืนยัน (ต่างจาก Numpad
+    ที่ใช้ป้อนจำนวนเงินใน Receive/Send ซึ่งไม่ถูกแตะ)
+  - PinDots.svelte (ใหม่): แสดง 4 จุด + shake animation + aria progressbar
+  - lockout.ts (ใหม่): attempt counter เข้ารหัส AES-GCM (reuse encryptKey จาก encrypt.ts,
+    EncryptedKey shape {salt,iv,iterations,data}) — 5 fail = lock 5 นาที, 10 fail = lock 1 ชม.
+    counter ไม่อยู่ในรูป plaintext localStorage
+  - Setup.svelte: PIN validation 6→4 (5 จุด), integrate keypad + PinDots + lockout countdown
+    + pin_entry_mode flag (keypad/input fallback ในหน้าจอเดียว) + mismatch reset + shake
+  - state.ts / seed.ts: PIN validation 6→4 (state.ts:63, seed.ts:104)
+
+  ไม่มี WebAuthn/biometric (grep clean). i18n defer ให้ task อื่น (locales ยังเขียน "6-digit").
+
+files_changed:
+  modified:
+    - src/screens/Setup.svelte            # PIN 6→4 + keypad/lockout integration
+    - src/lib/wallet/state.ts             # PIN validation 6→4 (shared w/ TASK-205 — surgical only)
+    - src/lib/wallet/seed.ts              # PIN validation 6→4 (shared w/ TASK-205 — surgical only)
+    - src/lib/wallet/__tests__/state.test.ts
+    - src/lib/wallet/__tests__/seed.test.ts   # regex /at least 6/ → /at least 4/ (1 line)
+    - src/__tests__/screens/Setup.test.ts
+  added:
+    - src/lib/components/Keypad.svelte
+    - src/lib/components/PinDots.svelte
+    - src/lib/wallet/lockout.ts
+    - src/lib/components/__tests__/keypad.test.ts
+    - src/lib/components/__tests__/pindots.test.ts
+    - src/lib/wallet/__tests__/lockout.test.ts
+
+proof_list:
+  - Keypad.svelte.diff
+  - PinDots.svelte.diff
+  - lockout.ts.diff
+  - lockout-logic.diff
+  - svelte-check.txt
+  - pin-tests.log
+  - verification-summary.md
+
+evidence_count: 7
+
+test_results:
+  targeted_tests:
+    files: 6
+    tests: 61
+    passed: 61
+    failed: 0
+    note: lockout + keypad + pindots + state + seed + Setup
+  lockout_rate_limit:
+    soft_lock: "5 fail → 5 min (SOFT_LOCK_DURATION_MS = 300000)"   # PASS
+    hard_lock: "10 fail → 1 hr (HARD_LOCK_DURATION_MS = 3600000)"  # PASS
+    counter_encrypted: "AES-GCM, EncryptedKey shape, no 'count'/'lockUntil' plaintext in localStorage" # PASS
+  svelte_check:
+    errors_in_changed_files: 0
+    pre_existing_errors_elsewhere: 16
+    pre_existing_error_files:
+      - src/lib/cashu/__tests__/client.test.ts
+      - src/lib/components/QRDisplay.svelte
+      - src/lib/components/TransactionDetailSheet.svelte
+      - src/lib/design/theme.ts
+      - src/lib/wallet/__tests__/pending-tx-resolver.test.ts
+      - src/screens/History.svelte
+      - src/screens/Receive.svelte
+      - src/screens/Send.svelte
+  full_suite:
+    passed: 1019
+    failed: 4
+    failed_files:
+      - src/__tests__/components/ErrorBoundary.test.ts
+      - src/__tests__/screens/Home.test.ts
+    note: pre-existing UI failures (unrelated to PIN/lockout; same 2 files already failing in TASK-205 run)
+
+pin_validation_6_to_4:
+  - file: src/lib/wallet/state.ts
+    line: 63
+  - file: src/lib/wallet/seed.ts
+    line: 104
+  - file: src/screens/Setup.svelte
+    lines: [187, 205, 319, 411, 481]
+
+out_of_scope_notes:
+  - i18n locales (en.json/th.json) ยังเขียน "6-digit"/"6 หลัก" — defer ให้ task อื่นตามคำสั่ง
+  - Numpad.svelte ไม่ถูกเปลี่ยน (ยังใช้ป้อนจำนวนเงินใน Receive/Send) — สร้าง Keypad.svelte แยกแทน
+  - F001-Register.svelte / F002-CreateWallet.svelte (legacy screens) ยังมี PIN 6 หลัก — นอก slice
+  - state.ts / seed.ts / seed.test.ts มีการแก้ไขร่วมกับ TASK-205 (mnemonic work) อยู่แล้ว;
+    การแก้ของ TASK-209 เป็นแบบ surgical (เฉพาะ PIN 6→4)
+
+blockers: []

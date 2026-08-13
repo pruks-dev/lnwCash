@@ -15,6 +15,9 @@
 	// TASK-122: Shared QR scan value store — QRScan writes, Send/Receive reads
 	import { scannedQRValue } from '$lib/stores/scannedQR';
 
+	// TASK-218: App-level auto-lock arming + reactive lock redirect
+	import { startAutoLock, walletLockedStore } from '$lib/wallet/autolock';
+
 	// Toast notifications for mint polling feedback
 	import { showToast, toastMessage, toastType } from '$lib/stores/toast';
 
@@ -115,6 +118,9 @@
 				if (didUnlock) {
 					walletStatus = getWalletStatus();
 					appView = 'main';
+					// TASK-218: arm auto-lock app-wide once unlocked
+					walletLockedStore.set(false);
+					startAutoLock();
 				} else if (tentativeView === 'main') {
 					// UNLOCKED in localStorage but private key missing
 					// and no valid session PIN → force unlock screen
@@ -145,6 +151,19 @@
 		const unsub = themeMode.subscribe((mode) => {
 			const resolved = resolveTheme(mode);
 			applyThemeDom(resolved);
+		});
+		return unsub;
+	});
+
+	// TASK-218: Reactive lock redirect — when the wallet locks (auto or manual)
+	// via `walletLockedStore`, immediately flip to the unlock (setup) screen
+	// without requiring a page refresh.
+	$effect(() => {
+		const unsub = walletLockedStore.subscribe((locked) => {
+			if (locked) {
+				walletStatus = getWalletStatus();
+				appView = 'setup';
+			}
 		});
 		return unsub;
 	});
@@ -207,6 +226,9 @@
 		walletStatus = state;
 		if (state.state === 'UNLOCKED') {
 			appView = 'main';
+			// TASK-218: arm auto-lock app-wide + reset the lock signal
+			walletLockedStore.set(false);
+			startAutoLock();
 		}
 	}
 
@@ -295,6 +317,10 @@
 					<History />
 				{:else if (activeScreen as string) === 'settings'}
 					<Settings onBack={handleBack} />
+				{:else if (activeScreen as string) === 'setup'}
+					<!-- TASK-220: render Setup (e.g. "forgot PIN" → seed recovery)
+					     when navigating to the setup route while the wallet is unlocked -->
+					<Setup onWalletReady={handleWalletReady} />
 				{/if}
 			</div>
 

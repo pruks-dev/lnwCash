@@ -1,0 +1,30 @@
+TASK-205 — keys.ts:11 false claim correction
+=============================================
+
+BEFORE (false claim):
+  // keys.ts lines 9-11
+  * Seed phrase uses BIP39 English word list (2048 words).
+  * Format: 24 words for 256-bit private keys.
+  * (12 words = 128 bits, insufficient for secp256k1 32-byte keys.)
+
+  The claim "12 words = 128 bits, insufficient for secp256k1 32-byte keys"
+  conflates the KEY's byte size (32 bytes = 256 bits) with its ENTROPY /
+  security level. A secp256k1 private key is a 32-byte scalar, but the
+  discrete-log security of the curve is ~2^128, so 128-bit entropy (12 words)
+  is the correct, industry-standard BIP39 strength. The claim was false.
+
+AFTER (corrected — full new header comment):
+  * Seed phrase (mnemonic) follows the BIP39 standard (English, 2048-word list):
+  * - 12 words = 128-bit entropy (16 bytes) + 4-bit checksum.
+  * - Derivation: mnemonic → PBKDF2-HMAC-SHA512 (2048 iterations,
+  *   salt = "mnemonic" + passphrase [empty]) → 512-bit seed
+  *   → first 32 bytes = secp256k1 private key.
+  *
+  * Why 12 words is correct (and sufficient) for secp256k1:
+  * - A secp256k1 private key is a 32-byte scalar, but its *security level* is
+  *   ~128 bits (the curve order n ≈ 2^256, so discrete-log security ≈ 2^128).
+  * - 128-bit entropy (12 words) therefore provides 128-bit security, matching
+  *   the curve's strength. A 256-bit private key does NOT require 256 bits of
+  *   entropy. This is the industry-standard BIP39 strength for Bitcoin wallets.
+
+Status: CORRECTED (see keys.ts.diff for the exact change)

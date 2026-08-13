@@ -1,0 +1,218 @@
+diff --git a/src/screens/Settings.svelte b/src/screens/Settings.svelte
+index 03163a4..ece6f2a 100644
+--- a/src/screens/Settings.svelte
++++ b/src/screens/Settings.svelte
+@@ -26,6 +26,10 @@
+ 	// Mint Settings sub-page (F-042: Manage Mint routing)
+ 	import MintSettings from '../routes/settings/mint/+page.svelte';
+ 
++	// TASK-210: Auto-lock timer + timeout config
++	// TASK-218: lockNow — manual "lock now" button
++	import { getAutolockTimeout, setAutolockTimeout, startAutoLock, lockNow, AUTOLOCK_OPTIONS } from '$lib/wallet/autolock';
++
+ 	interface Props {
+ 		onBack?: () => void;
+ 	}
+@@ -35,6 +39,7 @@
+ 	let currentLang: string = $state('en');
+ 	let currentTheme: ThemeMode = $state('system');
+ 	let showMintManage: boolean = $state(false); // F-042: sub-view for Manage Mint
++	let autoLockTimeout: number = $state(5); // TASK-210: auto-lock timeout (minutes)
+ 
+ 	$effect(() => {
+ 		try {
+@@ -45,6 +50,14 @@
+ 			currentLang = 'en';
+ 			currentTheme = 'system';
+ 		}
++
++		// TASK-210: initialise auto-lock from persisted config + arm the timer
++		try {
++			autoLockTimeout = getAutolockTimeout();
++		} catch {
++			autoLockTimeout = 5;
++		}
++		startAutoLock();
+ 	});
+ 
+ 	function switchLanguage(lang: string) {
+@@ -58,6 +71,15 @@
+ 		setTheme(theme);
+ 	}
+ 
++	function handleAutoLockChange() {
++		setAutolockTimeout(autoLockTimeout);
++	}
++
++	// TASK-218: Manual "lock now" — lock immediately + redirect home.
++	function handleLockNow() {
++		lockNow();
++	}
++
+ 	function handleBack() {
+ 		onBack?.();
+ 	}
+@@ -109,11 +131,12 @@
+ 		<Card variant="basic" padding="md">
+ 			<div class="section">
+ 				<Heading level="h4">{$_('screen.settings.language_section')}</Heading>
+-				<div class="option-row">
++				<div class="option-row" role="group" aria-label={$_('screen.settings.language_section')}>
+ 					<button
+ 						type="button"
+ 						class="option-btn"
+ 						class:active={currentLang === 'th'}
++						aria-pressed={currentLang === 'th'}
+ 						onclick={() => switchLanguage('th')}
+ 					>
+ 						{$_('screen.language.th')}
+@@ -122,6 +145,7 @@
+ 						type="button"
+ 						class="option-btn"
+ 						class:active={currentLang === 'en'}
++						aria-pressed={currentLang === 'en'}
+ 						onclick={() => switchLanguage('en')}
+ 					>
+ 						{$_('screen.language.en')}
+@@ -134,11 +158,12 @@
+ 		<Card variant="basic" padding="md">
+ 			<div class="section">
+ 				<Heading level="h4">{$_('screen.settings.theme_section')}</Heading>
+-				<div class="option-row option-row-3">
++				<div class="option-row option-row-3" role="group" aria-label={$_('screen.settings.theme_section')}>
+ 					<button
+ 						type="button"
+ 						class="option-btn"
+ 						class:active={currentTheme === 'light'}
++						aria-pressed={currentTheme === 'light'}
+ 						onclick={() => switchTheme('light')}
+ 					>
+ 						{$_('screen.settings.theme_light')}
+@@ -147,6 +172,7 @@
+ 						type="button"
+ 						class="option-btn"
+ 						class:active={currentTheme === 'dark'}
++						aria-pressed={currentTheme === 'dark'}
+ 						onclick={() => switchTheme('dark')}
+ 					>
+ 						{$_('screen.settings.theme_dark')}
+@@ -155,6 +181,7 @@
+ 						type="button"
+ 						class="option-btn"
+ 						class:active={currentTheme === 'system'}
++						aria-pressed={currentTheme === 'system'}
+ 						onclick={() => switchTheme('system')}
+ 					>
+ 						{$_('screen.settings.theme_system')}
+@@ -163,6 +190,40 @@
+ 			</div>
+ 		</Card>
+ 
++		<!-- ─── Security Section (TASK-210 Auto-lock) ─────── -->
++		<Card variant="basic" padding="md">
++			<div class="section">
++				<Heading level="h4">Auto-lock</Heading>
++				<Body size="sm" color="secondary">Lock wallet automatically after inactivity</Body>
++				<select
++					class="autolock-select"
++					aria-label="Auto-lock timeout"
++					bind:value={autoLockTimeout}
++					onchange={handleAutoLockChange}
++				>
++					{#each AUTOLOCK_OPTIONS as option}
++						<option value={option}>
++							{option === 0 ? 'Never' : `${option} min`}
++						</option>
++					{/each}
++				</select>
++				{#if autoLockTimeout === 0}
++					<p class="autolock-warning">
++						Warning: "Never" keeps your wallet unlocked until you lock it manually.
++					</p>
++				{/if}
++				<!-- TASK-218: Manual "lock now" button -->
++				<button
++					type="button"
++					class="lock-now-btn"
++					onclick={handleLockNow}
++					aria-label={$_('settings.lock_now')}
++				>
++					{$_('settings.lock_now')}
++				</button>
++			</div>
++		</Card>
++
+ 		<!-- ─── About Section ─────────────────────────────── -->
+ 		<Card variant="basic" padding="md">
+ 			<div class="section">
+@@ -271,7 +332,7 @@
+ 
+ 	.option-btn.active {
+ 		color: var(--color-primary-contrast);
+-		background: var(--color-primary);
++		background: var(--color-primary-dark);
+ 	}
+ 
+ 	.option-btn:hover:not(.active) {
+@@ -291,6 +352,61 @@
+ 		gap: var(--space-sm);
+ 	}
+ 
++	/* TASK-210: Auto-lock timeout dropdown */
++	.autolock-select {
++		width: 100%;
++		padding: var(--space-sm) var(--space-md);
++		font-family: var(--font-family);
++		font-size: var(--font-size-md);
++		color: var(--color-text);
++		background: var(--color-surface-variant);
++		border: 1px solid var(--color-border);
++		border-radius: var(--radius-md);
++		cursor: pointer;
++		transition: border-color var(--transition-fast);
++	}
++
++	.autolock-select:focus-visible {
++		outline: 2px solid var(--color-primary);
++		outline-offset: -2px;
++	}
++
++	.autolock-warning {
++		margin: 0;
++		font-size: var(--font-size-sm);
++		color: var(--color-warning);
++		line-height: var(--line-height-normal);
++	}
++
++	/* TASK-218: Manual "lock now" button */
++	.lock-now-btn {
++		width: 100%;
++		padding: var(--space-sm) var(--space-md);
++		font-family: var(--font-family);
++		font-size: var(--font-size-md);
++		font-weight: var(--font-weight-semibold);
++		color: var(--color-primary-contrast);
++		background: var(--color-primary);
++		border: none;
++		border-radius: var(--radius-md);
++		cursor: pointer;
++		min-height: 44px;
++		transition: all var(--transition-fast);
++	}
++
++	.lock-now-btn:hover:not(:disabled) {
++		background: var(--color-primary-hover);
++	}
++
++	.lock-now-btn:active:not(:disabled) {
++		transform: scale(0.97);
++	}
++
++	.lock-now-btn:focus-visible {
++		outline: 2px solid var(--color-primary);
++		outline-offset: 2px;
++	}
++
+ 	.detail-row {
+ 		display: flex;
+ 		justify-content: space-between;

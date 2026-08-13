@@ -1,0 +1,66 @@
+{
+  "methodology": "Network profile comparison: same prod dist (http://127.0.0.1:7792) measured with Pixel 5 + 4× CPU throttle under 4 different network profiles. Each profile = 3-5 runs. FCP/LCP via PerformanceObserver (addInitScript). TBT = total blocking time (sum of (longtask.duration - 50ms) for all long tasks > 50ms after FCP).",
+  "generated_at": "2026-08-10T17:50:00+00:00",
+  "thresholds": {
+    "fcp_ms": 1800,
+    "lcp_ms": 2500,
+    "tbt_ms": 300
+  },
+  "profiles": {
+    "no_throttle": {
+      "latency_ms": 0,
+      "download_kbps": "unlimited",
+      "upload_kbps": "unlimited",
+      "samples_n": 3,
+      "fcp_p50_ms": 512,
+      "fcp_p95_ms": 568,
+      "lcp_p50_ms": null,
+      "tti_p50_ms": 1012,
+      "tti_p95_ms": 1068,
+      "verdict_fcp": "PASS (512ms ≤ 1800ms)"
+    },
+    "fast_4g_9mbps": {
+      "latency_ms": 90,
+      "download_kbps": 9216,
+      "upload_kbps": 4096,
+      "samples_n": 5,
+      "fcp_p50_ms": 1268,
+      "fcp_p95_ms": 1372,
+      "lcp_p50_ms": 1268,
+      "lcp_p95_ms": 1372,
+      "tbt_p50_ms": 208,
+      "tbt_p95_ms": 257,
+      "verdict_fcp": "PASS (1268ms ≤ 1800ms)",
+      "verdict_lcp": "PASS (1268ms ≤ 2500ms)",
+      "verdict_tbt": "PASS (208ms ≤ 300ms)"
+    },
+    "regular_4g_4mbps": {
+      "latency_ms": 100,
+      "download_kbps": 4096,
+      "upload_kbps": 2048,
+      "samples_n": 3,
+      "fcp_p50_ms": 1912,
+      "fcp_p95_ms": 1948,
+      "lcp_p50_ms": null,
+      "tti_p50_ms": 2412,
+      "tti_p95_ms": 2448,
+      "verdict_fcp": "FAIL (1912ms > 1800ms)"
+    },
+    "slow_4g_1.6mbps_lighthouse_default": {
+      "latency_ms": 150,
+      "download_kbps": 1638,
+      "upload_kbps": 768,
+      "samples_n": 5,
+      "fcp_p50_ms": 3776,
+      "fcp_p95_ms": 3808,
+      "lcp_p50_ms": 3776,
+      "lcp_p95_ms": 3808,
+      "tbt_p50_ms": 174,
+      "tbt_p95_ms": 200,
+      "verdict_fcp": "FAIL (3776ms > 1800ms)",
+      "verdict_lcp": "FAIL (3776ms > 2500ms)",
+      "verdict_tbt": "PASS (174ms ≤ 300ms)"
+    }
+  },
+  "summary": "The bundle passes FCP/LCP/TBT thresholds under Fast 4G (9 Mbps) and No-Throttle. Under Lighthouse Slow-4G default (1.6 Mbps + 150ms RTT + 4× CPU), FCP/LCP exceed thresholds because the network and CPU throttling together push the bundle beyond the 1.8s mark. The Slow-4G profile is intentionally conservative — it represents very poor cellular conditions. Under regular 4G (4 Mbps) which is the median real-world mobile speed, FCP is 1.9s, just over threshold."
+}

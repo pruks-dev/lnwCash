@@ -212,16 +212,12 @@ describe('Home (TASK-059) — Wallet Page Redesign', () => {
 		expect(screen.queryByText('screen.home.recent_tx')).toBeNull();
 	});
 
-	it('shows empty state when no transactions', async () => {
-		mockGetTransactions.mockResolvedValue([]);
+	it('renders History button as entry point to transactions (MOD-012: list moved to History)', () => {
 		render(Home, {});
-		await vi.waitFor(() => {
-			// MOD-012: empty state uses home.no_transactions key
-			expect(screen.getByText('home.no_transactions')).toBeTruthy();
-		}, { timeout: 3000 });
-	}, 10000);
+		expect(document.querySelector('.history-btn')).toBeTruthy();
+	});
 
-	it('renders transaction list when data exists', async () => {
+	it('does NOT render transaction items inline (MOD-012: moved to History screen)', async () => {
 		mockGetTransactions.mockResolvedValue([
 			{ id: 'tx1', type: 'mint', amount: 5000, mint_url: 'https://m.example.com', timestamp: Date.now(), token_hash: null, status: 'confirmed' },
 			{ id: 'tx2', type: 'melt', amount: 2000, mint_url: 'https://m.example.com', timestamp: Date.now() - 86400000, token_hash: null, status: 'confirmed' },
@@ -230,8 +226,7 @@ describe('Home (TASK-059) — Wallet Page Redesign', () => {
 		render(Home, {});
 		await vi.waitFor(() => {
 			const items = document.querySelectorAll('.tx-item');
-			// MOD-012: Home shows only 1 latest tx (History tab = View All)
-			expect(items.length).toBe(1);
+			expect(items.length).toBe(0);
 		}, { timeout: 3000 });
 	}, 10000);
 
@@ -241,7 +236,7 @@ describe('Home (TASK-059) — Wallet Page Redesign', () => {
 		expect(btn).toBeNull();
 	});
 
-	it('renders status dots for transactions', async () => {
+	it('does NOT render status dots inline (MOD-012: moved to History screen)', async () => {
 		mockGetTransactions.mockResolvedValue([
 			{ id: 'tx1', type: 'mint', amount: 5000, mint_url: 'https://m.example.com', timestamp: Date.now(), token_hash: null, status: 'confirmed' },
 		]);
@@ -249,7 +244,7 @@ describe('Home (TASK-059) — Wallet Page Redesign', () => {
 		render(Home, {});
 		await vi.waitFor(() => {
 			const dots = document.querySelectorAll('.tx-status-dot');
-			expect(dots.length).toBeGreaterThanOrEqual(1);
+			expect(dots.length).toBe(0);
 		}, { timeout: 3000 });
 	}, 10000);
 

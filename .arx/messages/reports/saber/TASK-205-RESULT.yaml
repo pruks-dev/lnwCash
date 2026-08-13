@@ -1,0 +1,104 @@
+message_id: TASK-205-RESULT
+type: RESULT
+sender: saber
+receiver: orion
+task_id: TASK-205
+verdict: COMPLETE
+
+summary: |
+  Migrated seed phrase from 24-word direct-map to 12-word BIP39 standard derivation
+  (PBKDF2-HMAC-SHA512, 2048 iters, salt="mnemonic"+empty passphrase, 64-byte output,
+  first 32 bytes = secp256k1 private key), with dual 12/24 support — legacy 24-word
+  wallets still unlock/export unchanged.
+
+  Key changes:
+  - keys.ts: added BIP39 primitives (generateMnemonic, mnemonicToSeed, mnemonicToPrivateKey,
+    entropyToMnemonic, mnemonicToEntropy). generateKeyPair() now derives the key from a
+    fresh 12-word mnemonic (returns `mnemonic`). seedToPrivateKey() auto-detects 12 vs 24
+    words. privateKeyToSeed() preserved as the legacy 24-word direct-map. Corrected the
+    false claim at keys.ts:11 ("12 words = 128 bits, insufficient for secp256k1").
+  - wordlist.ts: FIXED corruption — original list had only 2045 words (missing involve/iron/
+    library/license/lift; contained non-standard africa/after). Now exports canonical
+    WORDLIST (2048) + LEGACY_WORDLIST (original 2045 preserved verbatim, padded to 2048).
+  - seed.ts/storage.ts/state.ts: new wallets persist the BIP39 mnemonic (encrypted) so it
+    can be re-exported (BIP39 is one-way: key cannot be reverse-derived to a mnemonic).
+    Legacy wallets keep only the encrypted key and re-derive their 24-word phrase on export.
+  - index.ts: barrel exports for mnemonic storage.
+
+  Verification:
+  - Crypto suite (keys + seed + state): 3 files / 54 tests — ALL PASS
+  - BIP39 known vectors (empty passphrase): 3/3 PASS, cross-checked against Node crypto.pbkdf2Sync
+  - 24-word legacy backward compat: PASS (simulated v1 wallet with only encrypted key unlocks + exports)
+  - svelte-check: 0 errors in changed files (16 pre-existing errors in 8 unrelated files, none touched)
+  - Full suite: 928 passed / 4 failed — the 4 failures are pre-existing UI tests
+    (ErrorBoundary.test.ts, Home.test.ts), verified unrelated via git stash
+
+files_changed:
+  modified:
+    - src/lib/wallet/keys.ts
+    - src/lib/wallet/seed.ts
+    - src/lib/wallet/state.ts
+    - src/lib/wallet/storage.ts
+    - src/lib/wallet/wordlist.ts
+    - src/lib/wallet/index.ts
+    - src/lib/wallet/__tests__/keys.test.ts
+    - src/lib/wallet/__tests__/seed.test.ts
+
+proof_list:
+  - keys.ts.diff
+  - seed.ts.diff
+  - state.ts.diff
+  - storage.ts.diff
+  - wordlist.ts.diff
+  - index.ts.diff
+  - git-diff-stat.txt
+  - bip39-test-vectors.txt
+  - backward-compat-test.log
+  - vitest-crypto.log
+  - comment-fix.txt
+  - verification-summary.md
+
+evidence_count: 12
+
+test_results:
+  vitest_crypto_suite:
+    files: 3
+    tests: 54
+    passed: 54
+    failed: 0
+  bip39_vectors:
+    total: 3
+    passed: 3
+    failed: 0
+    passphrase: empty
+    oracle: Node crypto.pbkdf2Sync + @noble/hashes pbkdf2 (both agree)
+  backward_compat_24_word:
+    status: PASS
+  svelte_check:
+    errors_in_changed_files: 0
+    pre_existing_errors_elsewhere: 16
+    pre_existing_error_files:
+      - src/lib/cashu/__tests__/client.test.ts
+      - src/lib/components/QRDisplay.svelte
+      - src/lib/components/TransactionDetailSheet.svelte
+      - src/lib/design/theme.ts
+      - src/lib/wallet/__tests__/pending-tx-resolver.test.ts
+      - src/screens/History.svelte
+      - src/screens/Receive.svelte
+      - src/screens/Send.svelte
+  full_suite:
+    passed: 928
+    failed: 4
+    failed_files:
+      - src/__tests__/components/ErrorBoundary.test.ts
+      - src/__tests__/screens/Home.test.ts
+    note: pre-existing UI failures, unrelated to crypto layer (verified via git stash)
+
+design_notes:
+  - BIP39 is one-way (mnemonic -> PBKDF2 -> key), so new wallets persist the encrypted
+    mnemonic for export; privateKeyToSeed() stays legacy-only.
+  - Dual routing in seedToPrivateKey() is disjoint by word count (12 vs 24).
+  - LEGACY_WORDLIST preserves the exact original 2045-word mapping (indices 0..2044) so
+    existing 24-word phrases decode identically; padded to 2048 to avoid `undefined` words.
+
+blockers: []

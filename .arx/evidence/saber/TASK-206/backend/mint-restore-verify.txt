@@ -1,0 +1,10 @@
+MINT NUT-09 RESTORE VERIFICATION (REAL, live network)
+=====================================================
+Mint URL : https://mint.lnw.cash
+Version  : Nutshell/0.20.1
+Time     : 2026-08-13T04:43:39.295Z
+
+NUT-09 (restore)  : {"supported":true}
+NUT-07 (checkstate): {"supported":true}
+
+RESULT: PASS — mint advertises NUT-09 {"supported":true} (real verify, not mocked)

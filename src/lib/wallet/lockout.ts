@@ -1,0 +1,175 @@
+/**
+ * Lockout rate-limiting (OWASP) with an AES-GCM encrypted attempt counter.
+ *
+ * TASK-209 (D5) — 4-digit PIN + sharded entry + lockout.
+ *
+ * Rules:
+ *   - 5 consecutive failures → lock 5 minutes
+ *   - 10 consecutive failures → lock 1 hour
+ *
+ * The attempt counter is NEVER stored as plaintext localStorage. It is
+ * serialized to JSON and encrypted with AES-GCM (reusing `encryptKey` from
+ * crypto/encrypt.ts), producing the same `EncryptedKey` shape used for the
+ * private key (`{ salt, iv, iterations, data }`).
+ *
+ * NOTE (honest limitation): this is a client-side-only app — there is no
+ * server or hardware keystore to hold the encryption passphrase. The passphrase
+ * is a per-install random device secret (crypto.getRandomValues) kept in
+ * localStorage. This satisfies the "encrypted at rest, not plaintext" contract
+ * and gives per-device key diversity, but is not a defence against an attacker
+ * who can already read/write localStorage (the same trust boundary as the
+ * encrypted private key itself). If storage is unavailable or tampered with,
+ * the counter fails OPEN (no lockout) rather than bricking the wallet.
+ */
+import { encryptKey, decryptKey } from '../crypto/encrypt';
+import { base64url } from '../util/base64';
+import type { EncryptedKey } from '../types';
+
+// ─── OWASP thresholds ────────────────────────────────────────
+
+export const SOFT_LOCK_THRESHOLD = 5;                 // 5 fail → 5 min
+export const HARD_LOCK_THRESHOLD = 10;                // 10 fail → 1 hr
+export const SOFT_LOCK_DURATION_MS = 5 * 60 * 1000;   // 5 minutes
+export const HARD_LOCK_DURATION_MS = 60 * 60 * 1000;  // 1 hour
+export const MAX_ATTEMPTS = HARD_LOCK_THRESHOLD;
+
+// ─── Storage keys ────────────────────────────────────────────
+
+const COUNTER_STORAGE_KEY = 'lnwcash_lockout_counter';
+const DEVICE_SECRET_KEY = 'lnwcash_lockout_device_secret';
+
+// ─── Types ───────────────────────────────────────────────────
+
+export type LockoutLevel = 'none' | 'soft' | 'hard';
+
+export interface LockoutStatus {
+	/** Current consecutive failure count */
+	attempts: number;
+	/** Hard ceiling (10) */
+	maxAttempts: number;
+	/** Whether the wallet is currently locked out */
+	locked: boolean;
+	/** Epoch ms at which the current lock expires (0 when not locked) */
+	lockUntil: number;
+	/** Milliseconds remaining in the current lock (0 when not locked) */
+	remainingMs: number;
+	/** Which tier the counter currently sits in */
+	level: LockoutLevel;
+}
+
+/** Internal persisted payload (encrypted at rest). */
+interface CounterState {
+	count: number;
+	lockUntil: number;
+}
+
+// ─── Pure logic (deterministic — unit tested directly) ──────
+
+export function computeLockoutLevel(count: number): LockoutLevel {
+	if (count >= HARD_LOCK_THRESHOLD) return 'hard';
+	if (count >= SOFT_LOCK_THRESHOLD) return 'soft';
+	return 'none';
+}
+
+export function computeLockUntil(count: number, now: number): number {
+	const level = computeLockoutLevel(count);
+	if (level === 'hard') return now + HARD_LOCK_DURATION_MS;
+	if (level === 'soft') return now + SOFT_LOCK_DURATION_MS;
+	return 0;
+}
+
+export function nextLockoutAfterFailure(
+	prev: CounterState,
+	now: number
+): CounterState {
+	const count = prev.count + 1;
+	return { count, lockUntil: computeLockUntil(count, now) };
+}
+
+export function toStatus(state: CounterState, now: number): LockoutStatus {
+	const locked = state.lockUntil > now;
+	return {
+		attempts: state.count,
+		maxAttempts: MAX_ATTEMPTS,
+		locked,
+		lockUntil: state.lockUntil,
+		remainingMs: locked ? state.lockUntil - now : 0,
+		level: computeLockoutLevel(state.count)
+	};
+}
+
+// ─── Device secret (PBKDF2 passphrase) ──────────────────────
+
+function getOrCreateDeviceSecret(): string {
+	try {
+		const existing = localStorage.getItem(DEVICE_SECRET_KEY);
+		if (existing) return existing;
+
+		const bytes = new Uint8Array(32);
+		crypto.getRandomValues(bytes);
+		const secret = base64url.encode(bytes);
+		localStorage.setItem(DEVICE_SECRET_KEY, secret);
+		return secret;
+	} catch {
+		return '';
+	}
+}
+
+// ─── Persistence (AES-GCM encrypted) ────────────────────────
+
+async function readCounterState(): Promise<CounterState> {
+	try {
+		const raw = localStorage.getItem(COUNTER_STORAGE_KEY);
+		if (!raw) return { count: 0, lockUntil: 0 };
+
+		const encrypted = JSON.parse(raw) as EncryptedKey;
+		const secret = getOrCreateDeviceSecret();
+		if (!secret) return { count: 0, lockUntil: 0 };
+
+		const plaintext = await decryptKey(encrypted, secret);
+		const parsed = JSON.parse(plaintext) as Partial<CounterState>;
+		if (typeof parsed.count !== 'number' || typeof parsed.lockUntil !== 'number') {
+			return { count: 0, lockUntil: 0 };
+		}
+		return { count: parsed.count, lockUntil: parsed.lockUntil };
+	} catch {
+		// Tampered / corrupt / unavailable → fail open (no lockout).
+		return { count: 0, lockUntil: 0 };
+	}
+}
+
+async function writeCounterState(state: CounterState): Promise<void> {
+	try {
+		const secret = getOrCreateDeviceSecret();
+		if (!secret) return;
+		const encrypted = await encryptKey(JSON.stringify(state), secret);
+		localStorage.setItem(COUNTER_STORAGE_KEY, JSON.stringify(encrypted));
+	} catch {
+		// Ignore — cannot enforce lockout without persistence.
+	}
+}
+
+// ─── Public API ─────────────────────────────────────────────
+
+export async function getLockoutStatus(
+	now: number = Date.now()
+): Promise<LockoutStatus> {
+	return toStatus(await readCounterState(), now);
+}
+
+export async function recordFailure(
+	now: number = Date.now()
+): Promise<LockoutStatus> {
+	const prev = await readCounterState();
+	const next = nextLockoutAfterFailure(prev, now);
+	await writeCounterState(next);
+	return toStatus(next, now);
+}
+
+export async function recordSuccess(): Promise<void> {
+	await writeCounterState({ count: 0, lockUntil: 0 });
+}
+
+export async function resetLockout(): Promise<void> {
+	await recordSuccess();
+}

@@ -21,6 +21,7 @@ import { isNativePlatform } from '../platform';
 
 const KEYS = {
 	ENCRYPTED_KEY: 'lnwcash_encrypted_key',
+	ENCRYPTED_MNEMONIC: 'lnwcash_encrypted_mnemonic',
 	PIN_HASH: 'lnwcash_pin_hash',
 	WALLET_STATE: 'lnwcash_wallet_state'
 } as const;
@@ -79,6 +80,7 @@ async function _loadSecurePlugin(): Promise<void> {
 function _shortKey(key: string): string {
 	// Map localStorage key → short key for secure storage
 	if (key === KEYS.ENCRYPTED_KEY) return 'encrypted_key';
+	if (key === KEYS.ENCRYPTED_MNEMONIC) return 'encrypted_mnemonic';
 	if (key === KEYS.PIN_HASH) return 'pin_hash';
 	if (key === KEYS.WALLET_STATE) return 'wallet_state';
 	return key.replace('lnwcash_', '');
@@ -149,6 +151,30 @@ export function clearEncryptedKey(): void {
 	_removeFromSecure(KEYS.ENCRYPTED_KEY);
 }
 
+// ─── Encrypted Mnemonic (BIP39 12-word recovery phrase) ───────
+
+/**
+ * Encrypted BIP39 mnemonic for new (12-word) wallets.
+ * Stored in addition to the encrypted key so the recovery phrase can be
+ * re-exported — a BIP39 mnemonic cannot be reverse-derived from a private key.
+ * Legacy (24-word) wallets do not have this key; export falls back to
+ * re-deriving the legacy phrase from the private key.
+ */
+export function getEncryptedMnemonic(): EncryptedKey | null {
+	return readJSON<EncryptedKey | null>(KEYS.ENCRYPTED_MNEMONIC, null);
+}
+
+export function setEncryptedMnemonic(key: EncryptedKey): void {
+	writeJSON(KEYS.ENCRYPTED_MNEMONIC, key);
+	// Mirror to secure storage (fire-and-forget)
+	_mirrorToSecure(KEYS.ENCRYPTED_MNEMONIC, JSON.stringify(key));
+}
+
+export function clearEncryptedMnemonic(): void {
+	removeKey(KEYS.ENCRYPTED_MNEMONIC);
+	_removeFromSecure(KEYS.ENCRYPTED_MNEMONIC);
+}
+
 // ─── PIN Hash ────────────────────────────────────────────────
 
 export function getPinHash(): PinHash | null {
@@ -199,6 +225,7 @@ export function clearWalletState(): void {
  */
 export async function clearAllWalletData(): Promise<void> {
 	clearEncryptedKey();
+	clearEncryptedMnemonic();
 	clearPinHash();
 	clearWalletState();
 	clearWalletMetadata();
@@ -210,4 +237,37 @@ export async function clearAllWalletData(): Promise<void> {
 	} catch {
 		// Ignore cleanup errors
 	}
+}
+
+// ─── Auto-lock timeout (TASK-210) ──────────────────────────
+//
+// Configurable idle timeout for the AutoLockTimer.
+// Stored as a plain number of minutes under `lnwcash_autolock_timeout`.
+// Default: 5 minutes. `0` = "Never" (auto-lock disabled).
+// NOTE: added as NEW functions only — existing storage functions unchanged.
+
+const AUTOLOCK_TIMEOUT_KEY = 'lnwcash_autolock_timeout';
+
+/** Default auto-lock timeout in minutes (5 min). */
+export const DEFAULT_AUTOLOCK_TIMEOUT_MINUTES = 5;
+
+/**
+ * Read the configured auto-lock timeout (minutes).
+ * Returns DEFAULT_AUTOLOCK_TIMEOUT_MINUTES when unset or invalid.
+ */
+export function getAutolockTimeoutMinutes(): number {
+	const raw = readJSON<number | null>(AUTOLOCK_TIMEOUT_KEY, null);
+	if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0) {
+		return Math.round(raw);
+	}
+	return DEFAULT_AUTOLOCK_TIMEOUT_MINUTES;
+}
+
+/**
+ * Persist the auto-lock timeout (minutes).
+ * Clamps to `>= 0`; `0` disables auto-lock.
+ */
+export function setAutolockTimeoutMinutes(minutes: number): void {
+	const value = Number.isFinite(minutes) ? Math.max(0, Math.round(minutes)) : 0;
+	writeJSON(AUTOLOCK_TIMEOUT_KEY, value);
 }

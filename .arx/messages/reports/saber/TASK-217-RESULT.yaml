@@ -1,0 +1,78 @@
+message_id: TASK-217-RESULT
+type: RESULT
+sender: saber
+receiver: orion
+task_id: TASK-217
+verdict: COMPLETE
+
+summary: |
+  Route production Receive flow through the deterministic mint.ts completeMint()
+  path, and make fund recovery multi-mint aware.
+
+  Receive.svelte completeMintAfterPayment():
+  - removed the inline crypto.getRandomValues blinded-output block (decompose →
+    random secret → blind → mintTokens → unblind → addProofs)
+  - now: getPrivateKey() (WalletLockedError still propagates to unlock prompt) →
+    fetchAndCacheKeysets + pick active keysetId → withTransactionGuard(() =>
+    completeMint(mintUrl, quoteId, amount, keysetId, true))
+  - completeMint() derives NUT-13 secrets from getActiveSeed() + advances counterK
+    (deterministic, seed-recoverable)
+  - if completeMint returns {success:false} with a locked-wallet error, re-throw
+    WalletLockedError so the unlock-prompt retry flow still works
+  - added pendingTxId null guards (also cleared 2 pre-existing svelte-check errors)
+
+  Setup.svelte restoreFunds():
+  - was: getActiveMintUrl() once → restore single mint
+  - now: getAllMintConfigs() → per mint: fetchAndCacheKeysets → restoreWallet()
+    per active keyset → accumulate restoredProofs
+  - added restoreProgress state + UI ("{i}/{n}: {name|url}") for honest per-mint status
+
+  Did NOT touch completeMint() signature/crypto, state.ts, or the WalletLockedError
+  unlock-prompt flow.
+
+files_changed:
+  modified:
+    - src/screens/Receive.svelte            # route mint through completeMint() + withTransactionGuard (30 ins / 44 del)
+    - src/screens/Setup.svelte              # restoreFunds iterates getAllMintConfigs() + per-mint progress
+    - src/__tests__/screens/Setup.test.ts   # +getAllMintConfigs mock, +multi-mint restore test
+  added:
+    - src/__tests__/screens/Receive.deterministic-mint.test.ts   # 4 tests
+
+proof_list:
+  - Receive.svelte.diff
+  - Setup.svelte.diff
+  - deterministic-receive-test.log
+  - multi-mint-restore-test.log
+  - Setup.test.full.log
+  - svelte-check.txt
+  - verification-summary.md
+
+evidence_count: 7
+
+test_results:
+  deterministic_mint:
+    file: src/__tests__/screens/Receive.deterministic-mint.test.ts
+    tests: 4
+    passed: 4
+    failed: 0
+  multi_mint_restore:
+    file: src/__tests__/screens/Setup.test.ts (multi-mint test)
+    passed: true
+    note: asserts restoreWallet called for BOTH mocks (mint-a + mint-b)
+  existing_receive:
+    file: src/__tests__/screens/Receive.test.ts
+    tests: 18
+    passed: 18
+    failed: 0
+  setup_full:
+    file: src/__tests__/screens/Setup.test.ts
+    passed: 13
+    failed: 1
+    failed_note: "BIP39 autocomplete test — PRE-EXISTING (TASK-208 uncommitted work; trailing-space expectation mismatch). Unrelated to TASK-217 changes."
+  svelte_check:
+    errors_total: 14
+    warnings_total: 2
+    errors_in_t217_files: 0
+    note: baseline was 16 errors; TASK-217 removed 2 (pendingTxId null) and added 0.
+
+blockers: []

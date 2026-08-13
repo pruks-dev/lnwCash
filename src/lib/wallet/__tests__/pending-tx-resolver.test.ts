@@ -32,7 +32,7 @@ vi.mock('../../cashu/client', () => ({
 }));
 
 import { resolvePendingTransactions } from '../pending-tx-resolver';
-import type { Transaction } from '../../../types';
+import type { Transaction } from '../../types';
 
 // ── Helpers ───────────────────────────────────────────────────
 
