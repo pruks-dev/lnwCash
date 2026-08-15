@@ -29,7 +29,13 @@ vi.mock('../../cashu/client', () => ({
 	meltTokens: vi.fn().mockResolvedValue({
 		paid: true,
 		payment_preimage: 'preimage-abc',
-		change: [{ id: KEYSET_ID, amount: 13, C_: '02' + 'a1'.repeat(32) }]
+		// TASK-MELT-DECOMPOSE: change 13 is now decomposed to [8, 4, 1] → the mint
+		// returns one signature per denomination.
+		change: [
+			{ id: KEYSET_ID, amount: 8, C_: '02' + 'a1'.repeat(32) },
+			{ id: KEYSET_ID, amount: 4, C_: '02' + 'a1'.repeat(32) },
+			{ id: KEYSET_ID, amount: 1, C_: '02' + 'a1'.repeat(32) }
+		]
 	}),
 	mintTokens: vi.fn(),
 	checkState: vi.fn().mockResolvedValue({ states: [] }),
@@ -135,16 +141,21 @@ describe('NUT-13 deterministic melt change (TASK-244)', () => {
 		resetProofDB();
 	});
 
-	it('derives the change secret deterministically from the seed (NUT-13)', async () => {
+	it('derives the change secrets deterministically from the seed (NUT-13)', async () => {
 		const result = await meltFlow(MINT_URL, 'lnbc...', 50);
 
 		expect(result.success).toBe(true);
-		expect(result.change.length).toBe(1);
-		// change secret must equal the NUT-13 derivation for counter 1 (not random)
+		// change 13 → decompose [8, 4, 1] → 3 outputs
+		expect(result.change.length).toBe(3);
+		expect(result.change.map((p) => p.amount)).toEqual([8, 4, 1]);
+		// each change secret must equal the NUT-13 derivation for its counter
+		// (counter starts at 1), not random
 		expect(result.change[0].secret).toBe(deriveSecret(seed, KEYSET_ID, 1));
+		expect(result.change[1].secret).toBe(deriveSecret(seed, KEYSET_ID, 2));
+		expect(result.change[2].secret).toBe(deriveSecret(seed, KEYSET_ID, 3));
 	});
 
-	it('same seed → same change secret across independent runs', async () => {
+	it('same seed → same change secrets across independent runs', async () => {
 		const first = await meltFlow(MINT_URL, 'lnbc...', 50);
 
 		// reset counter + proofs to simulate a fresh run with the same seed
@@ -157,17 +168,21 @@ describe('NUT-13 deterministic melt change (TASK-244)', () => {
 
 		expect(first.success).toBe(true);
 		expect(second.success).toBe(true);
+		expect(second.change.length).toBe(3);
 		expect(second.change[0].secret).toBe(first.change[0].secret);
+		expect(second.change[1].secret).toBe(first.change[1].secret);
+		expect(second.change[2].secret).toBe(first.change[2].secret);
 		expect(second.change[0].secret).toBe(deriveSecret(seed, KEYSET_ID, 1));
 	});
 
-	it('advances counter_k by 1 after a successful melt change', async () => {
+	it('advances counter_k by the number of change outputs (3) after a successful melt', async () => {
 		expect(getCounterK(KEYSET_ID)).toBe(1);
 
 		const result = await meltFlow(MINT_URL, 'lnbc...', 50);
 
 		expect(result.success).toBe(true);
-		expect(getCounterK(KEYSET_ID)).toBe(2);
+		// change 13 → decompose [8, 4, 1] → 3 outputs → counter 1 → 4
+		expect(getCounterK(KEYSET_ID)).toBe(4);
 	});
 
 	it('legacy wallet (no active seed) → clear migration error, NOT random fallback', async () => {
@@ -241,14 +256,17 @@ describe('NUT-13 deterministic melt change — keyset version 00 (BIP32)', () =>
 		resetProofDB();
 	});
 
-	it('derives the change secret via the REAL BIP32 path (version 00)', async () => {
+	it('derives the change secrets via the REAL BIP32 path (version 00)', async () => {
 		const result = await meltFlow(MINT_URL, 'lnbc...', 50);
 
 		expect(result.success).toBe(true);
-		expect(result.change.length).toBe(1);
+		// change 13 → decompose [8, 4, 1] → 3 outputs
+		expect(result.change.length).toBe(3);
 		// exact BIP32-derived value for counter 1 (NOT an HMAC value)
 		expect(result.change[0].secret).toBe(CHANGE_SECRET_V00_COUNTER1);
 		expect(result.change[0].secret).toBe(deriveSecret(seed, KEYSET_ID_V00, 1));
+		expect(result.change[1].secret).toBe(deriveSecret(seed, KEYSET_ID_V00, 2));
+		expect(result.change[2].secret).toBe(deriveSecret(seed, KEYSET_ID_V00, 3));
 	});
 
 	it('same seed → same change secret via BIP32 across independent runs', async () => {

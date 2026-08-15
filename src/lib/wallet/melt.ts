@@ -15,6 +15,7 @@ import { deriveSecretAndR, getActiveSeed } from './nut13';
 import { getCounterK, incrementCounterK, withKeysetLock } from './counterK';
 import { getUnspentProofsByMint, addProofs, markSpent, getAllProofs, type StoredProof } from './proofsDb';
 import { selectProofs, sumProofs } from './proofs';
+import { decomposeAmount } from './mint';
 import { addTransaction, updateTransaction } from '../storage/db';
 import type { TokenProof, MeltQuote, PostMeltResponse, Transaction } from '../types';
 import { InsufficientFundsError, QuoteExpiredError, MintUnreachableError } from './errors';
@@ -72,16 +73,15 @@ export interface MeltCompleteResult {
 // ─── Helpers ─────────────────────────────────────────────────
 
 /**
- * TASK-244 (F-V27-005): Derive a deterministic melt change secret + blinding
- * factor from the active wallet seed (NUT-13) instead of `crypto.getRandomValues`.
- *
- * The change output is mint-signed, so its secret MUST be reproducible from the
- * seed (NUT-9 restore) — otherwise change funds are silently lost on restore.
+ * TASK-244 (F-V27-005): Require the active wallet seed for deterministic melt
+ * change (NUT-13). Change outputs are mint-signed, so their secrets MUST be
+ * reproducible from the seed (NUT-9 restore) — otherwise change funds are
+ * silently lost on restore.
  *
  * @throws a clear migration error if no active seed is set (legacy wallet with
  *   no mnemonic) — never falls back to a random secret.
  */
-function generateChangeSecretAndR(keysetId: string): { secret: string; r: bigint } {
+function requireChangeSeed(): Uint8Array {
 	const seed = getActiveSeed();
 	if (!seed) {
 		throw new Error(
@@ -90,7 +90,18 @@ function generateChangeSecretAndR(keysetId: string): { secret: string; r: bigint
 			'otherwise change funds would be unrecoverable on restore.'
 		);
 	}
-	return deriveSecretAndR(seed, keysetId, getCounterK(keysetId));
+	return seed;
+}
+
+/**
+ * TASK-244 (F-V27-005) / TASK-MELT-DECOMPOSE: Derive the deterministic melt
+ * change secret + blinding factor for the `counterIndex`-th change output of
+ * `keysetId` (NUT-13). Change is decomposed into multiple denominations, so
+ * each output derives its own secret from its counter offset (the per-keyset
+ * counter `startCounter + i`).
+ */
+function generateChangeSecretAndR(keysetId: string, counterIndex: number): { secret: string; r: bigint } {
+	return deriveSecretAndR(requireChangeSeed(), keysetId, counterIndex);
 }
 
 // ─── F-072: Error message extraction ─────────────────────────
@@ -445,18 +456,26 @@ export async function completeMelt(
 					}
 				}
 
-				const { secret, r } = generateChangeSecretAndR(changeKeysetId);
-				const { B_, blindingFactor } = blindMessage(secret, r);
+				// TASK-MELT-DECOMPOSE: decompose change into standard Cashu
+				// denominations. A single change output with an off-denomination
+				// amount (e.g. 30) is truncated by the mint to the nearest lower
+				// denomination in its keyset (e.g. 16), silently losing the rest
+				// (Commander live test: melt 64, pay 34 → change 30 came back 16,
+				// 14 sats lost). Decomposing 30 → [16, 8, 4, 2] keeps every sat.
+				const changeAmounts = decomposeAmount(changeAmount);
+				const startCounter = getCounterK(changeKeysetId);
 
-				outputs = [
-					{
-						amount: changeAmount,
+				outputs = changeAmounts.map((amt, i) => {
+					const { secret, r } = generateChangeSecretAndR(changeKeysetId, startCounter + i);
+					const { B_, blindingFactor } = blindMessage(secret, r);
+					return {
+						amount: amt,
 						id: changeKeysetId,
 						B_,
 						secret,
 						blindingFactor
-					}
-				];
+					};
+				});
 
 				// Step 4: Submit melt to mint
 				const outputBodies = outputs.map(o => ({
@@ -467,11 +486,12 @@ export async function completeMelt(
 
 				const meltResponse = await postMelt(mintUrl, quoteId, inputBodies, outputBodies);
 
-				// TASK-244 (F-V27-005): the mint has now signed the change output
-				// (postMelt returned) — advance counter_k even if local persistence
-				// (addProofs below) later throws, otherwise the next melt re-derives the
-				// same B_ and the mint rejects it as "outputs already signed".
-				incrementCounterK(changeKeysetId, 1);
+				// TASK-244 (F-V27-005) / TASK-MELT-DECOMPOSE: the mint has now
+				// signed all change outputs (postMelt returned) — advance counter_k
+				// by the number of outputs even if local persistence (addProofs
+				// below) later throws, otherwise the next melt re-derives the same
+				// B_ and the mint rejects it as "outputs already signed".
+				incrementCounterK(changeKeysetId, changeAmounts.length);
 
 				return meltResponse;
 			});
