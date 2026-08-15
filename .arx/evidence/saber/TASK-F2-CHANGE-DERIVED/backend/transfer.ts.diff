@@ -1,0 +1,69 @@
+diff --git a/src/lib/wallet/transfer.ts b/src/lib/wallet/transfer.ts
+index caa81bc..71d8128 100644
+--- a/src/lib/wallet/transfer.ts
++++ b/src/lib/wallet/transfer.ts
+@@ -16,6 +16,8 @@ import { selectProofs, sumProofs } from './proofs';
+ import { getUnspentProofsByMint, addProofs, markSpent, type StoredProof } from './proofsDb';
+ import { addTransaction } from '../storage/db';
+ import { decomposeAmount } from './mint';
++import { deriveSecretAndR, getActiveSeed } from './nut13';
++import { getCounterK, incrementCounterK } from './counterK';
+ import type { TokenProof, DecodedToken } from '../types';
+ import { InsufficientFundsError, TokenValidationError } from './errors';
+ 
+@@ -81,6 +83,17 @@ export async function sendTokens(
+ 		const swapExcess = swapAmount - needFromSwap;
+ 
+ 		if (swapExcess > 0 && needFromSwap > 0) {
++			// TASK-F2-CHANGE-DERIVED: change (kept in wallet) MUST be NUT-13
++			// deterministic so it is recoverable from the seed. Only the SEND
++			// portion (proofs handed to the recipient) may use random secrets.
++			const changeSeed = getActiveSeed();
++			if (!changeSeed) {
++				throw new Error(
++					'NUT-13: no active wallet seed — deterministic change requires a seed-phrase wallet. ' +
++					'This legacy wallet has no mnemonic; migrate the wallet (TASK-245) before sending, ' +
++					'otherwise change funds would be unrecoverable on restore.'
++				);
++			}
+ 		try {
+ 			await fetchAndCacheKeysets(mintUrl);
+ 			const keysetId = resolveKeysetId(mintUrl, swapProof.id) || swapProof.id;
+@@ -90,12 +103,24 @@ export async function sendTokens(
+ 			const excessAmounts = decomposeAmount(swapExcess);
+ 			const allAmounts = [...needAmounts, ...excessAmounts];
+ 
+-			// Create blinded outputs for each denomination
+-			const blinds = allAmounts.map(() => {
++			// SEND portion (needAmounts): random secrets — these proofs go to the
++			// recipient, so they are NOT recoverable from our seed by design.
++			const sendBlinds = needAmounts.map(() => {
+ 				const secret = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2,'0')).join('');
+ 				return { secret, ...blindMessage(secret) };
+ 			});
+ 
++			// CHANGE portion (excessAmounts): NUT-13 deterministic secrets +
++			// blinding factors derived from the seed with per-keyset counters.
++			const changeStartCounter = getCounterK(keysetId);
++			const changeBlinds = excessAmounts.map((_, i) => {
++				const { secret, r } = deriveSecretAndR(changeSeed, keysetId, changeStartCounter + i);
++				const { B_, blindingFactor } = blindMessage(secret, r);
++				return { secret, B_, blindingFactor };
++			});
++
++			const blinds = [...sendBlinds, ...changeBlinds];
++
+ 			const outputs = blinds.map((b, i) => ({
+ 				amount: allAmounts[i],
+ 				id: keysetId,
+@@ -104,6 +129,10 @@ export async function sendTokens(
+ 
+ 			const swapResult = await swapProofs(mintUrl, [swapProof], outputs);
+ 
++			// CHANGE outputs are now mint-signed — advance counter_k by the number
++			// of change outputs so the next derivation starts past these secrets.
++			incrementCounterK(keysetId, excessAmounts.length);
++
+ 			// Unblind all returned signatures
+ 			const swappedProofs = swapResult.signatures.map((sig, i) => {
+ 				const bp = blinds[i];

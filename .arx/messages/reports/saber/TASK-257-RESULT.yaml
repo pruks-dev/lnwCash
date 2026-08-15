@@ -1,0 +1,71 @@
+message_id: TASK-257-RESULT
+type: RESULT
+sender: saber
+receiver: orion
+task_id: TASK-257
+verdict: COMPLETE
+
+summary: |
+  Build gate (post melt-decompose emergency fix) — 8/8 GREEN.
+
+  Verified the TASK-MELT-DECOMPOSE fix on the current working tree (verify-only,
+  no commit/push/revert/pnpm install, no deploy).
+
+  1. svelte-check: 0 errors, 0 warnings
+  2. vite build: PASS — PWA SW generated (dist/sw.js, dist/workbox-9e0cfdd6.js)
+  3. vitest: PASS — 109 files / 1170 tests (baseline stated 108/1166; +1 file
+     from a parallel task, see deviations)
+  4. i18n parity: th.json vs en.json 381/381 keys, 0 diff
+  5. no-biometric grep (D5): 0 matches (NOT skipped)
+  6. crypto smoke: 47/47 — melt decompose 64→34→30→[16,8,4,2] round-trip,
+     NUT-13 determinism (HMAC + BIP32 v00), 12-word/24-word seed round-trips
+  7. verdict report: 8/8 GREEN
+  8. verification-summary.md written
+
+files_changed: []
+
+proof_list:
+  - svelte-check.txt          # 0 errors / 0 warnings
+  - vite-build.log            # PASS, PWA SW generated
+  - vitest.log                # 109/1170 PASS
+  - i18n-parity.txt           # 381/381, 0 diff
+  - no-biometric-grep.txt     # 0 matches (D5)
+  - crypto-smoke.log          # 47/47 (decompose + determinism + seed)
+  - verdict-report.md         # 8/8 GREEN
+  - verification-summary.md
+
+evidence_count: 8
+
+test_results:
+  svelte_check: PASS (0 errors, 0 warnings)
+  vite_build: PASS (330 modules, PWA SW generated)
+  vitest: PASS (109 files, 1170/1170)
+  i18n_parity: PASS (381/381, 0 diff)
+  no_biometric: PASS (0 matches)
+  crypto_smoke: PASS (47/47)
+  melt_decompose: PASS (64→34→30→[16,8,4,2], counter advance=4, unblind per denomination)
+
+acceptance_criteria:
+  - all_8_checks_green: PASS
+  - no_deploy_triggered: PASS (TASK-258 not performed)
+  - no_type_errors_reintroduced: PASS (svelte-check 0/0)
+  - no_biometric_grep_not_skipped: PASS
+
+blockers: []
+
+deviations:
+  - |
+    Parallel task TASK-F2-CHANGE-DERIVED (P2P send/swap change determinism — a
+    different Thorne task, out of TASK-257 scope) modified src/lib/wallet/transfer.ts
+    and added src/lib/wallet/__tests__/transfer-change-derived.test.ts DURING this
+    verification (09:05:37 / 09:06:39). First vitest pass recorded 108/1166 (matching
+    baseline); re-ran all gates on the current tree → 109/1170, still GREEN. Evidence
+    logs reflect the re-run. transfer.ts was not authored/edited/reverted by this sub-agent.
+  - vite build emits non-blocking warnings (3x INEFFECTIVE_DYNAMIC_IMPORT, chunk 510.86 kB
+    > 500 kB) — pre-existing, unrelated to melt-decompose, exit 0.
+
+metrics:
+  production_code_modified: 0
+  files_created: 8 (evidence only, under .arx/evidence/saber/TASK-257/devops/)
+  tests_passed: 1170
+  evidence_files_written: 8

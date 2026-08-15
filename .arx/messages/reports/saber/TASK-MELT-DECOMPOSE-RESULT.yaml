@@ -1,0 +1,60 @@
+message_id: TASK-MELT-DECOMPOSE-RESULT
+type: RESULT
+sender: saber
+receiver: orion
+task_id: TASK-MELT-DECOMPOSE
+verdict: COMPLETE
+
+summary: |
+  Emergency fix — melt change decompose เป็น denominations (fund-loss bug).
+
+  Root cause: completeMelt() submitted change as a single output
+  `{ amount: changeAmount }`. A mint signs each output with a keyset
+  denomination key, so an off-denomination amount (30) is truncated to the
+  nearest lower denomination (16) → 14 sats lost (Commander live test:
+  proof [32,32]=64 → pay 32 + fee 2 = 34 → change 30 came back 16).
+
+  1. Decompose change: `const changeAmounts = decomposeAmount(changeAmount)`
+     (30 → [16,8,4,2]). `decomposeAmount` imported from ./mint (no circular
+     import — mint.ts never imports melt.ts).
+  2. Derive one secret per denomination: loop over changeAmounts, deriving
+     `deriveSecretAndR(seed, changeKeysetId, startCounter + i)` via
+     generateChangeSecretAndR(keysetId, counterIndex). Seed still required —
+     requireChangeSeed() throws the same migration error (never random fallback).
+  3. One blinded output per denomination: outputs = changeAmounts.map(...).
+  4. Advance counter by changeAmounts.length (not 1).
+  5. Unblind each signature — existing response.change.map((sig,i)=>outputs[i])
+     now maps 1:1 across all denominations.
+
+files_changed:
+  - src/lib/wallet/melt.ts
+  - src/lib/wallet/__tests__/melt-decompose.test.ts (new)
+  - src/lib/wallet/__tests__/melt-determinism.test.ts (updated to decomposition semantics)
+
+proof_list:
+  - melt.ts.diff                 # decompose change + multi-output + counter advance
+  - melt-decompose-test.log      # 64→34 → change 30 ครบ [16,8,4,2] PASS (3/3)
+  - verification-summary.md
+
+evidence_count: 3
+
+test_results:
+  melt_files: PASS (4 files, 22/22)
+  decompose_specific: PASS (3/3 — 64→34→30→[16,8,4,2], counter advance=4, unblind per denomination)
+  full_suite: PASS (108 files, 1166/1166)
+  svelte_check: PASS (0 errors, 0 warnings)
+
+acceptance_criteria:
+  - change_decomposed_into_denominations: PASS
+  - counter_k_advance_equals_changeAmounts_length: PASS
+  - melt_64_pay_34_change_30_full_16_8_4_2: PASS
+
+blockers: []
+
+deviations: []
+
+metrics:
+  files_changed: 3
+  production_code_modified: 1
+  new_test_files: 1
+  evidence_files_written: 3
