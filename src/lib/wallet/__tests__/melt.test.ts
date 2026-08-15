@@ -11,7 +11,7 @@ import type { TokenProof } from '../../types';
 const TEST_PIN = '123456';
 const TEST_NAME = 'Test Wallet';
 const MINT_URL = 'https://mint.example.com';
-const KEYSET_ID = 'keyset-abc123';
+const KEYSET_ID = '015ba18a8adcd02e715a58358eb618da4a4b3791151a4bee5e968bb88406ccf76a';
 
 function makeProof(id: string, amount: number): TokenProof {
 	return { id: KEYSET_ID, amount, secret: `secret-${id}`, C: `sig-${id}` };
@@ -20,13 +20,13 @@ function makeProof(id: string, amount: number): TokenProof {
 // Mock the keyset module (fetch + cache layer)
 vi.mock('../../cashu/keyset', () => ({
 	fetchAndCacheKeysets: vi.fn().mockResolvedValue([
-		{ id: 'keyset-abc123', unit: 'sat', active: true, input_fee_ppk: 5, keys: { '1': '02' + 'a1'.repeat(32) }, last_updated: Date.now() }
+		{ id: '015ba18a8adcd02e715a58358eb618da4a4b3791151a4bee5e968bb88406ccf76a', unit: 'sat', active: true, input_fee_ppk: 5, keys: { '1': '02' + 'a1'.repeat(32) }, last_updated: Date.now() }
 	]),
 	getAllKeysets: vi.fn().mockReturnValue([
-		{ id: 'keyset-abc123', unit: 'sat', active: true, input_fee_ppk: 5, keys: { '1': '02' + 'a1'.repeat(32) }, last_updated: Date.now() }
+		{ id: '015ba18a8adcd02e715a58358eb618da4a4b3791151a4bee5e968bb88406ccf76a', unit: 'sat', active: true, input_fee_ppk: 5, keys: { '1': '02' + 'a1'.repeat(32) }, last_updated: Date.now() }
 	]),
 	getMintPubkey: vi.fn().mockReturnValue('03' + 'b1'.repeat(32)),
-	getKeysetById: vi.fn().mockReturnValue({ id: 'keyset-abc123', unit: 'sat', active: true, input_fee_ppk: 5, keys: { '1': '02' + 'a1'.repeat(32) }, last_updated: Date.now() }),
+	getKeysetById: vi.fn().mockReturnValue({ id: '015ba18a8adcd02e715a58358eb618da4a4b3791151a4bee5e968bb88406ccf76a', unit: 'sat', active: true, input_fee_ppk: 5, keys: { '1': '02' + 'a1'.repeat(32) }, last_updated: Date.now() }),
 	resolveKeysetId: vi.fn().mockImplementation((_url: string, id: string) => id),
 	isCacheStale: vi.fn().mockReturnValue(false),
 	clearCache: vi.fn(),
@@ -37,7 +37,7 @@ vi.mock('../../cashu/keyset', () => ({
 vi.mock('../../cashu/client', () => ({
 	getMintInfo: vi.fn(),
 	getKeysets: vi.fn().mockResolvedValue([
-		{ id: 'keyset-abc123', unit: 'sat', active: true, input_fee_ppk: 5 }
+		{ id: '015ba18a8adcd02e715a58358eb618da4a4b3791151a4bee5e968bb88406ccf76a', unit: 'sat', active: true, input_fee_ppk: 5 }
 	]),
 	getKeys: vi.fn(),
 	requestMintQuote: vi.fn().mockResolvedValue({
@@ -92,7 +92,7 @@ describe('Melt flow', () => {
 
 		// Reset all client mocks to their default implementations
 		(client.getKeysets as ReturnType<typeof vi.fn>).mockResolvedValue([
-			{ id: 'keyset-abc123', unit: 'sat', active: true, input_fee_ppk: 5 }
+			{ id: '015ba18a8adcd02e715a58358eb618da4a4b3791151a4bee5e968bb88406ccf76a', unit: 'sat', active: true, input_fee_ppk: 5 }
 		]);
 		(client.requestMeltQuote as ReturnType<typeof vi.fn>).mockResolvedValue({
 			quote: 'melt-quote-xyz',

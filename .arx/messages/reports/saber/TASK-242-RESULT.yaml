@@ -1,0 +1,74 @@
+message_id: TASK-242-RESULT
+type: RESULT
+sender: saber
+receiver: orion
+task_id: TASK-242
+verdict: COMPLETE
+
+summary: |
+  Removed the Vite dev-server /api/mint proxy special-case and switched all
+  mint traffic to direct fetch of the absolute mint URL. The mint already sends
+  `Access-Control-Allow-Origin: *` with a valid CA cert (verified), so the proxy
+  was dev-only dead weight and a source of intermittent 502s on swap.
+
+  1. client.ts fetchFromMint: removed `if (window && mintUrl === mint.lnw.cash)
+     → /api/mint...` branch; now always `url = normalizeMintUrl(mintUrl) + path`.
+     Added transient-5xx (502/503/504) retry: 1 initial + 2 retries with
+     exponential backoff (250ms → 500ms) as belt-and-suspenders against 502.
+  2. keyset.ts: direct `${mintUrl.replace(/\/+$/,'')}/v1/keys`.
+  3. mint-validation.ts: direct `${normalizedUrl}/v1/info`.
+  4. Receive.svelte:187 + :214: direct mint quote / quote-state URLs.
+  5. Send.svelte:187: direct melt quote URL.
+  6. vite.config.ts: removed server.proxy['/api/mint'] block (kept https key/cert).
+  7. client.test.ts: added retry tests + updated 502 non-JSON test.
+
+files_changed:
+  - src/lib/cashu/client.ts
+  - src/lib/cashu/keyset.ts
+  - src/lib/wallet/mint-validation.ts
+  - src/screens/Receive.svelte
+  - src/screens/Send.svelte
+  - vite.config.ts
+  - src/lib/cashu/__tests__/client.test.ts
+
+proof_list:
+  - proxy-removal.diff                 # git diff of the 6 changed files
+  - direct-fetch-test.log              # curl CORS verify: info/keys/melt/mint all allow-origin:*
+  - grep-no-api-mint.txt               # grep -rn '/api/mint' src/ vite.config.ts → 0 matches
+  - test-output.log                    # full vitest run output (96 files / 1125 tests)
+  - verification-summary.md
+
+evidence_count: 5
+
+test_results:
+  grep_api_mint_zero: PASS (0 matches)
+  vitest_full_suite: PASS (96 files / 1125 tests)
+  svelte_check: PASS (0 errors, 0 warnings)
+  cors_direct_fetch: PASS (access-control-allow-origin: * on info/keys/melt/mint)
+  retry_transient_502_then_succeed: PASS (new test)
+  no_retry_on_404: PASS (new test)
+
+acceptance_criteria:
+  - zero_api_mint_reference: PASS
+  - direct_fetch_cors_ok: PASS
+  - swap_not_502: PASS (proxy removed + 5xx retry backoff)
+
+blockers: []
+
+deviations:
+  - >
+    POST /v1/melt/quote/bolt11 curl probe returns HTTP 400 (invalid invoice
+    `lnbc1fake`) rather than 200 — expected; the CORS header is still present,
+    which is the property under test.
+  - >
+    Updated one existing test (`should handle non-JSON response gracefully`) from
+    mockResolvedValueOnce → mockResolvedValue because 502 is now retried; and
+    added two new retry tests. No production behavior beyond the proxy removal
+    + retry was changed.
+
+metrics:
+  files_changed: 7
+  production_code_modified: 6
+  tests_added: 2
+  tests_updated: 1
+  evidence_files_written: 5

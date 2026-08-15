@@ -1,0 +1,129 @@
+message_id: TASK-224-RESULT
+type: RESULT
+sender: saber
+receiver: orion
+task_id: TASK-224
+verdict: COMPLETE
+
+summary: |
+  Settings screen PIN/Security section — "Approach A" redesign (UI/CSS + i18n only,
+  zero business-logic change).
+
+  NOTE (honesty): Commander did not assign an explicit TASK-ID; I assumed TASK-224
+  (next sequential after TASK-223).
+
+  The single "Security" grab-bag Card (raw h4 "Auto-lock" + hardcoded English +
+  native <select> + raw lock-now <button> + Divider + Change PIN ListItem + custom
+  <label>+checkbox shuffle) is split into TWO clean cards:
+
+  Card 1 — "PIN & Security" (screen.settings.security_section):
+    - Heading + "Change PIN" ListItem (openChangePin + trailing ArrowRight, unchanged)
+    - Divider + shuffle toggle now uses a new reusable Toggle.svelte switch
+      (<input type="checkbox" role="switch"> + track/thumb). Same
+      handlePinShuffleToggle + pinShuffle state (checked + onchange). Keyboard
+      accessible, focus-visible ring on track, prefers-reduced-motion respected.
+
+  Card 2 — "Auto-lock" (screen.settings.autolock_section):
+    - Heading + i18n description line.
+    - Timeout control: native <select> REPLACED by a ListItem (title + trailing
+      "5 นาที"/"ไม่ล็อก" + chevron) that opens the existing Modal (bottomsheet) with
+      the 6 AUTOLOCK_OPTIONS as tappable .option-btn-style buttons (active + Check).
+      Selection calls selectAutolockOption() -> reuses the UNCHANGED
+      handleAutoLockChange() -> setAutolockTimeout(). 0 = Never preserved.
+    - "Never" warning kept, now i18n (settings.autolock.warning).
+    - "Lock now" uses the existing Button (secondary) instead of raw <button>.
+      handleLockNow unchanged.
+
+  All forbidden constraints honored: handlers/imports/$state declarations unchanged
+  (only NEW presentation state showAutolockPicker + glue functions added);
+  autolock.ts / state.ts untouched; Change PIN modal untouched; AUTOLOCK_OPTIONS
+  untouched; no ts-ignore/any; no commit.
+
+  Two test files updated to match the deliberate UI changes (NOT to hide failures):
+    - Settings.autolock.test.ts: combobox -> modal picker; ALL logic assertions
+      preserved (startAutoLock on mount, setAutolockTimeout(value), 0->warning,
+      lockNow).
+    - Settings.shuffle-toggle.test.ts: getByRole('checkbox') -> getByRole('switch')
+      (role="switch" is the requested accessible pattern).
+
+files_changed:
+  modified:
+    - src/screens/Settings.svelte            # 2 cards + Toggle + modal picker + i18n
+    - src/locales/en.json                    # +6 keys
+    - src/locales/th.json                    # +6 keys (en/th parity)
+    - src/__tests__/screens/Settings.autolock.test.ts     # modal picker queries, logic preserved
+    - src/__tests__/screens/Settings.shuffle-toggle.test.ts # checkbox -> switch role
+  added:
+    - src/lib/components/ui/Toggle.svelte    # reusable accessible switch
+
+proof_list:
+  - autolock-test.log            # 8/8 PASS (TASK-210 logic, modal picker UI)
+  - settings-regression.log      # shuffle-toggle 5 + change-pin 6 + i18n-parity 5 PASS
+  - svelte-check.log             # 0 errors, 0 warnings
+  - i18n-parity.log              # en=367 = th=367, 0 missing both ways + new keys dump
+  - full-suite.log               # 93 files / 1104 tests PASS (0 failures)
+
+evidence_count: 5
+
+test_results:
+  settings_autolock:
+    file: src/__tests__/screens/Settings.autolock.test.ts
+    tests: 8
+    passed: 8
+    failed: 0
+  settings_shuffle_toggle:
+    file: src/__tests__/screens/Settings.shuffle-toggle.test.ts
+    tests: 5
+    passed: 5
+    failed: 0
+  settings_change_pin:
+    file: src/__tests__/screens/Settings.change-pin.test.ts
+    tests: 6
+    passed: 6
+    failed: 0
+  i18n_parity_test:
+    file: src/__tests__/lib/i18n-parity.test.ts
+    tests: 5
+    passed: 5
+    failed: 0
+  svelte_check:
+    errors: 0
+    warnings: 0
+  i18n_parity:
+    en_keys: 367
+    th_keys: 367
+    missing: 0
+  full_suite:
+    files: 93
+    tests: 1104
+    passed: 1104
+    failed: 0
+
+acceptance_criteria:
+  - security_split_into_two_cards: PASS
+  - card1_change_pin_list_item_kept: PASS
+  - shuffle_toggle_replaced_with_accessible_switch: PASS   # role=switch + checked/onchange
+  - toggle_keyboard_focus_visible_reduced_motion: PASS
+  - card2_autolock_listitem_modal_picker: PASS
+  - autolock_options_1_5_15_30_60_0_meaning_preserved: PASS
+  - lock_now_uses_button_component: PASS
+  - never_warning_i18n: PASS
+  - six_new_i18n_keys_en_th_parity: PASS
+  - no_business_logic_changed: PASS
+  - change_pin_modal_intact: PASS
+  - no_ts_ignore_no_any: PASS
+
+blockers: []
+
+deviations:
+  - >
+    Two test files were updated to match the DELIBERATE presentation changes
+    (combobox->modal picker; role checkbox->switch) — every logic assertion was
+    preserved. These are not logic changes and not "gaming" — the old DOM queries
+    no longer describe the new UI.
+  - >
+    Working tree also shows dev-dist/sw.js as modified (auto-generated workbox dev
+    service worker, index.html revision hash) — NOT introduced by this task and NOT
+    part of the deliverable; left untouched.
+  - >
+    Task ID assumed TASK-224 (not explicitly assigned by Commander).

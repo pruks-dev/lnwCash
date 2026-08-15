@@ -1,0 +1,4 @@
+TH keys: 381
+EN keys: 381
+EN-only: 0
+TH-only: 0

@@ -15,6 +15,8 @@ import {
 	MintUnreachableError,
 	NetworkError
 } from '../client';
+import { hash_to_curve } from '../blind';
+import { utf8ToBytes, hexToBytes } from '@noble/hashes/utils.js';
 
 const MINT_A = 'https://mint-a.example.com';
 const MINT_B = 'https://mint-b.example.com';
@@ -392,6 +394,35 @@ describe('Cashu mint HTTP client', () => {
 			const response = await checkState(MINT_A, []);
 			expect(response.states).toHaveLength(0);
 		});
+
+		it('regression TASK-241: encodes Y from UTF-8 secret (not hex-decoded) and passes SPENT through', async () => {
+			const secret = '70726f6f662d7365637265742d31'; // hex string "proof-secret-1"
+			const correctY = hash_to_curve(utf8ToBytes(secret)).toHex(true);
+			const wrongY = hash_to_curve(hexToBytes(secret)).toHex(true);
+
+			// Sanity: the two encodings really do produce different points.
+			expect(correctY).not.toBe(wrongY);
+
+			mockFetch.mockResolvedValueOnce({
+				ok: true,
+				json: () =>
+					Promise.resolve({
+						states: [{ secret, state: 'SPENT', witness: null }]
+					})
+			});
+
+			const response = await checkState(MINT_A, [
+				{ secret, C: '02' + 'aa'.repeat(32) }
+			]);
+
+			// SPENT must pass through as SPENT (was UNSPENT due to wrong Y).
+			expect(response.states[0].state).toBe('SPENT');
+
+			const [, init] = mockFetch.mock.calls[0];
+			const body = JSON.parse(init.body as string);
+			expect(body.Ys).toContain(correctY);
+			expect(body.Ys).not.toContain(wrongY);
+		});
 	});
 
 	// ─── Error handling ───────────────────────────────────────
@@ -409,7 +440,9 @@ describe('Cashu mint HTTP client', () => {
 		});
 
 		it('should handle non-JSON response gracefully', async () => {
-			mockFetch.mockResolvedValueOnce({
+			// 502 is transient → retried; every attempt returns non-JSON, so the
+			// final error is still a CashuError (status 502).
+			mockFetch.mockResolvedValue({
 				ok: false,
 				status: 502,
 				statusText: 'Bad Gateway',
@@ -430,6 +463,100 @@ describe('Cashu mint HTTP client', () => {
 				'https://mint.example.com/v1/info',
 				expect.anything()
 			);
+		});
+
+		it('TASK-242: retries transient 5xx (502) then succeeds', async () => {
+			mockFetch
+				.mockResolvedValueOnce({
+					ok: false,
+					status: 502,
+					statusText: 'Bad Gateway',
+					json: () => Promise.resolve({ detail: 'upstream down' })
+				})
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ name: 'Test Mint', pubkey: 'abc', version: '1' })
+				});
+
+			const info = await getMintInfo(MINT_A);
+			expect(info.name).toBe('Test Mint');
+			expect(mockFetch).toHaveBeenCalledTimes(2);
+		});
+
+		it('TASK-242: does not retry non-transient 4xx', async () => {
+			mockFetch.mockResolvedValue({
+				ok: false,
+				status: 404,
+				statusText: 'Not Found',
+				json: () => Promise.resolve({ detail: 'not found' })
+			});
+
+			await expect(getMintInfo(MINT_A)).rejects.toThrow(CashuError);
+			expect(mockFetch).toHaveBeenCalledTimes(1);
+		});
+
+		it('regression TASK-241: carries NUT code 11003 in message and .code field', async () => {
+			mockFetch.mockResolvedValueOnce({
+				ok: false,
+				status: 400,
+				statusText: 'Bad Request',
+				json: () => Promise.resolve({ detail: 'outputs already signed', code: 11003 })
+			});
+
+			try {
+				await mintTokens(MINT_A, 'quote-abc', [{ id: 'ks', amount: 1, B_: 'B1' }]);
+				expect.fail('should have thrown');
+			} catch (e) {
+				expect(e).toBeInstanceOf(CashuError);
+				if (e instanceof CashuError) {
+					expect(e.status).toBe(400);
+					expect(e.code).toBe(11003);
+					expect(e.message).toContain('11003');
+					expect(e.message).toContain('outputs already signed');
+					expect(e.isBenign).toBe(true);
+				}
+			}
+		});
+
+		it('regression TASK-241: classifies non-benign codes as real errors', async () => {
+			mockFetch.mockResolvedValueOnce({
+				ok: false,
+				status: 400,
+				statusText: 'Bad Request',
+				json: () => Promise.resolve({ detail: 'outputs already signed', code: 10000 })
+			});
+
+			try {
+				await getMintInfo(MINT_A);
+				expect.fail('should have thrown');
+			} catch (e) {
+				expect(e).toBeInstanceOf(CashuError);
+				if (e instanceof CashuError) {
+					expect(e.code).toBe(10000);
+					expect(e.isBenign).toBe(false);
+				}
+			}
+		});
+
+		it('regression TASK-241: handles code supplied as a string', async () => {
+			mockFetch.mockResolvedValueOnce({
+				ok: false,
+				status: 400,
+				statusText: 'Bad Request',
+				json: () => Promise.resolve({ detail: 'quote already issued', code: '20002' })
+			});
+
+			try {
+				await getMintInfo(MINT_A);
+				expect.fail('should have thrown');
+			} catch (e) {
+				expect(e).toBeInstanceOf(CashuError);
+				if (e instanceof CashuError) {
+					expect(e.code).toBe('20002');
+					expect(e.message).toContain('20002');
+					expect(e.isBenign).toBe(true);
+				}
+			}
 		});
 	});
 });

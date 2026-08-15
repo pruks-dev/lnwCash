@@ -1,0 +1,65 @@
+message_id: TASK-245-RESULT
+type: RESULT
+sender: saber
+receiver: orion
+task_id: TASK-245
+verdict: COMPLETE
+
+summary: |
+  F-V26-003 (Re-seed → swap migration): legacy wallets with random-secret proofs
+  (pre-v1.4.1 melt/swap) can now move to full NUT-13 determinism, user-confirmed.
+
+  1. src/lib/wallet/migration.ts (NEW):
+     - detectLegacyProofs(): read-only gate — no seed + no mnemonic => all proofs
+       legacy; with seed => per-proof determinism check (secret vs deriveSecret
+       for counter 0..counter_k).
+     - migrateWallet(pin): verifyPin -> generateMnemonic -> mnemonicToSeed ->
+       group unspent proofs by (mint,keyset) -> swapGroupForNewSeed (Phase A,
+       network-only) -> commit (Phase B: addProofs -> removeProofs old ->
+       setCounterK = swap count -> setActiveSeed -> encrypt new mnemonic).
+     - NUT-29 batching: NUT29_MAX_BATCH_SIZE=1000, amount-balanced batches
+       (outputs 1:1 with inputs).
+     - Atomic: any swap failure throws BEFORE any write (no fund loss).
+
+  2. counter_k init = swap count (NOT 0): setCounterK(keysetId, swappedOutputCount)
+     so future mints never re-derive an output the mint already signed under the
+     new seed.
+
+  3. Settings.svelte: Security section gains "Migrate wallet" entry + modal
+     (confirm -> PIN -> progress -> success/error). USER-CONFIRMED (MANDATE-029):
+     explicit Continue + PIN re-entry required; never auto-migrates.
+
+  4. i18n: settings.migrate.* (12 keys) in en.json + th.json, parity th=en.
+
+files_changed:
+  - src/lib/wallet/migration.ts (new, 275 lines)
+  - src/lib/wallet/__tests__/migration.test.ts (new, 213 lines, 7 tests)
+  - src/screens/Settings.svelte (+220 lines)
+  - src/locales/en.json (+12 keys)
+  - src/locales/th.json (+12 keys)
+
+proof_list:
+  - migration-engine.diff            # re-seed + swap orchestration + counter_k init + atomicity
+  - Settings.svelte.diff             # "Migrate wallet" UI (confirm → progress → success)
+  - locales-i18n.diff                # settings.migrate.* th+en parity
+  - migration-roundtrip-test.log     # old proofs → new deterministic proofs PASS
+  - counterk-init-test.log           # counter_k = swap count PASS
+  - batch-1000-test.log              # NUT-29 batch handling (>1000) PASS
+  - atomic-swap-fail-test.log        # swap fail → old proofs untouched PASS
+  - svelte-check.txt                 # 0 errors, 0 warnings
+
+evidence_count: 9
+
+test_results:
+  migration_suite: PASS (7/7)
+  full_suite: PASS (1139/1139, 99 files)
+  svelte_check: PASS (0 errors, 0 warnings)
+  i18n_parity: PASS (0 EN-only / 0 TH-only)
+
+deviations:
+  - Private key (lnwcash_encrypted_key) NOT rotated — task spec lists only
+    setActiveSeed + setEncryptedMnemonic + setCounterK. Private key is vestigial
+    (lock-check only; NUT-13 uses the 64-byte seed). Funds recoverable from new
+    mnemonic. Flagged for review re: privateKey<->mnemonic invariant.
+  - Batch test uses 1001 proofs (not 2500) due to fake-indexeddb sequential-await
+    slowness; 1001 still proves >1000 batching (2 requests).

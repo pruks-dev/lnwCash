@@ -1,0 +1,30 @@
+TASK-231 counter_k trace — mint → melt → restore → mint
+Mint: https://mint.lnw.cash | Keyset: 00c25786d85a1dcd (version byte 00 → BIP32 legacy derivation)
+Storage key: lnwcash_counter_k (localStorage, per-keyset map)
+
+Trace (from repro-run.log, PART B — seed B):
+
+  step                                  counter_k    note
+  ----                                  ---------    ----
+  start (cleared)                       0            clearAllCounters()
+  after mintFlow(64)                    1            mint.ts completeMint → incrementCounterK(+1)
+  after melt 32                         1            melt.ts never calls incrementCounterK (change secret is RANDOM — F-V26-002)
+  after clear (new device)              0            deleteWallet() + clearAllCounters()
+  after restoreWallet (NUT-9)           1            restore.ts setCounterK(keyset, lastNonEmptyCounter)
+  after mintFlow(64) again              2            reused counter 1 (fresh) → SUCCESS, no 400
+
+KEY FINDING:
+  restoreWallet reconstructs counter_k = 1 CORRECTLY (mint had signed only counter 0,
+  which was spent by the melt; Nutshell NUT-9 /v1/restore still returns the SPENT
+  proof's signature, so `proofs.length = 1` → `lastNonEmptyCounter = 0 + 1 = 1`).
+
+  => The described flow (mint → melt → restore → mint) does NOT reproduce the 400,
+     because the restore counter reconstruction is correct. counter reuse (which DOES
+     produce "outputs already signed" 11003) requires counter_k to be LOST/desynced,
+     not reconstructed wrongly.
+
+Suspect line (restore.ts:176):
+  lastNonEmptyCounter = counter + proofs.length;   // counts signatures, assumes contiguous
+  This formula is correct for contiguous counters (normal operation). It would only
+  undercount if the mint had signed NON-contiguous counters (a "gap"), which does not
+  occur in the current mint/melt code paths.

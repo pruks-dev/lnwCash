@@ -1,0 +1,109 @@
+message_id: TASK-228-RESULT
+type: RESULT
+sender: saber
+receiver: orion
+task_id: TASK-228
+verdict: COMPLETE
+
+summary: |
+  Change PIN modal (Settings.svelte) converted from 3 plain text <Input> fields
+  to a 3-step sequential NUMPAD flow, mirroring Setup.svelte's PIN-entry pattern.
+  Pure UI/UX change — all business logic (submitChangePin validation + changePin
+  crypto, state.ts, $lib/wallet/*.ts) is preserved verbatim.
+
+  NOTE (honesty): Commander did not assign an explicit TASK-ID; I assumed TASK-228
+  (next sequential after TASK-227).
+
+  The 3 steps:
+    1. current PIN  — settings.change_pin.current_pin
+    2. new PIN      — settings.change_pin.new_pin
+    3. confirm new  — settings.change_pin.confirm_new_pin
+  Each step shows a title + PinDots(length) + Keypad(shuffle=pinShuffle). Entering
+  the 4th digit auto-advances; step 3 auto-calls submitChangePin() on the 4th digit.
+  A step header (back "←" button on steps 2-3 + "Step X of 3" indicator) lets the
+  user go back. Backspace on an empty field also steps back.
+
+  Error handling (preserves logic, adds UI reset):
+    - wrong current PIN (InvalidPinError) → back to step 1, clear currentPin,
+      keep changePinError visible, PinDots error + shake.
+    - mismatch (newPin !== confirmNewPin) → back to step 2, clear newPin + confirmNewPin,
+      PinDots error + shake.
+
+  The explicit submit Button (and Cancel Button) were REMOVED — auto-submit on the
+  4th confirm digit plus the step indicator/back button make the flow obvious; the
+  modal header still has an "X" close. changePinLoading still disables the keypad.
+  "forgot PIN" link kept.
+
+files_changed:
+  modified:
+    - src/screens/Settings.svelte            # numpad flow: step state, handlers, modal markup, styles
+    - src/locales/en.json                    # +1 key (settings.change_pin.step_indicator)
+    - src/locales/th.json                    # +1 key (en/th parity)
+    - src/__tests__/screens/Settings.change-pin.test.ts  # DOM queries updated to numpad (logic preserved)
+
+proof_list:
+  - test-output.log       # change-pin 7/7 PASS
+  - svelte-check.log      # 0 errors, 0 warnings
+  - i18n-parity.log       # en=368 = th=368, 0 missing both ways
+  - full-suite.log        # 93 files / 1105 tests PASS
+
+evidence_count: 4
+
+test_results:
+  settings_change_pin:
+    file: src/__tests__/screens/Settings.change-pin.test.ts
+    tests: 7
+    passed: 7
+    failed: 0
+  svelte_check:
+    errors: 0
+    warnings: 0
+  i18n_parity:
+    en_keys: 368
+    th_keys: 368
+    missing: 0
+  full_suite:
+    files: 93
+    tests: 1105
+    passed: 1105
+    failed: 0
+
+acceptance_criteria:
+  - three_text_inputs_replaced_with_numpad: PASS
+  - step1_current_pin_step2_new_pin_step3_confirm: PASS
+  - auto_advance_on_4th_digit: PASS
+  - auto_submit_on_confirm_4th_digit: PASS
+  - back_button_and_step_indicator: PASS
+  - wrong_pin_resets_to_step1_clears_current: PASS
+  - mismatch_resets_to_step2_clears_new_confirm: PASS
+  - pin_dots_error_and_shakeKey_signal: PASS
+  - changePinLoading_disables_keypad: PASS
+  - pinShuffle_passed_to_keypad: PASS
+  - forgot_pin_link_kept: PASS
+  - submitChangePin_validation_and_crypto_unchanged: PASS
+  - Keypad_and_PinDots_not_modified: PASS
+  - no_ts_ignore_no_any: PASS
+
+blockers: []
+
+deviations:
+  - >
+    The submit Button (common.confirm) and the Cancel Button (common.cancel) were
+    REMOVED. Rationale: with auto-submit on the 4th confirm digit the submit button
+    is redundant; the Cancel button is redundant with the modal header "X" close.
+    The flow's discoverability is preserved via the step indicator + back button.
+  - >
+    Settings.change-pin.test.ts was updated to query the new numpad DOM
+    (getByRole('button', { name: '<digit>' }) taps + step-title text assertions)
+    instead of getByLabelText(...) on the removed <Input> fields. Every logic
+    assertion was preserved and expanded (auto-advance + back-button + error-reset
+    behavior). This is a DOM-query update, not a logic change.
+  - >
+    One NEW i18n key added: settings.change_pin.step_indicator (en: "Step {step} of
+    {total}" / th: "ขั้นตอนที่ {step} จาก {total}"). Parity confirmed en==th (368 keys).
+  - >
+    Working tree also contains pre-existing uncommitted changes from a prior task
+    (Settings.autolock.test.ts, Settings.shuffle-toggle.test.ts, Toggle.svelte,
+    dev-dist/sw.js) — NOT introduced by this task and left untouched.
+  - >
+    Task ID assumed TASK-228 (not explicitly assigned by Commander).

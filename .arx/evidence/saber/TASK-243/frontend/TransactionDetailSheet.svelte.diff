@@ -1,0 +1,135 @@
+diff --git a/src/lib/components/TransactionDetailSheet.svelte b/src/lib/components/TransactionDetailSheet.svelte
+index bc58f0e..d39dafe 100644
+--- a/src/lib/components/TransactionDetailSheet.svelte
++++ b/src/lib/components/TransactionDetailSheet.svelte
+@@ -34,6 +34,11 @@
+ 	// Check payment state
+ 	let checking = $state(false);
+ 
++	// Double-submit guard (TASK-243) — mirrors Receive.svelte `mintCompleting` (TASK-230).
++	// Blocks re-entrant completeMint() while a mint completion is already in flight;
++	// a re-submit of the same blinded outputs would hit mint 400 "outputs already signed".
++	let mintCompleting = $state(false);
++
+ 	// Swipe gesture state
+ 	let sheetTranslateY: number = $state(0);
+ 	let touchStartY: number = $state(0);
+@@ -199,21 +204,111 @@
+ 		}
+ 	}
+ 
++	// ─── Mint error classification (TASK-243) ────────────────
++	// Mint 400 semantics (TASK-231 repro, live mint Nutshell/0.20.1):
++	//   11003 "outputs already signed" = already-minted (benign) → confirm, no retry loop
++	//   20002 "quote already issued"   = double-submit  (benign) → confirm, no retry loop
++	//   other (incl. "outputs mismatch") = real error            → surface, keep pending
++	function mintErrorMessage(error: unknown): string {
++		if (error instanceof Error) return error.message;
++		if (typeof error === 'string') return error;
++		return error == null ? '' : String(error);
++	}
++
++	/**
++	 * True when the error is a genuine mint HTTP response ("HTTP <status> ..."),
++	 * as produced by fetchFromMint(). Client-side guard errors (e.g. TASK-240's
++	 * counter-reuse guard) merely *quote* "outputs already signed" / "11003" in
++	 * their message without being a real mint 400 — those must NOT be classified
++	 * as benign.
++	 */
++	function isHttpErrorMessage(error: unknown): boolean {
++		return /^HTTP\s+\d{3}\b/.test(mintErrorMessage(error));
++	}
++
++	function mintErrorCode(error: unknown): number | undefined {
++		// 1. Structured `code` field — set by TASK-241 (CashuError.code) on real HTTP errors.
++		if (error && typeof error === 'object' && 'code' in error) {
++			const code = (error as { code?: unknown }).code;
++			if (typeof code === 'number') return code;
++			if (typeof code === 'string') {
++				const parsed = Number.parseInt(code, 10);
++				if (!Number.isNaN(parsed)) return parsed;
++			}
++		}
++		// 2. For genuine HTTP responses, parse a 5-digit code from the message
++		//    ("HTTP 400 (11003): outputs already signed"). Never parse client-side
++		//    error strings, which may mention a code without being a mint response.
++		if (isHttpErrorMessage(error)) {
++			const match = mintErrorMessage(error).match(/\b(\d{5})\b/);
++			if (match) {
++				const parsed = Number.parseInt(match[1], 10);
++				if (!Number.isNaN(parsed)) return parsed;
++			}
++		}
++		return undefined;
++	}
++
++	type MintErrorKind = 'already-minted' | 'double-submit' | 'real';
++
++	function classifyMintError(error: unknown): MintErrorKind {
++		const code = mintErrorCode(error);
++		if (code === 11003) return 'already-minted';
++		if (code === 20002) return 'double-submit';
++
++		// Detail-string fallback — only for genuine HTTP error responses.
++		if (isHttpErrorMessage(error)) {
++			const msg = mintErrorMessage(error).toLowerCase();
++			if (msg.includes('outputs already signed')) return 'already-minted';
++			if (msg.includes('quote already issued')) return 'double-submit';
++		}
++
++		return 'real';
++	}
++
+ 	// ─── Check Payment (pending mint) ─────────────────
+ 	async function checkPayment() {
+-		if (!tx || checking) return;
++		if (!tx || checking || mintCompleting) return;
+ 		checking = true;
+ 		try {
+ 			const quoteId = tx.id.startsWith('mint-') ? tx.id.slice(5) : tx.id;
+ 			const quote = await checkMintQuote(tx.mint_url, quoteId);
+ 			const state = quote.state ?? (quote.paid ? 'PAID' : 'UNPAID');
+-			if (state === 'PAID' || state === 'ISSUED') {
+-				// Fetch keysets and complete the mint
+-				const keysets = await fetchAndCacheKeysets(tx.mint_url);
+-				const active = keysets.filter(k => k.active);
+-				if (active.length > 0) {
+-					await completeMint(tx.mint_url, quoteId, tx.amount, active[0].id, false);
++			if (state === 'ISSUED') {
++				// Quote already issued → tokens already minted (benign double-submit).
++				// Mark confirmed without re-submitting outputs — no completeMint call.
++				await updateTransaction(tx.id, { status: 'confirmed' });
++				notifyMintConfirmed(tx.amount);
++				tx = { ...tx, status: 'confirmed' };
++			} else if (state === 'PAID') {
++				// Double-submit guard (TASK-243): set before the await so any re-entrant
++				// call bails immediately, then release in finally (mirrors TASK-230).
++				mintCompleting = true;
++				try {
++					// Fetch keysets and complete the mint
++					const keysets = await fetchAndCacheKeysets(tx.mint_url);
++					const active = keysets.filter(k => k.active);
++					if (active.length === 0) {
++						console.warn('[checkPayment] no active keysets');
++						return;
++					}
++					const result = await completeMint(tx.mint_url, quoteId, tx.amount, active[0].id, false);
++					// completeMint returns (does not throw) on failure — classify it.
++					if (!result.success) {
++						const kind = classifyMintError(result.error);
++						const benign = kind === 'already-minted' || kind === 'double-submit';
++						if (!benign) {
++							// Real error (e.g. outputs mismatch): keep pending, surface, no auto-retry.
++							console.warn('[checkPayment] mint failed:', result.error);
++							return;
++						}
++						// Benign 400: mint already happened (already-minted / double-submit).
++						// Fall through to confirmed — do NOT retry, do NOT surface as a hard error.
++					}
++				} finally {
++					mintCompleting = false;
+ 				}
++
+ 				await updateTransaction(tx.id, { status: 'confirmed' });
+ 				notifyMintConfirmed(tx.amount);
+ 				tx = { ...tx, status: 'confirmed' };

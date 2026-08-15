@@ -1,0 +1,137 @@
+message_id: TASK-229-RESULT
+type: RESULT
+sender: saber
+receiver: orion
+task_id: TASK-229
+verdict: COMPLETE
+
+summary: |
+  Added a blocking "restoring" step to the wallet RECOVERY flow in Setup.svelte
+  (Svelte 5). The user can no longer press "start using" while the NUT-9 fund
+  restore is running — navigation is fully blocked until restore completes.
+
+  NOTE (honesty): Commander did not assign an explicit TASK-ID; I assumed
+  TASK-229 (next sequential after TASK-228).
+
+  New recover flow: welcome → seed → pin → restoring → done.
+  Create flow unchanged: welcome → seed → verify → pin → done (NO 'restoring').
+
+  Behavior on the 'restoring' step:
+    - running: centered spinner + "Restoring funds from the mint..." +
+      per-mint progress line (restoreProgress).
+    - error:   error message + "Retry" button (common.retry) that re-calls
+      restoreFunds with the cached seed bytes.
+    - done:    auto-advances to 'done' via a $effect (restoreStatus === 'done').
+    - NO PWA nudge, NO "start using" button, NO back/next, NO stepper.
+
+  Navigation blocking (3 layers):
+    1. ProgressStepper is not rendered during 'restoring' (wrapped in {#if step !== 'restoring'}).
+    2. goBack() is a no-op when step === 'restoring'.
+    3. The existing beforeunload exit warning already covers 'restoring'
+       (it only exempts unlock/welcome/done).
+
+  Restore logic (restoreFunds, activateSeedAndRestore, restoreWallet,
+  NUT-9/NUT-13 crypto) is PRESERVED verbatim. The only change to
+  activateSeedAndRestore is a single cache line (restoreSeedBytes = seedBytes)
+  so the retry button can re-run restoreFunds after the seed string is cleared
+  for security.
+
+files_changed:
+  modified:
+    - src/screens/Setup.svelte            # 'restoring' step: type, RECOVER_STEPS, stepper filter, finalization, auto-advance $effect, retry helper, goBack guard, template branch, spinner CSS
+    - src/locales/en.json                 # +1 key (screen.setup.restoring_title), recovery.restore.error text (removed "retry from Settings" — retry is now inline)
+    - src/locales/th.json                 # same (+parity)
+
+proof_list:
+  - test-output.log       # Setup 14/14 PASS (no test edits needed — logic preserved)
+  - svelte-check.log      # 0 errors, 0 warnings
+  - i18n-parity.log       # en=369 = th=369, 0 missing both ways
+  - full-suite.log        # 93 files / 1105 tests PASS
+
+evidence_count: 4
+
+test_results:
+  setup_screen:
+    file: src/__tests__/screens/Setup.test.ts
+    tests: 14
+    passed: 14
+    failed: 0
+  svelte_check:
+    errors: 0
+    warnings: 0
+  i18n_parity:
+    en_keys: 369
+    th_keys: 369
+    missing: 0
+  full_suite:
+    files: 93
+    tests: 1105
+    passed: 1105
+    failed: 0
+
+acceptance_criteria:
+  - wizardstep_type_includes_restoring: PASS
+  - recover_steps_is_welcome_seed_pin_restoring_done: PASS
+  - create_steps_unchanged: PASS
+  - recover_finalization_sets_step_restoring: PASS
+  - create_finalization_sets_step_done: PASS
+  - auto_advance_restoring_to_done_on_restore_done: PASS
+  - error_stays_on_restoring_with_retry: PASS
+  - restoring_branch_shows_running_progress_error: PASS
+  - no_start_using_no_pwa_nudge_on_restoring: PASS
+  - no_back_next_stepper_navigation_on_restoring: PASS
+  - goback_noop_on_restoring: PASS
+  - stepper_filters_out_restoring: PASS
+  - i18n_en_th_parity: PASS
+  - restore_logic_unchanged: PASS
+  - no_ts_ignore_no_any: PASS
+
+blockers: []
+
+deviations:
+  - >
+    activateSeedAndRestore() gained ONE cache line (restoreSeedBytes = seedBytes).
+    This is not a restore-logic change — it caches the already-computed BIP39 seed
+    bytes so the retry button can re-call restoreFunds() after the seed string is
+    cleared at finalization (the seed string must be cleared for security, so
+    retry cannot re-derive from `seed`).
+  - >
+    recovery.restore.error text changed: en "Fund restore failed — retry from
+    Settings" → "Fund restore failed"; th "การกู้คืนเงินล้มเหลว — ลองใหม่ได้จากตั้งค่า"
+    → "การกู้คืนเงินล้มเหลว". Rationale: retry is now an INLINE button on the
+    'restoring' step, so "retry from Settings" is now misleading.
+  - >
+    The NUT-9 restore status block was REMOVED from the 'done' step (Commander:
+    "Separate the restore UI from the PWA/done UI"). The 'done' step now shows
+    only the done message + PWA nudge + start button. Since 'done' is only reached
+    after restore completes, the previous "running"/"error" branches there were
+    dead code; the restored-proof count is reflected in the wallet balance.
+  - >
+    The restore completion message (recovery.restore.done) is transient: the
+    auto-advance $effect moves 'restoring' → 'done' in the same reactivity flush,
+    so the user sees the spinner until it flips to the "Wallet Ready" screen.
+    Kept as a fallback branch for robustness only.
+  - >
+    New i18n key added: screen.setup.restoring_title (en "Restoring Funds" /
+    th "กำลังกู้คืนเงิน"). common.retry already existed (en "Retry" / th "ลองอีกครั้ง")
+    and is reused — not changed — so QRScan/History retry labels are unaffected.
+  - >
+    No test file edits were required: all 14 Setup tests pass as-is (the
+    multi-mint restore test waits on restoreWallet calls, which still fire
+    regardless of the new intermediate step).
+  - >
+    eslint on Setup.svelte reports 27 errors (26 pre-existing + 1 new of the
+    same class). The new one is svelte/no-useless-children-snippet on the retry
+    Button, which uses the identical {#snippet children()} pattern already used by
+    every other Button in the file (6 pre-existing instances). The file is not
+    lint-clean at HEAD due to misconfigured browser-global rules; the actual gate
+    (svelte-check) is 0 errors / 0 warnings.
+  - >
+    Task ID assumed TASK-229 (not explicitly assigned by Commander).
+
+metrics:
+  lines_inserted: 119
+  lines_deleted: 45
+  files_changed: 3
+  tests_added: 0
+  tests_passed: 1105

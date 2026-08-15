@@ -8,9 +8,11 @@
  * All mint URLs are passed as parameters — no hardcoding.
  */
 import { requestMeltQuote, meltTokens as postMelt, checkState, checkMeltQuote } from '../cashu/client';
-import { blindMessage, unblindSignature, deterministicBlindingFactor, blindingFactorToHex } from '../cashu/blind';
+import { blindMessage, unblindSignature, blindingFactorToHex } from '../cashu/blind';
 import { fetchAndCacheKeysets, getAllKeysets, getKeysetById, getMintPubkey } from '../cashu/keyset';
 import { getPrivateKey } from './state';
+import { deriveSecretAndR, getActiveSeed } from './nut13';
+import { getCounterK, incrementCounterK } from './counterK';
 import { getUnspentProofsByMint, addProofs, markSpent, type StoredProof } from './proofsDb';
 import { selectProofs, sumProofs } from './proofs';
 import { addTransaction, updateTransaction } from '../storage/db';
@@ -70,14 +72,25 @@ export interface MeltCompleteResult {
 // ─── Helpers ─────────────────────────────────────────────────
 
 /**
- * Generate a cryptographically random 32-byte secret for a melt change proof.
- * TASK-084: Use base64url for Cashu protocol compatibility.
+ * TASK-244 (F-V27-005): Derive a deterministic melt change secret + blinding
+ * factor from the active wallet seed (NUT-13) instead of `crypto.getRandomValues`.
+ *
+ * The change output is mint-signed, so its secret MUST be reproducible from the
+ * seed (NUT-9 restore) — otherwise change funds are silently lost on restore.
+ *
+ * @throws a clear migration error if no active seed is set (legacy wallet with
+ *   no mnemonic) — never falls back to a random secret.
  */
-function generateChangeSecret(): string {
-	const bytes = new Uint8Array(32);
-	crypto.getRandomValues(bytes);
-	// NUT-00 recommends 64-char hex string from 32 random bytes
-	return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+function generateChangeSecretAndR(keysetId: string): { secret: string; r: bigint } {
+	const seed = getActiveSeed();
+	if (!seed) {
+		throw new Error(
+			'NUT-13: no active wallet seed — deterministic melt change requires a seed-phrase wallet. ' +
+			'This legacy wallet has no mnemonic; migrate the wallet (TASK-245) before melting, ' +
+			'otherwise change funds would be unrecoverable on restore.'
+		);
+	}
+	return deriveSecretAndR(seed, keysetId, getCounterK(keysetId));
 }
 
 // ─── F-072: Error message extraction ─────────────────────────
@@ -413,16 +426,16 @@ export async function completeMelt(
 		let changeProofs: TokenProof[] = [];
 
 		if (changeAmount > 0) {
-			const changeSecret = generateChangeSecret();
-			const r = deterministicBlindingFactor(changeSecret);
-			const { B_, blindingFactor } = blindMessage(changeSecret, r);
+			const changeKeysetId = inputs[0].id;
+			const { secret, r } = generateChangeSecretAndR(changeKeysetId);
+			const { B_, blindingFactor } = blindMessage(secret, r);
 
 			outputs = [
 				{
 					amount: changeAmount,
-					id: inputs[0].id,
+					id: changeKeysetId,
 					B_,
-					secret: changeSecret,
+					secret,
 					blindingFactor
 				}
 			];
@@ -436,6 +449,14 @@ export async function completeMelt(
 		}));
 
 		const response = await postMelt(mintUrl, quoteId, inputBodies, outputBodies);
+
+		// TASK-244 (F-V27-005): the mint has now signed the change output
+		// (postMelt returned) — advance counter_k even if local persistence
+		// (addProofs below) later throws, otherwise the next melt re-derives the
+		// same B_ and the mint rejects it as "outputs already signed".
+		if (changeAmount > 0) {
+			incrementCounterK(inputs[0].id, 1);
+		}
 
 		// Step 5: Unblind change signatures (use keyset-specific denomination key)
 		if (response.change && outputs.length > 0) {

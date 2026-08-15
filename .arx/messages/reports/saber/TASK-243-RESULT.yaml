@@ -1,0 +1,107 @@
+message_id: TASK-243-RESULT
+type: RESULT
+sender: saber
+receiver: orion
+task_id: TASK-243
+verdict: COMPLETE
+
+summary: |
+  Guarded the second call site `checkPayment` in TransactionDetailSheet.svelte
+  against latent double-submit → mint 400 (not covered by TASK-230's
+  Receive.svelte guard). The old code called `completeMint(waitForPayment=false)`
+  and then marked the tx confirmed UNCONDITIONALLY, ignoring completeMint's
+  returned `{ success, error }` — so a 400 "outputs already signed" (already
+  minted) could loop, and a real 400 could be falsely confirmed.
+
+  Fix (minimal, TransactionDetailSheet.svelte only — mint.ts / client.ts /
+  restore.ts untouched):
+
+    1. Added `$state` re-entrancy guard `mintCompleting` (mirrors TASK-230).
+       `checkPayment` bails at top if `checking || mintCompleting`; guard set
+       before `await completeMint(...)`, released in a nested `finally`.
+
+    2. Captured the `completeMint` result and classified its `error`:
+       - 11003 "outputs already signed" → already-minted (benign) → confirmed, no retry loop.
+       - 20002 "quote already issued"  → double-submit (benign) → confirmed.
+       - other (incl. "outputs mismatch") → real → console.warn, keep pending, no auto-retry.
+
+    3. Benign-vs-real split reads the structured `code` field (error object,
+       TASK-241 CashuError.code) then falls back to a 5-digit code in the message
+       (`"HTTP 400 (11003): …"`) then to the detail string ("outputs already
+       signed" / "quote already issued"). All string-based fallbacks are gated by
+       `isHttpErrorMessage()` (must start with "HTTP <status>") so the TASK-240
+       counter-reuse guard error — whose client-side message only *mentions*
+       "outputs already signed"/11003 — is NOT misclassified as benign.
+
+    4. Split the old `PAID || ISSUED` branch: `state === 'ISSUED'` now marks
+       confirmed directly WITHOUT re-submitting (no completeMint call), preserving
+       the prior "confirmed" outcome and removing the latent re-submit.
+
+files_changed:
+  modified:
+    - src/lib/components/TransactionDetailSheet.svelte   # mintCompleting guard + error classifier + ISSUED split (102 insertions / 7 deletions)
+  added:
+    - src/__tests__/components/TransactionDetailSheet.mint400.test.ts   # 10 unit tests
+
+proof_list:
+  - TransactionDetailSheet.svelte.diff  # git diff of the component change
+  - mint400-latent-test.log             # 10 tests PASS (double-submit + 400 benign)
+  - svelte-check.txt                    # 0 errors, 0 warnings
+  - verification-summary.md             # full report
+
+evidence_count: 4
+
+test_results:
+  mint400_latent_tests:
+    files: 1
+    tests: 10
+    passed: 10
+    failed: 0
+  component_suite:
+    files: 23
+    tests: 219
+    passed: 219
+    failed: 0
+  svelte_check:
+    errors: 0
+    warnings: 0
+  full_suite:
+    files: 96
+    tests: 1123
+    passed: 1123
+    failed: 0
+
+acceptance_criteria:
+  - checkPayment_double_submit_guarded: PASS
+  - 400_already_signed_handled_benign_no_retry: PASS
+  - benign_vs_real_split_by_code_field: PASS
+
+blockers: []
+
+deviations:
+  - >
+    TASK-240/241 had already landed in the working tree (uncommitted) when I
+    started: client.ts (CashuError.code + isBenign, message "HTTP 400 (11003): …")
+    and mint.ts (TASK-240 counter-reuse guard). I did NOT modify them. My handler
+    aligns with the ACTUAL landed message format ("HTTP 400 (11003): …"), not the
+    task's approximate example "11003: …". Because mint.ts stringifies the
+    CashuError to `result.error` (a string), the structured `.code` is lost by the
+    time checkPayment sees it — so my classifier re-parses the code from the
+    message, gated to genuine HTTP responses.
+  - >
+    Added a regression test proving the TASK-240 counter-reuse guard error
+    (client-side message that *quotes* "outputs already signed" / 11003) is
+    classified as REAL, not benign. Without the isHttpErrorMessage() gate, a naive
+    substring/code match would wrongly confirm that real error.
+  - >
+    First full-suite run showed 3 pre-existing timeout flakiness in
+    lockout.test.ts / state-change-pin.test.ts (scrypt-heavy, 5000ms) under
+    parallel CPU contention. They pass in isolation (16 passed) and a clean full
+    re-run (96 files / 1123 tests) is all green — unrelated to TASK-243.
+
+metrics:
+  lines_inserted: 102
+  lines_deleted: 7
+  files_changed: 1
+  tests_added: 10
+  tests_passed: 1123

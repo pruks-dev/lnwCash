@@ -1,0 +1,64 @@
+message_id: TASK-240-RESULT
+type: RESULT
+sender: saber
+receiver: orion
+task_id: TASK-240
+verdict: COMPLETE
+
+summary: |
+  Fixed the NUT-13 counter reuse root cause (F-V27-001) in src/lib/wallet/mint.ts.
+
+  ROOT CAUSE FIX: incrementCounterK was AFTER addProofs, not in a finally. If
+  addProofs (IndexedDB) throws after the mint already signed the outputs, the
+  counter would not advance and the next mint re-derives the same B_ → the mint
+  returns 400 {"detail":"outputs already signed","code":11003}. Moved the advance
+  into a `finally` block so the counter ALWAYS advances once postMint returns
+  signed outputs, regardless of addProofs success/failure.
+
+  PATH 2 FIX (localStorage loss): added a guard before createOutputs — when a
+  deterministic seed is active and counter_k === 0 but IndexedDB already holds
+  proofs for this keyset (counter lost, proofs survived), throw an error directing
+  NUT-9 restore instead of re-minting with counter 0.
+
+files_changed:
+  - src/lib/wallet/mint.ts
+  - src/lib/wallet/__tests__/mint-counter-reuse.test.ts
+
+proof_list:
+  - mint.ts.diff             # git diff of the production change (61 lines)
+  - counter-reuse-test.log   # 3 new regression tests, 3/3 PASS
+  - verification-summary.md  # acceptance criteria mapping
+
+evidence_count: 3
+
+test_results:
+  mint_counter_reuse_regression: PASS (3/3)
+  mint_counter_restore_suite: PASS (97/97)
+  full_wallet_suite: PASS (322/325 — 3 pre-existing 5s-timeout flakes in lockout/state-change-pin, unrelated; pass in isolation with --testTimeout=30000)
+  svelte_check: PASS (0 errors, 0 warnings)
+
+acceptance_criteria:
+  - increment_counter_in_finally: PASS
+  - counter0_detection_forces_nut9_restore: PASS
+  - no_reuse_tests_green: PASS
+
+blockers: []
+
+deviations:
+  - >
+    Full wallet suite shows 3 failures (lockout.test.ts x2, state-change-pin.test.ts x1)
+    as "Test timed out in 5000ms". These are pre-existing slow-PBKDF2-in-jsdom flakes
+    under full-suite CPU contention, NOT related to this task (files untouched). They
+    pass 16/16 when run in isolation with --testTimeout=30000.
+  - >
+    Counter-0 guard scopes the "existing proofs" check to the SAME keyset
+    (getAllProofs().some(p => p.keyset_id === keysetId)) rather than "any proof in
+    DB", to avoid false-positive restore blocks when minting a genuinely-new keyset
+    while other keysets hold proofs. This is a faithful refinement of the task's
+    intent (counter_k is per-keyset).
+
+metrics:
+  files_changed: 2
+  lines_added: ~70 (mint.ts + new test file)
+  tests_passed: 3 (new) / 97 (related suite)
+  evidence_files_written: 3

@@ -20,7 +20,7 @@ import type {
 } from '../types';
 
 import { hash_to_curve } from './blind';
-import { hexToBytes } from '@noble/hashes/utils.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 // ─── NUT-09: Restore types ───────────────────────────────────
 
@@ -48,13 +48,28 @@ export interface PostRestoreResponse {
 // ─── Error types ─────────────────────────────────────────────
 
 export class CashuError extends Error {
+	/**
+	 * NUT error codes that represent a benign (idempotent double-submit) mint
+	 * response rather than a real failure:
+	 *   - 11003: output already signed (double-submit of mint outputs)
+	 *   - 20002: quote already issued (double-submit of a mint/melt quote)
+	 */
+	static readonly BENIGN_CODES: ReadonlySet<number> = new Set([11003, 20002]);
+
 	constructor(
 		message: string,
 		public status?: number,
-		public code?: number
+		public code?: number | string
 	) {
 		super(message);
 		this.name = 'CashuError';
+	}
+
+	/** True when this error is a benign (idempotent double-submit) mint response. */
+	get isBenign(): boolean {
+		if (this.code === undefined || this.code === null) return false;
+		const numeric = typeof this.code === 'string' ? Number(this.code) : this.code;
+		return Number.isFinite(numeric) && CashuError.BENIGN_CODES.has(numeric);
 	}
 }
 
@@ -246,18 +261,27 @@ interface RequestOptions {
 	timeout?: number;
 }
 
+/** Transient HTTP statuses worth retrying (belt-and-suspenders vs intermittent 502). */
+const TRANSIENT_5XX = new Set([502, 503, 504]);
+
+/** Total attempts for transient failures: 1 initial + 2 retries. */
+const MAX_ATTEMPTS = 3;
+
+/** Exponential backoff base (ms) — doubles each retry: 250ms, 500ms. */
+const RETRY_BACKOFF_BASE_MS = 250;
+
+function sleep(ms: number): Promise<void> {
+	return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function fetchFromMint<T>(
 	mintUrl: string,
 	path: string,
 	options: RequestOptions = {}
 ): Promise<T> {
-	// Proxy default mint through Vite dev server to avoid CORS issues
-	let url: string;
-	if (typeof window !== 'undefined' && mintUrl === 'https://mint.lnw.cash') {
-		url = `/api/mint${path}`;
-	} else {
-		url = `${normalizeMintUrl(mintUrl)}${path}`;
-	}
+	// Direct fetch to the absolute mint URL. The mint sends
+	// `Access-Control-Allow-Origin: *`, so no dev-server proxy is needed.
+	const url = `${normalizeMintUrl(mintUrl)}${path}`;
 	const { method = 'GET', body, timeout = 15000 } = options;
 
 	const headers: Record<string, string> = {
@@ -271,53 +295,77 @@ async function fetchFromMint<T>(
 		requestBody = JSON.stringify(body);
 	}
 
-	const controller = new AbortController();
-	const timeoutId = setTimeout(() => controller.abort(), timeout);
+	let lastTransientError: CashuError | undefined;
 
-	try {
-		const response = await fetch(url, {
-			method,
-			headers,
-			body: requestBody,
-			signal: controller.signal
-		});
+	for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+		const controller = new AbortController();
+		const timeoutId = setTimeout(() => controller.abort(), timeout);
 
-		clearTimeout(timeoutId);
+		try {
+			const response = await fetch(url, {
+				method,
+				headers,
+				body: requestBody,
+				signal: controller.signal
+			});
 
-		if (!response.ok) {
-			let errorDetail = '';
-			try {
-				const errorBody = await response.json();
-				errorDetail = (errorBody as Record<string, unknown>).detail as string ||
-					(errorBody as Record<string, unknown>).error as string || '';
-			} catch {
-				// ignore parse errors
+			clearTimeout(timeoutId);
+
+			if (!response.ok) {
+				let errorDetail = '';
+				let errorCode: number | string | undefined;
+				try {
+					const errorBody = (await response.json()) as Record<string, unknown>;
+					errorDetail =
+						(errorBody.detail as string) || (errorBody.error as string) || '';
+					const code = errorBody.code;
+					if (typeof code === 'number' || typeof code === 'string') {
+						errorCode = code;
+					}
+				} catch {
+					// ignore parse errors
+				}
+				const codeSuffix = errorCode !== undefined ? ` (${errorCode})` : '';
+				const err = new CashuError(
+					`HTTP ${response.status}${codeSuffix}: ${errorDetail || response.statusText}`,
+					response.status,
+					errorCode
+				);
+
+				// Retry transient 5xx (502/503/504) with exponential backoff,
+				// unless this was the final attempt.
+				if (TRANSIENT_5XX.has(response.status) && attempt < MAX_ATTEMPTS) {
+					lastTransientError = err;
+					await sleep(RETRY_BACKOFF_BASE_MS * 2 ** (attempt - 1));
+					continue;
+				}
+
+				throw err;
 			}
-			throw new CashuError(
-				`HTTP ${response.status}: ${errorDetail || response.statusText}`,
-				response.status
-			);
+
+			const data = await response.json();
+			return data as T;
+		} catch (error) {
+			clearTimeout(timeoutId);
+
+			if (error instanceof CashuError) {
+				throw error;
+			}
+
+			if (error instanceof DOMException && error.name === 'AbortError') {
+				throw new NetworkError(new Error(`Request timeout to ${url}`));
+			}
+
+			if (error instanceof TypeError) {
+				throw new MintUnreachableError(mintUrl, error as Error);
+			}
+
+			throw new NetworkError(error as Error);
 		}
-
-		const data = await response.json();
-		return data as T;
-	} catch (error) {
-		clearTimeout(timeoutId);
-
-		if (error instanceof CashuError) {
-			throw error;
-		}
-
-		if (error instanceof DOMException && error.name === 'AbortError') {
-			throw new NetworkError(new Error(`Request timeout to ${url}`));
-		}
-
-		if (error instanceof TypeError) {
-			throw new MintUnreachableError(mintUrl, error as Error);
-		}
-
-		throw new NetworkError(error as Error);
 	}
+
+	// Unreachable: every path above either returns or throws.
+	throw lastTransientError ?? new NetworkError(new Error(`Request failed to ${url}`));
 }
 
 // ─── Mint Info ───────────────────────────────────────────────
@@ -421,8 +469,12 @@ export async function checkState(
 	proofs: CheckStateProof[]
 ): Promise<CheckStateResponse> {
 	const path = STANDARD_PATHS.check_state;
-	// F-086: NUT-07 expects Y = hash_to_curve(secret), not C (commitment)
-	const Ys = proofs.map(p => hash_to_curve(hexToBytes(p.secret)).toHex(true));
+	// F-086: NUT-07 expects Y = hash_to_curve(secret), not C (commitment).
+	// TASK-241: the proof `secret` is a hex string (64 chars); blind.ts derives
+	// Y from the UTF-8 bytes of that string (see blindMessage), so checkState
+	// must do the same — NOT hex-decode it. Otherwise the mint can't match the
+	// proof by Y and always reports UNSPENT (RC-4 double-spend detection broken).
+	const Ys = proofs.map(p => hash_to_curve(utf8ToBytes(p.secret)).toHex(true));
 	try {
 		return await fetchFromMint<CheckStateResponse>(mintUrl, path, {
 			method: 'POST',

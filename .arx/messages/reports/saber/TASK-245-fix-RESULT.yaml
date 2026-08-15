@@ -1,0 +1,58 @@
+message_id: TASK-245-fix-RESULT
+type: RESULT
+sender: saber
+receiver: orion
+task_id: TASK-245-fix
+verdict: COMPLETE
+
+summary: |
+  T246-SEC-01 CRITICAL remediation (Commander-ordered Option A, fast-lane).
+
+  Fund-loss window in migrateWallet() Phase B commit is closed. Old order was
+  `addProofs(new) → removeProofs(old) → … → setActiveSeed → setEncryptedMnemonic`,
+  so a crash between removeProofs(old) and setEncryptedMnemonic left old proofs
+  burned at the mint with the new mnemonic unpersisted → permanent fund loss.
+
+  New order (atomic + recoverable at every checkpoint):
+    1. verifyPin → generateMnemonic → mnemonicToSeed (unchanged)
+    2. persist NEW encrypted mnemonic + activate NEW seed BEFORE any swap (recovery
+       anchor), capture prevMnemonic/prevSeed, write "pending migration" journal
+    3. Phase A swap (network-only) in try/catch — on failure roll back to
+       prevMnemonic/prevSeed (or clear for legacy) + clear journal + rethrow
+    4. Phase B commit: addProofs(new) → removeProofs(old) → setCounterK → clear journal
+
+  No checkpoint remains where proofs are burned but the new seed is unrecoverable:
+    - crash before swap  → old wallet intact (journal marks pending → resume)
+    - crash after swap   → recover from new mnemonic (NUT-13 restore)
+    - crash after commit → clean (journal cleared)
+
+  Added: MIGRATION_JOURNAL_KEY + getMigrationJournal/clearMigrationJournal/
+  recoverPendingMigration (app-start recovery hook, future wiring), journal-aware
+  detectLegacyProofs (resume path). Crypto/NUT-13/determinism/Settings.svelte
+  untouched.
+
+files_changed:
+  - src/lib/wallet/migration.ts (275 → 407 lines; reorder + journal + rollback + recover helper)
+  - src/lib/wallet/__tests__/migration.test.ts (7 → 10 tests; +crash-path, +journal, +resume)
+
+proof_list:
+  - migration.ts.diff            # mnemonic/seed persist BEFORE swap + journal + rollback
+  - migration.test.ts.diff       # crash-path + journal timing + resume tests
+  - phase-b-crash-test.log       # removeProofs throws mid-commit → mnemonic durable, proofs recoverable PASS
+  - verification-summary.md      # crash checkpoint matrix + results
+
+evidence_count: 4
+
+test_results:
+  migration_suite: PASS (10/10)
+  full_suite: PASS (1142/1142, 99 files)
+  svelte_check: PASS (0 errors, 0 warnings)
+
+deviations:
+  - recoverPendingMigration() exported but NOT wired into app start
+    (App.svelte / restore.ts out of bounds per forbidden list). Recovery entry
+    point ready for a follow-up wiring task.
+  - Migration journal lives in localStorage (lnwcash_migration_journal) and is NOT
+    cleared by clearAllWalletData() (storage.ts out of bounds). It only persists
+    across a genuine crash mid-migration (cleared on success/rollback). Flag for
+    app-start wiring task to also clear it on wallet delete/reset.

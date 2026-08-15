@@ -1,0 +1,207 @@
+diff --git a/src/lib/wallet/__tests__/melt.test.ts b/src/lib/wallet/__tests__/melt.test.ts
+index 59aad6f..a08eb31 100644
+--- a/src/lib/wallet/__tests__/melt.test.ts
++++ b/src/lib/wallet/__tests__/melt.test.ts
+@@ -11,7 +11,7 @@ import type { TokenProof } from '../../types';
+ const TEST_PIN = '123456';
+ const TEST_NAME = 'Test Wallet';
+ const MINT_URL = 'https://mint.example.com';
+-const KEYSET_ID = 'keyset-abc123';
++const KEYSET_ID = '015ba18a8adcd02e715a58358eb618da4a4b3791151a4bee5e968bb88406ccf76a';
+ 
+ function makeProof(id: string, amount: number): TokenProof {
+ 	return { id: KEYSET_ID, amount, secret: `secret-${id}`, C: `sig-${id}` };
+@@ -20,13 +20,13 @@ function makeProof(id: string, amount: number): TokenProof {
+ // Mock the keyset module (fetch + cache layer)
+ vi.mock('../../cashu/keyset', () => ({
+ 	fetchAndCacheKeysets: vi.fn().mockResolvedValue([
+-		{ id: 'keyset-abc123', unit: 'sat', active: true, input_fee_ppk: 5, keys: { '1': '02' + 'a1'.repeat(32) }, last_updated: Date.now() }
++		{ id: '015ba18a8adcd02e715a58358eb618da4a4b3791151a4bee5e968bb88406ccf76a', unit: 'sat', active: true, input_fee_ppk: 5, keys: { '1': '02' + 'a1'.repeat(32) }, last_updated: Date.now() }
+ 	]),
+ 	getAllKeysets: vi.fn().mockReturnValue([
+-		{ id: 'keyset-abc123', unit: 'sat', active: true, input_fee_ppk: 5, keys: { '1': '02' + 'a1'.repeat(32) }, last_updated: Date.now() }
++		{ id: '015ba18a8adcd02e715a58358eb618da4a4b3791151a4bee5e968bb88406ccf76a', unit: 'sat', active: true, input_fee_ppk: 5, keys: { '1': '02' + 'a1'.repeat(32) }, last_updated: Date.now() }
+ 	]),
+ 	getMintPubkey: vi.fn().mockReturnValue('03' + 'b1'.repeat(32)),
+-	getKeysetById: vi.fn().mockReturnValue({ id: 'keyset-abc123', unit: 'sat', active: true, input_fee_ppk: 5, keys: { '1': '02' + 'a1'.repeat(32) }, last_updated: Date.now() }),
++	getKeysetById: vi.fn().mockReturnValue({ id: '015ba18a8adcd02e715a58358eb618da4a4b3791151a4bee5e968bb88406ccf76a', unit: 'sat', active: true, input_fee_ppk: 5, keys: { '1': '02' + 'a1'.repeat(32) }, last_updated: Date.now() }),
+ 	resolveKeysetId: vi.fn().mockImplementation((_url: string, id: string) => id),
+ 	isCacheStale: vi.fn().mockReturnValue(false),
+ 	clearCache: vi.fn(),
+@@ -37,7 +37,7 @@ vi.mock('../../cashu/keyset', () => ({
+ vi.mock('../../cashu/client', () => ({
+ 	getMintInfo: vi.fn(),
+ 	getKeysets: vi.fn().mockResolvedValue([
+-		{ id: 'keyset-abc123', unit: 'sat', active: true, input_fee_ppk: 5 }
++		{ id: '015ba18a8adcd02e715a58358eb618da4a4b3791151a4bee5e968bb88406ccf76a', unit: 'sat', active: true, input_fee_ppk: 5 }
+ 	]),
+ 	getKeys: vi.fn(),
+ 	requestMintQuote: vi.fn().mockResolvedValue({
+@@ -92,7 +92,7 @@ describe('Melt flow', () => {
+ 
+ 		// Reset all client mocks to their default implementations
+ 		(client.getKeysets as ReturnType<typeof vi.fn>).mockResolvedValue([
+-			{ id: 'keyset-abc123', unit: 'sat', active: true, input_fee_ppk: 5 }
++			{ id: '015ba18a8adcd02e715a58358eb618da4a4b3791151a4bee5e968bb88406ccf76a', unit: 'sat', active: true, input_fee_ppk: 5 }
+ 		]);
+ 		(client.requestMeltQuote as ReturnType<typeof vi.fn>).mockResolvedValue({
+ 			quote: 'melt-quote-xyz',
+diff --git a/src/lib/wallet/melt.ts b/src/lib/wallet/melt.ts
+index 90b5530..7f4dc29 100644
+--- a/src/lib/wallet/melt.ts
++++ b/src/lib/wallet/melt.ts
+@@ -8,9 +8,11 @@
+  * All mint URLs are passed as parameters — no hardcoding.
+  */
+ import { requestMeltQuote, meltTokens as postMelt, checkState, checkMeltQuote } from '../cashu/client';
+-import { blindMessage, unblindSignature, deterministicBlindingFactor, blindingFactorToHex } from '../cashu/blind';
++import { blindMessage, unblindSignature, blindingFactorToHex } from '../cashu/blind';
+ import { fetchAndCacheKeysets, getAllKeysets, getKeysetById, getMintPubkey } from '../cashu/keyset';
+ import { getPrivateKey } from './state';
++import { deriveSecretAndR, getActiveSeed } from './nut13';
++import { getCounterK, incrementCounterK } from './counterK';
+ import { getUnspentProofsByMint, addProofs, markSpent, type StoredProof } from './proofsDb';
+ import { selectProofs, sumProofs } from './proofs';
+ import { addTransaction, updateTransaction } from '../storage/db';
+@@ -70,14 +72,25 @@ export interface MeltCompleteResult {
+ // ─── Helpers ─────────────────────────────────────────────────
+ 
+ /**
+- * Generate a cryptographically random 32-byte secret for a melt change proof.
+- * TASK-084: Use base64url for Cashu protocol compatibility.
++ * TASK-244 (F-V27-005): Derive a deterministic melt change secret + blinding
++ * factor from the active wallet seed (NUT-13) instead of `crypto.getRandomValues`.
++ *
++ * The change output is mint-signed, so its secret MUST be reproducible from the
++ * seed (NUT-9 restore) — otherwise change funds are silently lost on restore.
++ *
++ * @throws a clear migration error if no active seed is set (legacy wallet with
++ *   no mnemonic) — never falls back to a random secret.
+  */
+-function generateChangeSecret(): string {
+-	const bytes = new Uint8Array(32);
+-	crypto.getRandomValues(bytes);
+-	// NUT-00 recommends 64-char hex string from 32 random bytes
+-	return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
++function generateChangeSecretAndR(keysetId: string): { secret: string; r: bigint } {
++	const seed = getActiveSeed();
++	if (!seed) {
++		throw new Error(
++			'NUT-13: no active wallet seed — deterministic melt change requires a seed-phrase wallet. ' +
++			'This legacy wallet has no mnemonic; migrate the wallet (TASK-245) before melting, ' +
++			'otherwise change funds would be unrecoverable on restore.'
++		);
++	}
++	return deriveSecretAndR(seed, keysetId, getCounterK(keysetId));
+ }
+ 
+ // ─── F-072: Error message extraction ─────────────────────────
+@@ -413,16 +426,16 @@ export async function completeMelt(
+ 		let changeProofs: TokenProof[] = [];
+ 
+ 		if (changeAmount > 0) {
+-			const changeSecret = generateChangeSecret();
+-			const r = deterministicBlindingFactor(changeSecret);
+-			const { B_, blindingFactor } = blindMessage(changeSecret, r);
++			const changeKeysetId = inputs[0].id;
++			const { secret, r } = generateChangeSecretAndR(changeKeysetId);
++			const { B_, blindingFactor } = blindMessage(secret, r);
+ 
+ 			outputs = [
+ 				{
+ 					amount: changeAmount,
+-					id: inputs[0].id,
++					id: changeKeysetId,
+ 					B_,
+-					secret: changeSecret,
++					secret,
+ 					blindingFactor
+ 				}
+ 			];
+@@ -437,6 +450,14 @@ export async function completeMelt(
+ 
+ 		const response = await postMelt(mintUrl, quoteId, inputBodies, outputBodies);
+ 
++		// TASK-244 (F-V27-005): the mint has now signed the change output
++		// (postMelt returned) — advance counter_k even if local persistence
++		// (addProofs below) later throws, otherwise the next melt re-derives the
++		// same B_ and the mint rejects it as "outputs already signed".
++		if (changeAmount > 0) {
++			incrementCounterK(inputs[0].id, 1);
++		}
++
+ 		// Step 5: Unblind change signatures (use keyset-specific denomination key)
+ 		if (response.change && outputs.length > 0) {
+ 			changeProofs = response.change.map((sig, i) => {
+diff --git a/src/lib/wallet/tokenStore.ts b/src/lib/wallet/tokenStore.ts
+index 710d739..de126e0 100644
+--- a/src/lib/wallet/tokenStore.ts
++++ b/src/lib/wallet/tokenStore.ts
+@@ -30,6 +30,9 @@ import { decomposeAmount } from './mint';
+ import { checkState, swapProofs } from '../cashu/client';
+ import { blindMessage, unblindSignature, blindingFactorToHex } from '../cashu/blind';
+ import { fetchAndCacheKeysets, getMintPubkey, resolveKeysetId } from '../cashu/keyset';
++import { getPrivateKey } from './state';
++import { deriveSecretAndR, getActiveSeed } from './nut13';
++import { getCounterK, incrementCounterK } from './counterK';
+ import type { TokenProof, DecodedToken } from '../types';
+ import { TokenValidationError } from './errors';
+ 
+@@ -302,6 +305,19 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
+ 	const keysetId = decoded.proofs[0].id;
+ 	let fullId = keysetId; // Will be resolved to full ID if short form
+ 
++	// TASK-244 (F-V27-005): receiving requires an unlocked wallet, and the swap
++	// receive outputs must be derived deterministically (NUT-13) from the active
++	// seed so they are recoverable from the seed-phrase backup.
++	getPrivateKey(); // throws WalletLockedError if wallet is locked
++	const seed = getActiveSeed();
++	if (!seed) {
++		throw new Error(
++			'NUT-13: no active wallet seed — deterministic swap receive requires a seed-phrase wallet. ' +
++			'This legacy wallet has no mnemonic; migrate the wallet (TASK-245) before receiving tokens, ' +
++			'otherwise received proofs would be unrecoverable on restore.'
++		);
++	}
++
+ 	// 1. Swap old proofs for new ones (NUT-03 double-spend protection)
+ 	// Swap acts as the gatekeeper — mint rejects spent proofs
+ 	try {
+@@ -309,17 +325,16 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
+ 		await fetchAndCacheKeysets(mintUrl);
+ 		fullId = resolveKeysetId(mintUrl, keysetId) || keysetId;
+ 
+-		// Create blinded outputs (new secrets + blinding)
++		// Create blinded outputs (deterministic NUT-13 secrets + blinding)
+ 		const blindPairs: Array<{ secret: string; B_: string; r: string }> = [];
+ 		const outputs: Array<{ amount: number; id: string; B_: string }> = [];
+ 
+-		for (const proof of decoded.proofs) {
+-			const newSecret = Array.from(
+-				crypto.getRandomValues(new Uint8Array(32)),
+-				b => b.toString(16).padStart(2, '0')
+-			).join('');
+-			const { B_, blindingFactor } = blindMessage(newSecret);
+-			blindPairs.push({ secret: newSecret, B_: B_, r: blindingFactor });
++		const startCounter = getCounterK(fullId);
++		for (let i = 0; i < decoded.proofs.length; i++) {
++			const proof = decoded.proofs[i];
++			const { secret, r } = deriveSecretAndR(seed, fullId, startCounter + i);
++			const { B_, blindingFactor } = blindMessage(secret, r);
++			blindPairs.push({ secret, B_, r: blindingFactor });
+ 			outputs.push({ amount: proof.amount, id: fullId, B_ });
+ 		}
+ 
+@@ -328,6 +343,12 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
+ 		const swapInputs = decoded.proofs.map(p => ({ ...p, id: fullId }));
+ 		const swapResult = await swapProofs(mintUrl, swapInputs, outputs);
+ 
++		// TASK-244 (F-V27-005): the mint has now signed the swap receive outputs
++		// (swapProofs returned) — advance counter_k even if local persistence
++		// (addProofs below) later throws, otherwise the next receive re-derives
++		// the same B_ and the mint rejects it as "outputs already signed".
++		incrementCounterK(fullId, decoded.proofs.length);
++
+ 		// Unblind signatures to get new proofs
+ 		const newProofs = swapResult.signatures.map((sig, i) => {
+ 			const bp = blindPairs[i];
