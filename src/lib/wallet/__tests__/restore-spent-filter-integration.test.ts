@@ -119,4 +119,79 @@ describe('TASK-241 restore spent-filter integration (real checkState)', () => {
 		expect(result.proofs).toHaveLength(1);
 		expect(result.proofs[0].secret).toBe(expectedSecrets[1]);
 	});
+
+	it('restore round-trip with keyset version 00 (BIP32) — derive + blind + unblind + spent filter', async () => {
+		// TASK-251 (RC-4 / F-V28-006): live mint uses keyset `00c25786d85a1dcd`
+		// (version 00 → BIP32 legacy derivation). This proves the restore
+		// round-trip (REAL deriveSecretAndR → blindMessage → restore → unblind →
+		// checkState spent filter) works through the BIP32 path, not just HMAC.
+		const KEYSET_ID_V00 = '00c25786d85a1dcd';
+		const BIP32_COUNTER0 = '81ba74fdabb0c4337e0eda9262dce21246c0b6c1dd0fdd2745032a4e46451a7c';
+		const BIP32_COUNTER1 = '6f050b20feee6fbad8bea06d0ae16166187640ac6ae4818a0383dc5f09d688ba';
+
+		let restoreCalls = 0;
+		mockFetch.mockImplementation(async (url: string, init: { body?: string }) => {
+			if (url.includes('/v1/restore')) {
+				restoreCalls++;
+				const body = JSON.parse(init.body ?? '{}');
+				const outputs: Array<{ B_: string }> = body.outputs ?? [];
+				if (restoreCalls > 1) {
+					return { ok: true, json: async () => ({ outputs, signatures: [] }) };
+				}
+				return {
+					ok: true,
+					json: async () => ({
+						outputs,
+						signatures: outputs.map((o) => ({
+							id: KEYSET_ID_V00,
+							amount: 4,
+							C_: secp256k1.Point.fromHex(o.B_).multiply(k).toHex(true)
+						}))
+					})
+				};
+			}
+			if (url.includes('/v1/checkstate')) {
+				const body = JSON.parse(init.body ?? '{}');
+				const ys: string[] = body.Ys ?? [];
+				capturedYs = ys;
+				// Mint reports the first proof SPENT, the rest UNSPENT.
+				return {
+					ok: true,
+					json: async () => ({
+						states: ys.map((_y, i) => ({
+							secret: `s${i}`,
+							state: i === 0 ? 'SPENT' : 'UNSPENT',
+							witness: i === 0 ? 'w' : null
+						}))
+					})
+				};
+			}
+			throw new Error(`unexpected fetch: ${url}`);
+		});
+
+		const result = await restoreWallet(MINT_URL, seed, KEYSET_ID_V00, {
+			batchSize: 2,
+			emptyBatchLimit: 1,
+			persist: false
+		});
+
+		// Real BIP32 secrets for counters 0 and 1 — hardcoded so the test FAILS
+		// if derivation routes through HMAC; also cross-checked against the
+		// REAL deriveSecret (which itself goes through deriveSecretAndR → BIP32).
+		const expectedSecrets = [BIP32_COUNTER0, BIP32_COUNTER1];
+		expect(expectedSecrets).toEqual([
+			deriveSecret(seed, KEYSET_ID_V00, 0),
+			deriveSecret(seed, KEYSET_ID_V00, 1)
+		]);
+		const expectedYs = expectedSecrets.map((s) => hash_to_curve(utf8ToBytes(s)).toHex(true));
+
+		// The REAL checkState must have sent Ys matching blindMessage's encoding.
+		expect(capturedYs).toHaveLength(2);
+		expect(capturedYs).toEqual(expectedYs);
+
+		expect(result.success).toBe(true);
+		// Only the UNSPENT proof (counter 1) is kept; SPENT (counter 0) is dropped.
+		expect(result.proofs).toHaveLength(1);
+		expect(result.proofs[0].secret).toBe(expectedSecrets[1]);
+	});
 });

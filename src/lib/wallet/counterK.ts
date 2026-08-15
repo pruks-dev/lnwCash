@@ -86,4 +86,50 @@ export function clearAllCounters(): void {
 	}
 }
 
+// ─── Per-keyset derivation lock (TASK-250 RC-3) ──────────────
+//
+// NUT-13 requires the read → derive → increment window to be atomic per keyset.
+// A mint/receive/melt reads `counter_k`, derives secrets from it, performs
+// network I/O (await points), and only THEN advances the counter. If two such
+// operations run concurrently on the same keyset, both can read the same
+// counter and derive the same secret/B_ → the mint rejects the second with
+// "outputs already signed" (11003).
+//
+// `withKeysetLock` serializes the whole critical section per keyset using a
+// promise-chain mutex: each caller waits for the previous holder to release
+// before running its function.
+
+const keysetLocks = new Map<string, Promise<void>>();
+
+/**
+ * Run `fn` exclusively per keyset. Callers that target the same `keysetId` are
+ * serialized (FIFO); callers on different keysets run concurrently.
+ *
+ * @param keysetId The NUT-13 keyset whose counter is being read/advanced.
+ * @param fn The critical section (counter guard + derive + submit + increment).
+ */
+export async function withKeysetLock<T>(
+	keysetId: string,
+	fn: () => Promise<T> | T
+): Promise<T> {
+	const prev = keysetLocks.get(keysetId) ?? Promise.resolve();
+
+	let release!: () => void;
+	const gate = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+
+	// The next holder waits for the previous holder to settle AND for us to
+	// release. Both rejection handlers keep the chain alive (never poison it).
+	keysetLocks.set(keysetId, prev.then(() => gate, () => gate));
+
+	await prev.catch(() => { /* previous holder's failure must not block us */ });
+
+	try {
+		return await fn();
+	} finally {
+		release();
+	}
+}
+
 export { STORAGE_KEY };

@@ -1,0 +1,88 @@
+diff --git a/src/lib/wallet/restore.ts b/src/lib/wallet/restore.ts
+index 7a4055e..a116d29 100644
+--- a/src/lib/wallet/restore.ts
++++ b/src/lib/wallet/restore.ts
+@@ -41,6 +41,13 @@ export interface RestoreBatchResult {
+ 	proofs: TokenProof[];
+ 	/** Number of signatures the mint returned (before spent filtering). */
+ 	signaturesCount: number;
++	/**
++	 * Highest counter (startCounter + offset) that the mint actually signed in
++	 * this batch, or -1 when the mint returned no signatures. Tracked from the
++	 * B_ match so it survives gaps (a FILTERED response may skip counters the
++	 * mint never signed). Used to advance counter_k as `highestSigned + 1`.
++	 */
++	highestSignedCounter: number;
+ }
+ 
+ export interface RestoreResult {
+@@ -97,10 +104,30 @@ export async function restoreBatch(
+ 		B_: o.B_
+ 	}));
+ 
++	// Index the prepared entries by their blinded message B_, so we can align
++	// the mint's signatures with the correct blinding factor even when the mint
++	// returns a FILTERED list (Nutshell /v1/restore returns only the outputs it
++	// actually signed). F-V29-003: mapping by index assumed a 1:1 echo, which
++	// unblinds with the wrong factor and produces garbage proofs.
++	const byB = new Map<string, { entry: RestoreBatchOutput; offset: number }>();
++	prepared.forEach((entry, offset) => byB.set(entry.B_, { entry, offset }));
++
+ 	const response = await restoreOutputs(mintUrl, requestOutputs);
+ 
++	let highestSignedCounter = -1;
++
+ 	const proofs: TokenProof[] = response.signatures.map((sig, i) => {
+-		const output = prepared[i];
++		// Prefer the mint's echoed `outputs` (FILTERED to signed outputs only);
++		// fall back to request order when `outputs` is absent (compat mints that
++		// return signatures aligned 1:1 with the request).
++		const echoedB = response.outputs?.[i]?.B_;
++		const matched = echoedB !== undefined ? byB.get(echoedB) : undefined;
++		const output = matched ? matched.entry : prepared[i];
++		const offset = matched ? matched.offset : i;
++
++		const counter = startCounter + offset;
++		if (counter > highestSignedCounter) highestSignedCounter = counter;
++
+ 		const pubkey = getMintPubkey(mintUrl, keysetId, sig.amount);
+ 		const C = unblindSignature(sig.C_, output.blindingFactor, pubkey);
+ 		const proof: TokenProof = {
+@@ -119,7 +146,11 @@ export async function restoreBatch(
+ 		return proof;
+ 	});
+ 
+-	return { proofs, signaturesCount: response.signatures.length };
++	return {
++		proofs,
++		signaturesCount: response.signatures.length,
++		highestSignedCounter
++	};
+ }
+ 
+ // ─── Full restore flow ───────────────────────────────────────
+@@ -149,7 +180,7 @@ export async function restoreWallet(
+ 		const recovered: TokenProof[] = [];
+ 
+ 		while (true) {
+-			const { proofs, signaturesCount } = await restoreBatch(
++			const { proofs, signaturesCount, highestSignedCounter } = await restoreBatch(
+ 				mintUrl,
+ 				seed,
+ 				keysetId,
+@@ -173,7 +204,14 @@ export async function restoreWallet(
+ 				);
+ 				recovered.push(...unspent);
+ 
+-				lastNonEmptyCounter = counter + proofs.length;
++				// F-V29-004: advance to highest SIGNED counter + 1 (not signature
++				// count). When the mint's response has gaps (e.g. counter 0 was
++				// never signed but 1 and 2 were), `counter + proofs.length` would
++				// undercount and let a later restore re-derive/re-mint the wrong
++				// counters.
++				if (highestSignedCounter >= 0) {
++					lastNonEmptyCounter = highestSignedCounter + 1;
++				}
+ 			}
+ 
+ 			counter += batchSize;

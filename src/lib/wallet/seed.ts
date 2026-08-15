@@ -27,6 +27,7 @@ import {
 	setWalletState
 } from './storage';
 import { setWalletMetadata } from '../storage/local';
+import { clearAllCounters } from './counterK';
 import { InvalidPinError, SeedImportError, WalletLockedError } from './errors';
 
 // ─── Export Seed ─────────────────────────────────────────────
@@ -142,6 +143,10 @@ export async function importSeed(
 
 	setWalletMetadata({ name: walletName, created_at: Date.now() });
 	setWalletState('LOCKED');
+
+	// Reset NUT-13 counters — a new/imported seed must start counter_k = 0,
+	// otherwise restore replays stale counters → gap → misaligned proofs.
+	clearAllCounters();
 
 	return { publicKey };
 }

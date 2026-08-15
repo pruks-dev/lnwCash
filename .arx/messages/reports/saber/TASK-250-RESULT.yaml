@@ -1,0 +1,99 @@
+message_id: TASK-250-RESULT
+type: RESULT
+sender: saber
+receiver: orion
+task_id: TASK-250
+verdict: COMPLETE
+
+summary: |
+  RC-2 (mint require seed, no random fallback) + RC-3 (counter-0 guard ครบ
+  mint/melt/swap + atomic read-derive-increment serialization).
+
+  1. mint.ts (RC-2): removed generateRandomSecret() and the dead generateSecret()
+     helper; createOutputs() now takes a REQUIRED seed and always derives via
+     deriveSecretAndR(seed, keysetId, startCounter+i). completeMint() resolves
+     resolvedSeed = seed ?? getActiveSeed(); null → throw clear migration error
+     (migrate the wallet / TASK-245) — NO random fallback, mirroring melt.ts +
+     tokenStore.ts. Removed unused imports deterministicBlindingFactor + deriveSecret.
+
+  2. counterK.ts (RC-3): added withKeysetLock(keysetId, fn) — a per-keyset
+     promise-chain async mutex (FIFO, rejection-safe) that serializes the
+     read → derive → submit → advance critical section per keyset.
+
+  3. mint.ts (RC-3): wrapped counter-0 guard + createOutputs + postMint +
+     addProofs/incrementCounterK(finally) in withKeysetLock — counter read and
+     advance are now one atomic window.
+
+  4. melt.ts (RC-3): added counter-0 guard (getCounterK===0 + existing proofs for
+     keyset → throw NUT-9 restore); wrapped change derive + postMelt +
+     incrementCounterK in withKeysetLock. No-change path (changeAmount<=0) skips lock.
+
+  5. tokenStore.ts (RC-3): added counter-0 guard in receiveTokens; wrapped derive
+     loop + swapProofs + incrementCounterK + addProofs in withKeysetLock(fullId).
+
+  6. Test updates for the new counter-0 guard: melt.test.ts sets counter=3 in
+     beforeEach; melt-determinism.test.ts change counter moved 0→1 (proof consumed
+     counter 0). 4 new test files added.
+
+files_changed:
+  - src/lib/wallet/counterK.ts
+  - src/lib/wallet/mint.ts
+  - src/lib/wallet/melt.ts
+  - src/lib/wallet/tokenStore.ts
+  - src/lib/wallet/__tests__/melt.test.ts
+  - src/lib/wallet/__tests__/melt-determinism.test.ts
+  - src/lib/wallet/__tests__/mint-require-seed.test.ts (new)
+  - src/lib/wallet/__tests__/melt-counter-guard.test.ts (new)
+  - src/lib/wallet/__tests__/swap-counter-guard.test.ts (new)
+  - src/lib/wallet/__tests__/mint-serialization.test.ts (new)
+
+proof_list:
+  - mint.ts.diff                       # require seed, no random fallback + lock
+  - counter-guard.diff                 # counterK lock + melt/tokenStore guard+serialize
+  - require-seed-test.log              # mint no random fallback PASS (2/2)
+  - counter-atomicity-test.log         # melt/swap guard + serialization PASS (4/4)
+  - no-random-secret-grep.txt          # 0 generateRandomSecret in production path
+  - verification-summary.md
+
+evidence_count: 6
+
+test_results:
+  full_suite: 1147/1148 passed (103 files)
+  full_suite_note: >
+    1 failure = lockout.test.ts "recordSuccess resets the counter" 5000ms timeout
+    under parallel load — known pre-existing flake (also in TASK-244-RESULT),
+    passes 10/10 in isolation, unrelated to this task (no touched files).
+  wallet_suite: PASS (348/348, 31 files)
+  task250_new_tests: PASS (6/6)
+  require_seed: PASS (2/2)
+  counter_guard_melt: PASS (1/1)
+  counter_guard_swap: PASS (1/1)
+  serialization: PASS (2/2)
+  svelte_check: PASS (0 errors, 0 warnings)
+  grep_random: PASS (0 in production path; 1 JSDoc comment only melt.ts:76)
+
+acceptance_criteria:
+  - mint_require_seed_no_random_fallback: PASS
+  - counter_0_guard_mint_melt_swap: PASS
+  - atomic_read_modify_write_no_duplicate_secret: PASS
+
+blockers: []
+
+deviations:
+  - >
+    counterK.ts modified (adds withKeysetLock) although it is not in the explicit
+    target file list. It is the shared counter module imported by all three target
+    files; the per-keyset lock must live somewhere shared to avoid a circular
+    import between mint/melt/tokenStore. No crypto / NUT-13 derivation touched.
+  - >
+    src/lib/wallet/transfer.ts residual random secret (P2P send-change) is OUT OF
+    SCOPE per task (separate task assigned) — left untouched.
+
+metrics:
+  files_changed: 10
+  production_code_modified: 4
+  lines_added_production: 246
+  lines_removed_production: 174
+  tests_added: 10  # 6 new + 4 updated across melt.test/melt-determinism
+  new_test_files: 4
+  evidence_files_written: 6

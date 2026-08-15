@@ -1,0 +1,82 @@
+TASK-249 counter_k trace — mint → melt → restore / mint → swap → restore / stale-counter gap
+Mint: https://mint.lnw.cash | Keyset: 00c25786d85a1dcd (version byte 00 → BIP32 legacy derivation)
+Storage key: lnwcash_counter_k (localStorage, per-KEYSET map — NOT per seed)
+Code state: git HEAD 4112c8b (v1.4.1); working tree also has TASK-250 uncommitted changes
+            (withKeysetLock + require-seed + counter-0 guards) — see root-cause-report.md §6.
+
+────────────────────────────────────────────────────────────────────────────
+PART 1 (A2) — mint 64 → melt 32 (deterministic change) → clear → restore
+────────────────────────────────────────────────────────────────────────────
+  step                                      counter_k   note
+  ----                                      ---------   ----
+  start (fresh wallet, cleared)             0           clearAllCounters()
+  after mintFlow(64)                        1           mint.ts:319 incrementCounterK(keysetId, 1)
+  after meltFlow(32)                        2           melt.ts:474 incrementCounterK(changeKeysetId, 1)
+  after clear (new machine)                 0           deleteWallet() + clearAllCounters() + clearProofs()
+  after restoreWallet (NUT-9)               2           restore.ts:183 setCounterK(keyset, lastNonEmptyCounter)
+                                                          → lastNonEmptyCounter = 0 + 2 = 2  ✓ CORRECT
+
+  RESULT: melt change (32 sat @ counter 1) RECOVERED ✓  (meltChangeRecovered = true)
+
+────────────────────────────────────────────────────────────────────────────
+PART 2 (A4) — mint 16 → receiveTokens(swap) → clear → restore
+────────────────────────────────────────────────────────────────────────────
+  step                                      counter_k   note
+  ----                                      ---------   ----
+  start (fresh wallet, cleared)             0           clearAllCounters()
+  after mintFlow(16)                        1           mint.ts:319
+  after receiveTokens(swap)                 2           tokenStore.ts:367 incrementCounterK(fullId, 1)
+  after clear (new machine)                 0           deleteWallet() + clearAllCounters() + clearProofs()
+  after restoreWallet (NUT-9)               2           restore.ts:183 → 0 + 2 = 2  ✓ CORRECT
+
+  RESULT: swap receive (16 sat @ counter 1) RECOVERED ✓  (swapReceiveRecovered = true)
+
+────────────────────────────────────────────────────────────────────────────
+PART 3 — ROOT CAUSE: stale counter_k across deleteWallet()/importSeed()
+────────────────────────────────────────────────────────────────────────────
+  step                                      counter_k   note
+  ----                                      ---------   ----
+  seed C start (cleared)                    0
+  seed C after mintFlow(16)                 1
+  after deleteWallet()                      1           ★ counter_k SURVIVES deleteWallet()
+                                                          (storage.ts:226-240 clearAllWalletData()
+                                                           never clears lnwcash_counter_k)
+  after importSeed(D)                       1           ★ importSeed() reuses stale counter
+                                                          (seed.ts:99-147 never clears counter_k)
+  seed D after mintFlow(16)                 2           ★ minted at STALE counter 1 →
+                                                          counter 0 NEVER signed for seed D (GAP)
+  seed D after receiveTokens(swap)          3           swap at counter 2
+  after clear (new machine)                 0
+  after restoreWallet (NUT-9)               2           ★ WRONG — expected 3
+                                                          restore.ts:176 lastNonEmptyCounter =
+                                                          counter + proofs.length = 0 + 2 = 2
+                                                          (counts returned sigs, ignores GAP)
+
+  RESULT: swap-receive proof (16 sat @ counter 2) LOST ✗
+          → recovered 1 GARBAGE proof (secret = counter 0, which was never signed;
+            C unblinded with the WRONG blinding factor via restore.ts:103 prepared[i]).
+          → swapReceiveRecovered = false; counterReconstructed = 2 (expected 3)
+
+────────────────────────────────────────────────────────────────────────────
+KEY FINDING
+────────────────────────────────────────────────────────────────────────────
+  counter_k is keyed by KEYSET only (counterK.ts:15) and is NOT reset on
+  deleteWallet() (storage.ts:226-240) or importSeed() (seed.ts:99-147). A new
+  seed inherits the stale counter → mint/swap start at a non-zero counter →
+  counters 0..stale-1 are never signed (GAP).
+
+  restore.ts has two assumptions that break on a GAP:
+    (1) restore.ts:102-103  response.signatures[i] → prepared[i]
+        — Nutshell returns a FILTERED list (only signed outputs, aligned to
+          response.outputs, NOT to the request). With a gap the index no longer
+          matches, so signatures are unblinded with the WRONG blinding factor
+          and assigned the WRONG secret → garbage proofs.
+    (2) restore.ts:176       lastNonEmptyCounter = counter + proofs.length
+        — assumes signed counters are contiguous from `counter`. With a gap it
+          undercounts (2 instead of 3 above), so the next mint re-derives a
+          counter that is still unsigned at the mint.
+
+  In the CLEAN (no-gap) flows the counter reconstructs correctly and the
+  change/swap proofs ARE recovered — so the A2/A4 loss requires the gap, whose
+  trigger is the counter_k lifecycle bug (not NUT-9, which DOES return the
+  melt-change/swap signatures — see the verbatim bodies in repro-run.log).

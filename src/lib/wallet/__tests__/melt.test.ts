@@ -6,6 +6,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createWallet, unlockWallet } from '../state';
 import { clearAllWalletData } from '../storage';
 import { deleteProofDB, resetProofDB, addProofs } from '../proofsDb';
+import { setCounterK } from '../counterK';
 import type { TokenProof } from '../../types';
 
 const TEST_PIN = '123456';
@@ -117,6 +118,10 @@ describe('Melt flow', () => {
 			MINT_URL,
 			KEYSET_ID
 		);
+
+		// TASK-250 (RC-3): these proofs were "already minted", so the NUT-13 counter
+		// must be > 0 — otherwise the melt counter-0 guard forces a NUT-9 restore.
+		setCounterK(KEYSET_ID, 3);
 	});
 
 	afterEach(async () => {
@@ -257,6 +262,12 @@ describe('Melt flow', () => {
 				KEYSET_ID
 			);
 
+			// TASK-252-fix: simulate that the mint already advanced counter_k for
+			// these minted proofs — otherwise the melt counter-0 guard (TASK-250)
+			// sees counter_k === 0 with proofs present and forces a NUT-9 restore,
+			// so meltFlow returns success:false.
+			setCounterK(KEYSET_ID, 1);
+
 			// Mock checkState to return UNSPENT
 			(client.checkState as ReturnType<typeof vi.fn>).mockResolvedValue({
 				states: [
@@ -283,6 +294,11 @@ describe('Melt flow', () => {
 				MINT_URL,
 				KEYSET_ID
 			);
+
+			// TASK-252-fix: simulate that the mint already advanced counter_k for
+			// these minted proofs — otherwise the melt counter-0 guard (TASK-250)
+			// sees counter_k === 0 with proofs present and forces a NUT-9 restore.
+			setCounterK(KEYSET_ID, 1);
 
 			(client.checkState as ReturnType<typeof vi.fn>).mockResolvedValue({
 				states: [

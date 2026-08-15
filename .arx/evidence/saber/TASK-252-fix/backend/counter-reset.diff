@@ -1,0 +1,65 @@
+diff --git a/src/lib/wallet/seed.ts b/src/lib/wallet/seed.ts
+index 620fd5c..2834b02 100644
+--- a/src/lib/wallet/seed.ts
++++ b/src/lib/wallet/seed.ts
+@@ -27,6 +27,7 @@ import {
+ 	setWalletState
+ } from './storage';
+ import { setWalletMetadata } from '../storage/local';
++import { clearAllCounters } from './counterK';
+ import { InvalidPinError, SeedImportError, WalletLockedError } from './errors';
+ 
+ // ─── Export Seed ─────────────────────────────────────────────
+@@ -143,6 +144,10 @@ export async function importSeed(
+ 	setWalletMetadata({ name: walletName, created_at: Date.now() });
+ 	setWalletState('LOCKED');
+ 
++	// Reset NUT-13 counters — a new/imported seed must start counter_k = 0,
++	// otherwise restore replays stale counters → gap → misaligned proofs.
++	clearAllCounters();
++
+ 	return { publicKey };
+ }
+ 
+diff --git a/src/lib/wallet/state.ts b/src/lib/wallet/state.ts
+index d208d6c..0cae856 100644
+--- a/src/lib/wallet/state.ts
++++ b/src/lib/wallet/state.ts
+@@ -29,6 +29,7 @@ import { deleteProofDB } from './proofsDb';
+ import { setWalletMetadata } from '../storage/local';
+ import { InvalidPinError, WalletLockedError, WalletNotInitializedError } from './errors';
+ import { setActiveSeed, clearActiveSeed, seedFromMnemonic } from './nut13';
++import { clearAllCounters } from './counterK';
+ 
+ // ─── In-Memory State (CLOSURE — never persisted) ─────────────
+ 
+@@ -87,6 +88,9 @@ export async function createWallet(
+ 	// Set state to LOCKED
+ 	setWalletState('LOCKED');
+ 
++	// Reset NUT-13 counters — a fresh wallet must start counter_k = 0.
++	clearAllCounters();
++
+ 	// CRITICAL: Clear private key from memory — wallet starts LOCKED
+ 	unlockedPrivateKey = null;
+ 
+diff --git a/src/lib/wallet/storage.ts b/src/lib/wallet/storage.ts
+index 6edf45d..ba87eb6 100644
+--- a/src/lib/wallet/storage.ts
++++ b/src/lib/wallet/storage.ts
+@@ -16,6 +16,7 @@ import {
+ 	clearWalletMetadata
+ } from '../storage/local';
+ import { isNativePlatform } from '../platform';
++import { clearAllCounters } from './counterK';
+ 
+ // ─── Storage Keys ────────────────────────────────────────────
+ 
+@@ -229,6 +230,7 @@ export async function clearAllWalletData(): Promise<void> {
+ 	clearPinHash();
+ 	clearWalletState();
+ 	clearWalletMetadata();
++	clearAllCounters();
+ 
+ 	// Clear proofs DB (may fail in test environments — handle gracefully)
+ 	try {

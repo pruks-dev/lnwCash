@@ -12,11 +12,11 @@ import { blindMessage, unblindSignature, blindingFactorToHex } from '../cashu/bl
 import { fetchAndCacheKeysets, getAllKeysets, getKeysetById, getMintPubkey } from '../cashu/keyset';
 import { getPrivateKey } from './state';
 import { deriveSecretAndR, getActiveSeed } from './nut13';
-import { getCounterK, incrementCounterK } from './counterK';
-import { getUnspentProofsByMint, addProofs, markSpent, type StoredProof } from './proofsDb';
+import { getCounterK, incrementCounterK, withKeysetLock } from './counterK';
+import { getUnspentProofsByMint, addProofs, markSpent, getAllProofs, type StoredProof } from './proofsDb';
 import { selectProofs, sumProofs } from './proofs';
 import { addTransaction, updateTransaction } from '../storage/db';
-import type { TokenProof, MeltQuote, Transaction } from '../types';
+import type { TokenProof, MeltQuote, PostMeltResponse, Transaction } from '../types';
 import { InsufficientFundsError, QuoteExpiredError, MintUnreachableError } from './errors';
 
 // ─── Types ───────────────────────────────────────────────────
@@ -424,38 +424,61 @@ export async function completeMelt(
 
 		let outputs: Array<{ amount: number; id: string; B_: string; secret: string; blindingFactor: string }> = [];
 		let changeProofs: TokenProof[] = [];
+		let response: PostMeltResponse;
 
 		if (changeAmount > 0) {
 			const changeKeysetId = inputs[0].id;
-			const { secret, r } = generateChangeSecretAndR(changeKeysetId);
-			const { B_, blindingFactor } = blindMessage(secret, r);
-
-			outputs = [
-				{
-					amount: changeAmount,
-					id: changeKeysetId,
-					B_,
-					secret,
-					blindingFactor
+			// TASK-250 (RC-3): serialize counter read → derive → submit → advance per
+			// keyset, and guard against counter-0 reuse (mirror of the mint guard).
+			response = await withKeysetLock(changeKeysetId, async () => {
+				// Counter-0 guard: if counter_k is 0 but proofs for this keyset already
+				// exist in IndexedDB, the counter was lost (localStorage cleared). Deriving
+				// change at counter 0 now would reuse a secret → force NUT-9 restore.
+				if (getCounterK(changeKeysetId) === 0) {
+					const existingProofs = await getAllProofs();
+					if (existingProofs.some((p) => p.keyset_id === changeKeysetId)) {
+						throw new Error(
+							`NUT-13 counter_k is 0 for keyset ${changeKeysetId} but existing proofs are stored in IndexedDB — ` +
+							`the counter was likely lost (localStorage cleared). Restore the wallet (NUT-9) before melting ` +
+							`to avoid reusing counter 0 ("outputs already signed" / 11003).`
+						);
+					}
 				}
-			];
-		}
 
-		// Step 4: Submit melt to mint
-		const outputBodies = outputs.map(o => ({
-			amount: o.amount,
-			id: o.id,
-			B_: o.B_
-		}));
+				const { secret, r } = generateChangeSecretAndR(changeKeysetId);
+				const { B_, blindingFactor } = blindMessage(secret, r);
 
-		const response = await postMelt(mintUrl, quoteId, inputBodies, outputBodies);
+				outputs = [
+					{
+						amount: changeAmount,
+						id: changeKeysetId,
+						B_,
+						secret,
+						blindingFactor
+					}
+				];
 
-		// TASK-244 (F-V27-005): the mint has now signed the change output
-		// (postMelt returned) — advance counter_k even if local persistence
-		// (addProofs below) later throws, otherwise the next melt re-derives the
-		// same B_ and the mint rejects it as "outputs already signed".
-		if (changeAmount > 0) {
-			incrementCounterK(inputs[0].id, 1);
+				// Step 4: Submit melt to mint
+				const outputBodies = outputs.map(o => ({
+					amount: o.amount,
+					id: o.id,
+					B_: o.B_
+				}));
+
+				const meltResponse = await postMelt(mintUrl, quoteId, inputBodies, outputBodies);
+
+				// TASK-244 (F-V27-005): the mint has now signed the change output
+				// (postMelt returned) — advance counter_k even if local persistence
+				// (addProofs below) later throws, otherwise the next melt re-derives the
+				// same B_ and the mint rejects it as "outputs already signed".
+				incrementCounterK(changeKeysetId, 1);
+
+				return meltResponse;
+			});
+		} else {
+			// No change output — nothing derived from the counter, so no lock needed.
+			const outputBodies: Array<{ amount: number; id: string; B_: string }> = [];
+			response = await postMelt(mintUrl, quoteId, inputBodies, outputBodies);
 		}
 
 		// Step 5: Unblind change signatures (use keyset-specific denomination key)

@@ -94,6 +94,7 @@ import { meltFlow } from '../melt';
 import { setActiveSeed, clearActiveSeed, deriveSecret } from '../nut13';
 import { mnemonicToSeed } from '../keys';
 import { getCounterK, setCounterK, clearAllCounters, STORAGE_KEY } from '../counterK';
+import { getAllKeysets, fetchAndCacheKeysets } from '../../cashu/keyset';
 import type { TokenProof } from '../../types';
 
 const TEST_PIN = '123456';
@@ -119,6 +120,11 @@ describe('NUT-13 deterministic melt change (TASK-244)', () => {
 
 		// 64 sats → melt 50 + fee_reserve 1 → change 13 (> 0, exercises change path)
 		await addProofs([makeProof('p1', 64)], MINT_URL, KEYSET_ID);
+
+		// TASK-250 (RC-3): the 64-sat proof was "already minted" (1 output), so the
+		// counter is 1 — the melt counter-0 guard must not fire, and change derives
+		// from counter 1.
+		setCounterK(KEYSET_ID, 1);
 	});
 
 	afterEach(async () => {
@@ -134,15 +140,15 @@ describe('NUT-13 deterministic melt change (TASK-244)', () => {
 
 		expect(result.success).toBe(true);
 		expect(result.change.length).toBe(1);
-		// change secret must equal the NUT-13 derivation for counter 0 (not random)
-		expect(result.change[0].secret).toBe(deriveSecret(seed, KEYSET_ID, 0));
+		// change secret must equal the NUT-13 derivation for counter 1 (not random)
+		expect(result.change[0].secret).toBe(deriveSecret(seed, KEYSET_ID, 1));
 	});
 
 	it('same seed → same change secret across independent runs', async () => {
 		const first = await meltFlow(MINT_URL, 'lnbc...', 50);
 
 		// reset counter + proofs to simulate a fresh run with the same seed
-		setCounterK(KEYSET_ID, 0);
+		setCounterK(KEYSET_ID, 1);
 		await deleteProofDB();
 		resetProofDB();
 		await addProofs([makeProof('p1', 64)], MINT_URL, KEYSET_ID);
@@ -152,16 +158,16 @@ describe('NUT-13 deterministic melt change (TASK-244)', () => {
 		expect(first.success).toBe(true);
 		expect(second.success).toBe(true);
 		expect(second.change[0].secret).toBe(first.change[0].secret);
-		expect(second.change[0].secret).toBe(deriveSecret(seed, KEYSET_ID, 0));
+		expect(second.change[0].secret).toBe(deriveSecret(seed, KEYSET_ID, 1));
 	});
 
 	it('advances counter_k by 1 after a successful melt change', async () => {
-		expect(getCounterK(KEYSET_ID)).toBe(0);
+		expect(getCounterK(KEYSET_ID)).toBe(1);
 
 		const result = await meltFlow(MINT_URL, 'lnbc...', 50);
 
 		expect(result.success).toBe(true);
-		expect(getCounterK(KEYSET_ID)).toBe(1);
+		expect(getCounterK(KEYSET_ID)).toBe(2);
 	});
 
 	it('legacy wallet (no active seed) → clear migration error, NOT random fallback', async () => {
@@ -174,5 +180,97 @@ describe('NUT-13 deterministic melt change (TASK-244)', () => {
 		expect(result.error).toMatch(/seed|migrat/i);
 		// must NOT silently fall back to random — error must point at migration
 		expect(result.error).not.toContain('preimage-abc');
+	});
+});
+
+// ─── TASK-251 (RC-4 / F-V28-006): keyset version 00 (BIP32 legacy) ───────
+//
+// Live mint uses keyset `00c25786d85a1dcd` (version `00` → BIP32 legacy
+// derivation, NOT HMAC-SHA256). The version-01 cases above never exercised
+// `deriveSecretAndRBip32` through the melt path — this describe proves the
+// change secret flows through the REAL BIP32 derivation (deriveSecretAndR is
+// NOT mocked; only the cashu client / blind / keyset modules are).
+const KEYSET_ID_V00 = '00c25786d85a1dcd';
+// BIP32 path m/129372'/0'/1507773658'/1'/0 for the live mint keyset (counter 1),
+// byte-for-byte from deriveSecretAndRBip32 — hardcoded so the test FAILS if the
+// derivation accidentally routes through HMAC (which would produce a different value).
+const CHANGE_SECRET_V00_COUNTER1 = '6f050b20feee6fbad8bea06d0ae16166187640ac6ae4818a0383dc5f09d688ba';
+
+function makeProofV00(id: string, amount: number): TokenProof {
+	return { id: KEYSET_ID_V00, amount, secret: `secret-${id}`, C: `sig-${id}` };
+}
+
+describe('NUT-13 deterministic melt change — keyset version 00 (BIP32)', () => {
+	const seed = mnemonicToSeed(MNEMONIC);
+
+	beforeEach(async () => {
+		await clearAllWalletData();
+		await deleteProofDB();
+		resetProofDB();
+		localStorage.removeItem(STORAGE_KEY);
+		vi.clearAllMocks();
+
+		// Point the keyset mocks at the version-00 keyset so F-072 ownership
+		// verification accepts the proof and fee lookup succeeds.
+		const v00Keyset = {
+			id: KEYSET_ID_V00,
+			unit: 'sat',
+			active: true,
+			input_fee_ppk: 0,
+			keys: { '1': '02' + 'ff'.repeat(32) },
+			last_updated: Date.now()
+		};
+		vi.mocked(getAllKeysets).mockReturnValue([v00Keyset]);
+		vi.mocked(fetchAndCacheKeysets).mockResolvedValue([v00Keyset]);
+
+		await createWallet(TEST_PIN, TEST_NAME);
+		await unlockWallet(TEST_PIN);
+		setActiveSeed(seed);
+
+		// 64 sats → melt 50 + fee_reserve 1 → change 13; counter starts at 1
+		// (the 64-sat proof was "already minted" as output 0).
+		await addProofs([makeProofV00('p1', 64)], MINT_URL, KEYSET_ID_V00);
+		setCounterK(KEYSET_ID_V00, 1);
+	});
+
+	afterEach(async () => {
+		clearActiveSeed();
+		clearAllCounters();
+		await clearAllWalletData();
+		await deleteProofDB();
+		resetProofDB();
+	});
+
+	it('derives the change secret via the REAL BIP32 path (version 00)', async () => {
+		const result = await meltFlow(MINT_URL, 'lnbc...', 50);
+
+		expect(result.success).toBe(true);
+		expect(result.change.length).toBe(1);
+		// exact BIP32-derived value for counter 1 (NOT an HMAC value)
+		expect(result.change[0].secret).toBe(CHANGE_SECRET_V00_COUNTER1);
+		expect(result.change[0].secret).toBe(deriveSecret(seed, KEYSET_ID_V00, 1));
+	});
+
+	it('same seed → same change secret via BIP32 across independent runs', async () => {
+		const first = await meltFlow(MINT_URL, 'lnbc...', 50);
+
+		// reset counter + proofs to simulate a fresh run with the same seed
+		setCounterK(KEYSET_ID_V00, 1);
+		await deleteProofDB();
+		resetProofDB();
+		await addProofs([makeProofV00('p1', 64)], MINT_URL, KEYSET_ID_V00);
+
+		const second = await meltFlow(MINT_URL, 'lnbc...', 50);
+
+		expect(first.success).toBe(true);
+		expect(second.success).toBe(true);
+		expect(second.change[0].secret).toBe(first.change[0].secret);
+		expect(second.change[0].secret).toBe(CHANGE_SECRET_V00_COUNTER1);
+	});
+
+	it('BIP32 secret differs from the HMAC secret for the same counter (real path, not HMAC)', async () => {
+		// Sanity: version 00 must route through BIP32, not HMAC-SHA256.
+		expect(deriveSecret(seed, KEYSET_ID_V00, 1)).not.toBe(deriveSecret(seed, KEYSET_ID, 1));
+		expect(deriveSecret(seed, KEYSET_ID_V00, 1)).toBe(CHANGE_SECRET_V00_COUNTER1);
 	});
 });

@@ -29,6 +29,7 @@ import { deleteProofDB } from './proofsDb';
 import { setWalletMetadata } from '../storage/local';
 import { InvalidPinError, WalletLockedError, WalletNotInitializedError } from './errors';
 import { setActiveSeed, clearActiveSeed, seedFromMnemonic } from './nut13';
+import { clearAllCounters } from './counterK';
 
 // ─── In-Memory State (CLOSURE — never persisted) ─────────────
 
@@ -86,6 +87,9 @@ export async function createWallet(
 
 	// Set state to LOCKED
 	setWalletState('LOCKED');
+
+	// Reset NUT-13 counters — a fresh wallet must start counter_k = 0.
+	clearAllCounters();
 
 	// CRITICAL: Clear private key from memory — wallet starts LOCKED
 	unlockedPrivateKey = null;

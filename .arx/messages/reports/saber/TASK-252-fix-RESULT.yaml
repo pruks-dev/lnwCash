@@ -1,0 +1,67 @@
+message_id: TASK-252-fix-RESULT
+type: RESULT
+sender: saber
+receiver: orion
+task_id: TASK-252-fix
+verdict: COMPLETE
+
+summary: |
+  ปิดงาน TASK-252-fix (F1) ที่ค้าง — production code (clearAllCounters() 3 จุด)
+  ลงแล้วถูกต้อง ไม่มีการแก้ซ้ำ; งานนี้แก้ test regression 2 ตัว + เก็บ evidence/RESULT
+
+  1. Production (ลงแล้ว — ตรวจสอบยืนยัน ไม่แก้): clearAllCounters() ถูกเรียกตอน
+     ลบ/import/create wallet ครบ 3 จุด
+     - storage.ts:233  clearAllWalletData()
+     - seed.ts:149      importSeed()
+     - state.ts:92      createWallet()
+     counter_k ถูกรีเซ็ตเป็น 0 ถูกต้อง (root cause TASK-249 gap/misalign)
+
+  2. Test regression fix (แก้ test เท่านั้น): หลัง TASK-252-fix, createWallet()/
+     clearAllWalletData() clear counter_k → 2 tests ใน melt.test.ts ที่ addProofs()
+     ตรง ๆ โดยไม่ advance counter โดน melt counter-0 guard (TASK-250) ยิง
+     "restore ก่อน" → meltFlow คืน success:false → fail
+     แก้โดย setCounterK(KEYSET_ID, 1) หลัง addProofs(...) จำลองว่า mint advance
+     counter แล้ว (test setup ตรง behavior จริง — ไม่ใช่ production bug)
+
+  3. ผล: full suite 107 files / 1163 tests PASS ทั้งหมด; svelte-check 0 errors
+
+files_changed:
+  - src/lib/wallet/__tests__/melt.test.ts  # test regression fix (2 จุด)
+
+proof_list:
+  - counter-reset.diff       # git diff production 3 จุด (storage/seed/state)
+  - counter-reset-test.log   # counter-reset.test.ts 4/4 PASS
+  - melt-test-fix.diff       # git diff melt.test.ts (test regression fix)
+  - full-suite.log           # full suite 107 files / 1163 tests PASS
+  - verification-summary.md  # acceptance criteria mapping
+
+evidence_count: 5
+
+test_results:
+  counter_reset: PASS (4/4)
+  melt_test: PASS (11/11)
+  full_suite: PASS (107 files, 1163/1163)
+  svelte_check: PASS (0 errors, 0 warnings)
+
+acceptance_criteria:
+  - clear_counters_on_delete: PASS
+  - clear_counters_on_import: PASS
+  - clear_counters_on_create: PASS
+  - melt_test_regression_fixed: PASS
+  - full_suite_green_1163: PASS
+
+blockers: []
+
+deviations:
+  - >
+    melt-test-fix.diff เทียบกับ HEAD รวม 2 บรรทัดที่ยังไม่ commit จาก TASK-250
+    (import setCounterK บรรทัด 9 + setCounterK(KEYSET_ID, 3) ใน beforeEach) —
+    ส่วนที่เป็นงาน TASK-252-fix จริงคือ setCounterK(KEYSET_ID, 1) เพิ่มใน 2 tests
+    (C07-02 UNSPENT + record transaction) เท่านั้น
+
+metrics:
+  files_changed: 1
+  production_code_modified: 0
+  test_lines_added: 14
+  evidence_files_written: 5
+  full_suite_tests: 1163

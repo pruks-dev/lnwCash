@@ -1,0 +1,93 @@
+message_id: TASK-249-RESULT
+type: RESULT
+sender: saber
+receiver: orion
+task_id: TASK-249
+verdict: REPRODUCED
+
+summary: |
+  TASK-249 (BLUEPRINT-003 v1.4.2 Wave 1 P0) — live repro against mint.lnw.cash
+  (Nutshell/0.20.1, keyset 00c25786d85a1dcd) to pin the A2/A4 root cause before
+  designing the fix.
+
+  DECISIVE ANSWER 1 — NUT-9 /v1/restore DOES return melt-change AND swap
+  signatures. Verbatim bodies (in repro-run.log) show both the spent mint proof
+  and the melt-change (A2: 32 sat) / swap-receive (A4: 16 sat) signatures are
+  returned. Nutshell stores every signed output (mint/melt-change/swap) in the
+  same promises table and restores by B_. The task hypothesis "NUT-9 ไม่คืน
+  melt/swap signature" is REFUTED.
+
+  DECISIVE ANSWER 2 — counter_k reconstructs correctly ONLY when counters are
+  contiguous. Clean A2 (mint@0 → melt-change@1) and clean A4 (mint@0 → swap@1)
+  both reconstruct counter_k=2 and recover the change/swap proofs (with TASK-244
+  determinism in place). With a GAP, restore undercounts and corrupts recovery.
+
+  ROOT CAUSE (reproduced live, PART 3): counter_k is keyed by KEYSET only
+  (counterK.ts:15) and is NOT cleared by deleteWallet() (storage.ts:226-240) or
+  importSeed() (seed.ts:99-147). A stale counter makes a new seed mint/swap at a
+  non-zero counter → counters 0..stale-1 never signed (GAP). restore.ts then
+  breaks: restoreBatch maps response.signatures[i] → prepared[i] (restore.ts:102-103),
+  but Nutshell returns a FILTERED list, so with a gap the signatures are unblinded
+  with the WRONG blinding factor (garbage proofs) and assigned the wrong secret;
+  and lastNonEmptyCounter = counter + proofs.length (restore.ts:176) undercounts
+  (2 instead of 3). Result: the real swap/change proof is LOST, a garbage proof is
+  recovered instead, and counter_k is undercounted.
+
+  TASK-250 (running in parallel) does NOT fix this: it only guards counter_k===0
+  (not stale non-zero), does not reset counter_k on delete/import, and does not
+  touch restore.ts. The finding holds for both v1.4.1 and the TASK-250 tree.
+
+  Production code NOT modified (repro imports/reads production modules only).
+
+files_changed: []
+
+proof_list:
+  - repro-run.log         # full run + 3 verbatim NUT-9 /v1/restore bodies (A2, A4, gap)
+  - counter-k-trace.txt   # counter_k at mint/melt/swap/restore/delete/import
+  - root-cause-report.md  # file:line + response bodies (§1-5)
+  - verification-summary.md
+  - repro-entry.ts        # readable source of repro
+  - git-hash.txt          # 4112c8b (v1.4.1)
+
+evidence_count: 6
+
+test_results:
+  nut9_returns_melt_change_signature: PASS
+  nut9_returns_swap_signature: PASS
+  clean_A2_change_recovered: PASS
+  clean_A4_swap_recovered: PASS
+  stale_counter_gap_reproduced: PASS
+  counter_k_trace_complete: PASS
+
+acceptance_criteria:
+  - repro_captures_A2_A4_recover_or_fail_with_body: PASS
+  - counter_k_trace_all_steps: PASS
+  - root_cause_report_cites_file_line_and_body: PASS
+  - no_production_code_modified: PASS
+  - no_mainnet_used: PASS
+
+blockers: []
+
+deviations:
+  - >
+    The simple mint→melt→restore (A2) and mint→swap→restore (A4) flows do NOT
+    reproduce fund loss when counters are contiguous — they recover correctly.
+    The fund-loss root cause is a counter_k GAP triggered by a stale counter across
+    deleteWallet()/importSeed(), which I reproduced explicitly (PART 3). This is an
+    honest refinement of the task's A2/A4 framing, not a different bug.
+  - >
+    TASK-250 is modifying mint.ts/melt.ts/tokenStore.ts/counterK.ts in the working
+    tree concurrently. My repro bundle was built against the working-tree state at
+    run time, but the root-cause files (restore.ts, storage.ts, seed.ts) are
+    untouched by TASK-250, so the finding is valid for both v1.4.1 and TASK-250.
+    Documented in root-cause-report.md §6.
+  - >
+    NUT-09 response shape observed: Nutshell 0.20.1 returns a filtered
+    {outputs, signatures} pair (only previously-signed B_, mutually aligned) — not a
+    1:1 echo of the request as the NUT-09 spec text implies. This exact shape is
+    what restore.ts mishandles under a gap.
+
+metrics:
+  files_changed: 0
+  production_code_modified: 0
+  evidence_files_written: 6

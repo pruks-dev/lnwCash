@@ -1,0 +1,69 @@
+message_id: TASK-252-RESULT
+type: RESULT
+sender: saber
+receiver: orion
+task_id: TASK-252
+verdict: COMPLETE
+
+summary: |
+  restore.ts gap-tolerance fix — align /v1/restore signatures by B_ (not index)
+  + advance counter_k to highest signed + 1 (not signature count).
+
+  1. restoreBatch() F-V29-003: replaced `prepared[i]` index mapping with a
+     Map<B_, {entry, offset}> lookup. Each signature is aligned to its prepared
+     entry via the mint's echoed `response.outputs[i].B_` (FILTERED list), with
+     request-order index as a compat fallback when `outputs` is absent. Unblind
+     uses the MATCHED entry's blinding factor — no more garbage proofs when the
+     mint skips unsigned counters.
+
+  2. restoreWallet() F-V29-004: replaced `lastNonEmptyCounter = counter +
+     proofs.length` with `lastNonEmptyCounter = highestSignedCounter + 1`, where
+     highestSignedCounter (startCounter + max matched offset) is tracked in
+     restoreBatch from the B_ match and computed BEFORE spent filtering. Gap
+     (counter 0 unsigned, 1/2 signed) now yields counter 3, not 2.
+
+  3. Merge with TASK-250 counter-0 guard: the gap handling is fully general
+     (any skipped counter, not just counter 0), so restore never undercounts.
+
+  4. New unit tests: gap alignment (unblind + secret correct, no garbage),
+     counter highest+1 (incl. spent-filtered case), BIP32 version 00
+     `00c25786d85a1dcd` gap round-trip (hardcoded BIP32 secrets so the test
+     fails if routed through HMAC).
+
+files_changed:
+  - src/lib/wallet/restore.ts
+  - src/lib/wallet/__tests__/restore-gap-alignment.test.ts (new)
+  - src/lib/wallet/__tests__/restore-counter-highest.test.ts (new)
+  - src/lib/wallet/__tests__/restore-bip32-gap.test.ts (new)
+
+proof_list:
+  - restore.ts.diff                  # align by B_ + counter highest+1
+  - restore-gap-alignment-test.log   # gap: signature unblind + secret correct PASS
+  - restore-counter-highest-test.log # gap: counter = 3 (highest+1, not 2) PASS
+  - restore-bip32-gap-test.log       # BIP32 version 00 + gap round-trip PASS
+  - verification-summary.md
+
+evidence_count: 5
+
+test_results:
+  restore_files: PASS (5 files, 12/12)
+  gap_alignment: PASS (2/2)
+  counter_highest: PASS (2/2)
+  bip32_gap: PASS (1/1)
+  full_suite: PASS (106 files, 1159/1159)
+  svelte_check: PASS (0 errors, 0 warnings)
+
+acceptance_criteria:
+  - align_signature_by_B_not_index: PASS
+  - counter_highest_signed_plus_1: PASS
+  - gap_recover_full_counter_correct_bip32_v00: PASS
+
+blockers: []
+
+deviations: []
+
+metrics:
+  files_changed: 4
+  production_code_modified: 1
+  new_test_files: 3
+  evidence_files_written: 5

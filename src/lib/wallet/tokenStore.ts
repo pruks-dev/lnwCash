@@ -32,7 +32,7 @@ import { blindMessage, unblindSignature, blindingFactorToHex } from '../cashu/bl
 import { fetchAndCacheKeysets, getMintPubkey, resolveKeysetId } from '../cashu/keyset';
 import { getPrivateKey } from './state';
 import { deriveSecretAndR, getActiveSeed } from './nut13';
-import { getCounterK, incrementCounterK } from './counterK';
+import { getCounterK, incrementCounterK, withKeysetLock } from './counterK';
 import type { TokenProof, DecodedToken } from '../types';
 import { TokenValidationError } from './errors';
 
@@ -325,49 +325,68 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 		await fetchAndCacheKeysets(mintUrl);
 		fullId = resolveKeysetId(mintUrl, keysetId) || keysetId;
 
-		// Create blinded outputs (deterministic NUT-13 secrets + blinding)
-		const blindPairs: Array<{ secret: string; B_: string; r: string }> = [];
-		const outputs: Array<{ amount: number; id: string; B_: string }> = [];
+		// TASK-250 (RC-3): serialize counter read → derive → submit → advance per
+		// keyset, and guard against counter-0 reuse (mirror of the mint guard).
+		const newProofs = await withKeysetLock(fullId, async () => {
+			// Counter-0 guard: if counter_k is 0 but proofs for this keyset already
+			// exist in IndexedDB, the counter was lost (localStorage cleared). Deriving
+			// swap outputs at counter 0 now would reuse a secret → force NUT-9 restore.
+			if (getCounterK(fullId) === 0) {
+				const existingProofs = await getAllProofs();
+				if (existingProofs.some((p) => p.keyset_id === fullId)) {
+					throw new Error(
+						`NUT-13 counter_k is 0 for keyset ${fullId} but existing proofs are stored in IndexedDB — ` +
+						`the counter was likely lost (localStorage cleared). Restore the wallet (NUT-9) before receiving ` +
+						`to avoid reusing counter 0 ("outputs already signed" / 11003).`
+					);
+				}
+			}
 
-		const startCounter = getCounterK(fullId);
-		for (let i = 0; i < decoded.proofs.length; i++) {
-			const proof = decoded.proofs[i];
-			const { secret, r } = deriveSecretAndR(seed, fullId, startCounter + i);
-			const { B_, blindingFactor } = blindMessage(secret, r);
-			blindPairs.push({ secret, B_, r: blindingFactor });
-			outputs.push({ amount: proof.amount, id: fullId, B_ });
-		}
+			// Create blinded outputs (deterministic NUT-13 secrets + blinding)
+			const blindPairs: Array<{ secret: string; B_: string; r: string }> = [];
+			const outputs: Array<{ amount: number; id: string; B_: string }> = [];
 
-		// Swap: send old proofs as inputs, new blinded messages as outputs
-		// Use full keyset IDs for both inputs and outputs
-		const swapInputs = decoded.proofs.map(p => ({ ...p, id: fullId }));
-		const swapResult = await swapProofs(mintUrl, swapInputs, outputs);
+			const startCounter = getCounterK(fullId);
+			for (let i = 0; i < decoded.proofs.length; i++) {
+				const proof = decoded.proofs[i];
+				const { secret, r } = deriveSecretAndR(seed, fullId, startCounter + i);
+				const { B_, blindingFactor } = blindMessage(secret, r);
+				blindPairs.push({ secret, B_, r: blindingFactor });
+				outputs.push({ amount: proof.amount, id: fullId, B_ });
+			}
 
-		// TASK-244 (F-V27-005): the mint has now signed the swap receive outputs
-		// (swapProofs returned) — advance counter_k even if local persistence
-		// (addProofs below) later throws, otherwise the next receive re-derives
-		// the same B_ and the mint rejects it as "outputs already signed".
-		incrementCounterK(fullId, decoded.proofs.length);
+			// Swap: send old proofs as inputs, new blinded messages as outputs
+			// Use full keyset IDs for both inputs and outputs
+			const swapInputs = decoded.proofs.map(p => ({ ...p, id: fullId }));
+			const swapResult = await swapProofs(mintUrl, swapInputs, outputs);
 
-		// Unblind signatures to get new proofs
-		const newProofs = swapResult.signatures.map((sig, i) => {
-			const bp = blindPairs[i];
-			const pubkey = getMintPubkey(mintUrl, fullId, sig.amount);
-			const C = pubkey ? unblindSignature(sig.C_, bp.r, pubkey) : sig.C_;
-			return {
-				id: sig.id || keysetId,
-				amount: sig.amount,
-				secret: bp.secret,
-				C,
-				dleq: sig.dleq ? {
-					e: sig.dleq.e,
-					s: sig.dleq.s,
-					r: blindingFactorToHex(bp.r)
-				} : undefined
-			};
+			// TASK-244 (F-V27-005): the mint has now signed the swap receive outputs
+			// (swapProofs returned) — advance counter_k even if local persistence
+			// (addProofs below) later throws, otherwise the next receive re-derives
+			// the same B_ and the mint rejects it as "outputs already signed".
+			incrementCounterK(fullId, decoded.proofs.length);
+
+			// Unblind signatures to get new proofs
+			const unblinded = swapResult.signatures.map((sig, i) => {
+				const bp = blindPairs[i];
+				const pubkey = getMintPubkey(mintUrl, fullId, sig.amount);
+				const C = pubkey ? unblindSignature(sig.C_, bp.r, pubkey) : sig.C_;
+				return {
+					id: sig.id || keysetId,
+					amount: sig.amount,
+					secret: bp.secret,
+					C,
+					dleq: sig.dleq ? {
+						e: sig.dleq.e,
+						s: sig.dleq.s,
+						r: blindingFactorToHex(bp.r)
+					} : undefined
+				};
+			});
+
+			await addProofs(unblinded, mintUrl, unblinded[0]?.id || fullId);
+			return unblinded;
 		});
-
-		await addProofs(newProofs, mintUrl, newProofs[0]?.id || fullId);
 
 		const totalAmount = newProofs.reduce((sum, p) => sum + p.amount, 0);
 		const dleqCount = newProofs.filter(p => p.dleq).length;

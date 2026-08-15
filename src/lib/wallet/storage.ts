@@ -16,6 +16,7 @@ import {
 	clearWalletMetadata
 } from '../storage/local';
 import { isNativePlatform } from '../platform';
+import { clearAllCounters } from './counterK';
 
 // ─── Storage Keys ────────────────────────────────────────────
 
@@ -229,6 +230,7 @@ export async function clearAllWalletData(): Promise<void> {
 	clearPinHash();
 	clearWalletState();
 	clearWalletMetadata();
+	clearAllCounters();
 
 	// Clear proofs DB (may fail in test environments — handle gracefully)
 	try {
