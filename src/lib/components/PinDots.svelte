@@ -68,8 +68,8 @@
 	}
 
 	.dot.filled {
-		background: var(--color-primary-dark, #00838f);
-		border-color: var(--color-primary-dark, #00838f);
+		background: var(--color-primary, #00bcd4);
+		border-color: var(--color-primary, #00bcd4);
 		transform: scale(1.1);
 	}
 
