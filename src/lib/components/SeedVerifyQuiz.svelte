@@ -193,7 +193,7 @@
 		font-size: 0.85rem;
 		font-weight: 600;
 		color: var(--color-primary-contrast, #ffffff);
-		background: var(--color-primary-dark, #00838f);
+		background: var(--color-primary, #00bcd4);
 		border: none;
 		border-radius: var(--radius-md);
 		cursor: pointer;

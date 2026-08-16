@@ -115,8 +115,8 @@
 		border-color: var(--color-primary-hover);
 	}
 	.btn-primary:active:not(:disabled) {
-		background: var(--color-primary-dark);
-		border-color: var(--color-primary-dark);
+		background: var(--color-primary-hover);
+		border-color: var(--color-primary-hover);
 	}
 
 	/* Secondary variant */
@@ -130,8 +130,8 @@
 		color: var(--color-primary-contrast);
 	}
 	.btn-secondary:active:not(:disabled) {
-		background: var(--color-primary-dark);
-		border-color: var(--color-primary-dark);
+		background: var(--color-primary-hover);
+		border-color: var(--color-primary-hover);
 		color: var(--color-primary-contrast);
 	}
 

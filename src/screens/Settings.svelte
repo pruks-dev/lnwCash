@@ -803,7 +803,7 @@
 
 	.forgot-pin-link:hover,
 	.forgot-pin-link:focus-visible {
-		color: var(--color-primary-dark);
+		color: var(--color-primary-hover);
 	}
 
 	.bottom-spacer {
