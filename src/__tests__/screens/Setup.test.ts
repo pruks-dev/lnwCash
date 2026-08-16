@@ -114,7 +114,8 @@ vi.mock('$lib/wallet/nut13', () => ({
 }));
 
 vi.mock('$lib/wallet/rekey', () => ({
-	rekeyWallet: vi.fn(async () => ({ success: true, swappedCount: 0, receivedCount: 0, batches: 0 }))
+	rekeyWallet: vi.fn(async () => ({ success: true, swappedCount: 0, receivedCount: 0, batches: 0 })),
+	getRekeyJournal: vi.fn(() => null)
 }));
 
 vi.mock('$lib/cashu/keyset', () => ({

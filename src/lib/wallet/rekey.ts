@@ -13,10 +13,16 @@
  *   3. counter_k init = number of swapped outputs (NOT 0), so future
  *      deterministic mints never re-derive an output the mint already signed.
  *   4. NUT-29 batching: ≤ 1000 inputs/outputs per single swap request.
- *   5. Crash-safe atomicity: the NEW encrypted mnemonic is persisted + the NEW
- *      seed activated BEFORE any swap, and a "pending rekey" journal is written.
- *      A swap failure rolls back to the pre-rekey state (old proofs, old seed,
- *      old mnemonic all intact — no fund loss).
+ *   5. Crash-safe atomicity (per-group commit): the NEW encrypted mnemonic +
+ *      NEW private key are persisted + the NEW seed activated BEFORE any swap
+ *      (the recovery anchor), and a "pending rekey" journal is written. Each
+ *      (mint, keyset) group is committed IMMEDIATELY after its swap succeeds
+ *      (`addProofs(new)` + `removeProofs(old of that group)`), so a later
+ *      group's failure can never lose already-swapped funds. A failure BEFORE
+ *      any group succeeds rolls back to the pre-rekey state (old proofs, old
+ *      seed, old mnemonic + old key intact — no fund loss); a failure AFTER a
+ *      group succeeded KEEPS the new mnemonic + journal so the wallet can be
+ *      recovered via NUT-13 restore from the new seed.
  *   6. Swap only mints that actually hold unspent proofs (grouped by
  *      `proof.mint_url`), optionally restricted to the mints the user selected
  *      in the recover wizard (`options.mints`).
@@ -30,7 +36,7 @@
  * `nut13.ts` (deriveSecretAndR), `encrypt.ts` (encryptKey) and `blind.ts`
  * exactly as the removed migration engine did.
  */
-import { mnemonicToSeed } from './keys';
+import { mnemonicToSeed, mnemonicToPrivateKey } from './keys';
 import {
 	deriveSecretAndR,
 	getActiveSeed,
@@ -47,11 +53,14 @@ import {
 import { swapProofs } from '../cashu/client';
 import { blindMessage, unblindSignature, blindingFactorToHex } from '../cashu/blind';
 import { fetchAndCacheKeysets, getMintPubkey, resolveKeysetId } from '../cashu/keyset';
-import { encryptKey } from '../crypto/encrypt';
+import { encryptKey, decryptKey } from '../crypto/encrypt';
 import {
 	getEncryptedMnemonic,
 	setEncryptedMnemonic,
-	clearEncryptedMnemonic
+	clearEncryptedMnemonic,
+	getEncryptedKey,
+	setEncryptedKey,
+	clearEncryptedKey
 } from './storage';
 import type { TokenProof, EncryptedKey } from '../types';
 
@@ -85,7 +94,6 @@ interface GroupPlan {
 	mintUrl: string;
 	keysetId: string;
 	inputs: StoredProof[];
-	newProofs: TokenProof[];
 }
 
 // ─── Rekey journal (crash-safe atomicity) ────────────────────
@@ -150,79 +158,89 @@ export function clearRekeyJournal(): void {
 	}
 }
 
+/**
+ * Resume a pending (interrupted) re-key: decrypt the journal's recovery anchor
+ * (the encrypted NEW mnemonic) back to its plaintext so the UI can re-offer the
+ * re-key or route into the NUT-13 restore flow.
+ *
+ * @throws if there is no pending journal, or if the PIN is wrong (AES-GCM auth).
+ */
+export async function resumeRekeyMnemonic(pin: string): Promise<string> {
+	const journal = getRekeyJournal();
+	if (!journal) {
+		throw new Error('re-key resume failed: no pending re-key journal');
+	}
+	return decryptKey(journal.encryptedNewMnemonic, pin);
+}
+
 // ─── Swap orchestration (network only, no writes) ────────────
 
 /**
- * Swap one (mint, keyset) group of old proofs for new deterministic proofs
- * derived from the NEW seed, batching per NUT-29 (≤ 1000 per request).
+ * Swap ONE NUT-03 batch (≤ NUT29_MAX_BATCH_SIZE) of old proofs for new
+ * deterministic proofs derived from the NEW seed.
  *
  * Outputs are 1:1 with inputs (same amounts), so each batch stays
  * amount-balanced (sum(inputs) === sum(outputs)) — a NUT-03 requirement.
  *
  * This function performs NO local persistence: it only hits the network and
- * returns the unblinded new proofs, so a failure here leaves the wallet
- * completely untouched (atomicity).
+ * returns the unblinded new proofs. The caller commits each successful batch
+ * immediately (per-batch commit) so a later batch's failure never discards
+ * already-swapped proofs (no fund loss).
+ *
+ * @param startCounter The derivation counter to start from for this batch
+ *                     (continuous across the batches of a single keyset group).
  */
-async function swapGroupForNewSeed(
+async function swapBatchForNewSeed(
 	mintUrl: string,
-	keysetId: string,
-	inputs: StoredProof[],
-	seed: Uint8Array
-): Promise<{ fullId: string; newProofs: TokenProof[]; batches: number }> {
-	await fetchAndCacheKeysets(mintUrl);
-	const fullId = resolveKeysetId(mintUrl, keysetId) || keysetId;
-
-	const newProofs: TokenProof[] = [];
-	let counter = 0;
-	let batches = 0;
-
-	for (let start = 0; start < inputs.length; start += NUT29_MAX_BATCH_SIZE) {
-		batches++;
-		const batch = inputs.slice(start, start + NUT29_MAX_BATCH_SIZE);
-
-		// Deterministic outputs from the NEW seed (fresh counter space 0..N-1).
-		const blindPairs: Array<{ secret: string; blindingFactor: string }> = [];
-		const outputs: Array<{ amount: number; id: string; B_: string }> = [];
-		for (const input of batch) {
-			const { secret, r } = deriveSecretAndR(seed, fullId, counter);
-			counter++;
-			const { B_, blindingFactor } = blindMessage(secret, r);
-			blindPairs.push({ secret, blindingFactor });
-			outputs.push({ amount: input.amount, id: fullId, B_ });
-		}
-
-		const swapInputs = batch.map((p) => ({
-			secret: p.secret,
-			C: p.C,
-			amount: p.amount,
-			id: fullId
-		}));
-
-		const result = await swapProofs(mintUrl, swapInputs, outputs);
-
-		result.signatures.forEach((sig, i) => {
-			const bp = blindPairs[i];
-			if (!bp) return; // defensive: signature/output count mismatch
-			const pubkey = getMintPubkey(mintUrl, fullId, sig.amount);
-			const C = pubkey ? unblindSignature(sig.C_, bp.blindingFactor, pubkey) : sig.C_;
-			const proof: TokenProof = {
-				id: sig.id || fullId,
-				amount: sig.amount,
-				secret: bp.secret,
-				C
-			};
-			if (sig.dleq) {
-				proof.dleq = {
-					e: sig.dleq.e,
-					s: sig.dleq.s,
-					r: blindingFactorToHex(bp.blindingFactor)
-				};
-			}
-			newProofs.push(proof);
-		});
+	fullId: string,
+	batch: StoredProof[],
+	seed: Uint8Array,
+	startCounter: number
+): Promise<TokenProof[]> {
+	// Deterministic outputs from the NEW seed (counter space startCounter..N-1).
+	const blindPairs: Array<{ secret: string; blindingFactor: string }> = [];
+	const outputs: Array<{ amount: number; id: string; B_: string }> = [];
+	let counter = startCounter;
+	for (const input of batch) {
+		const { secret, r } = deriveSecretAndR(seed, fullId, counter);
+		counter++;
+		const { B_, blindingFactor } = blindMessage(secret, r);
+		blindPairs.push({ secret, blindingFactor });
+		outputs.push({ amount: input.amount, id: fullId, B_ });
 	}
 
-	return { fullId, newProofs, batches };
+	const swapInputs = batch.map((p) => ({
+		secret: p.secret,
+		C: p.C,
+		amount: p.amount,
+		id: fullId
+	}));
+
+	const result = await swapProofs(mintUrl, swapInputs, outputs);
+
+	const newProofs: TokenProof[] = [];
+	result.signatures.forEach((sig, i) => {
+		const bp = blindPairs[i];
+		if (!bp) return; // defensive: signature/output count mismatch
+		const pubkey = getMintPubkey(mintUrl, fullId, sig.amount);
+		const C = pubkey ? unblindSignature(sig.C_, bp.blindingFactor, pubkey) : sig.C_;
+		const proof: TokenProof = {
+			id: sig.id || fullId,
+			amount: sig.amount,
+			secret: bp.secret,
+			C
+		};
+		if (sig.dleq) {
+			proof.dleq = {
+				e: sig.dleq.e,
+				s: sig.dleq.s,
+				r: blindingFactorToHex(bp.blindingFactor)
+			};
+		}
+		newProofs.push(proof);
+	});
+
+	return newProofs;
 }
 
 // ─── Public API ──────────────────────────────────────────────
@@ -234,22 +252,30 @@ async function swapGroupForNewSeed(
  * 2. Group unspent proofs by (mint_url, keyset_id) — restricting to
  *    `options.mints` when provided. Mints with no unspent proofs are skipped
  *    automatically (no group → no swap).
- * 3. Persist the NEW encrypted mnemonic + activate the NEW seed BEFORE any swap
- *    (the recovery anchor), and write the "pending rekey" journal.
- * 4. Swap each group (NUT-03, batched per NUT-29). Any swap failure rolls back
- *    to the pre-rekey state (no fund loss).
- * 5. Commit: persist new proofs → clear old proofs → clear ALL old counters →
+ * 3. Persist the NEW encrypted mnemonic + NEW private key + activate the NEW
+ *    seed BEFORE any swap (the recovery anchor), and write the "pending rekey"
+ *    journal. The private key rotates at the SAME anchor so the wallet invariant
+ *    `seedToPrivateKey(exportSeed(pin)) === stored private key` holds after a
+ *    re-key.
+ * 4. Swap each group (NUT-03, batched per NUT-29) and commit it IMMEDIATELY
+ *    after success (addProofs(new) + removeProofs(old)). A failure BEFORE any
+ *    group succeeds rolls back to the pre-rekey state (no fund loss); a failure
+ *    AFTER a group succeeded keeps the new mnemonic/seed/key + journal and
+ *    throws a "resume via restore" error.
+ * 5. Finalize (only after ALL groups swapped): clear ALL old counters →
  *    counter_k := swap count per keyset → clear the journal.
  *
  * The wallet is assumed to already be unlocked (the Setup recover flow has just
  * created + unlocked it), so no PIN re-verification is performed here — `pin`
- * is used only to encrypt the new mnemonic. User confirmation is enforced by
- * the wizard (SeedGrid + paper ack + verify quiz) before this is called.
+ * is used only to encrypt the new mnemonic + new private key. User confirmation
+ * is enforced by the wizard (SeedGrid + paper ack + verify quiz) before this is
+ * called.
  *
  * @param newMnemonic 12-word BIP39 mnemonic for the NEW seed.
- * @param pin The wallet PIN (encrypts the new mnemonic).
+ * @param pin The wallet PIN (encrypts the new mnemonic + new private key).
  * @param options Optional mint restriction.
- * @throws Error (propagated) if any swap fails (state rolled back).
+ * @throws Error (propagated) on zero-success failure (state rolled back); a
+ *         distinct "resume via restore" error on partial success (anchor kept).
  */
 export async function rekeyWallet(
 	newMnemonic: string,
@@ -278,65 +304,102 @@ export async function rekeyWallet(
 		const key = `${p.mint_url}\u0000${p.keyset_id}`;
 		let group = groups.get(key);
 		if (!group) {
-			group = { mintUrl: p.mint_url, keysetId: p.keyset_id, inputs: [], newProofs: [] };
+			group = { mintUrl: p.mint_url, keysetId: p.keyset_id, inputs: [] };
 			groups.set(key, group);
 		}
 		group.inputs.push(p);
 	}
 
 	// ── Recovery anchor ────────────────────────────────────────
-	// Persist the NEW encrypted mnemonic + activate the NEW seed BEFORE any
-	// swap. Once this is durable, a crash at ANY later point (including after
-	// the mint has burned the old proofs) can be recovered from the new
-	// mnemonic via NUT-13 restore. Capture the pre-rekey state so a swap FAILURE
-	// can roll back cleanly.
+	// Persist the NEW encrypted mnemonic + NEW private key + activate the NEW
+	// seed BEFORE any swap. Once this is durable, a crash at ANY later point
+	// (including after the mint has burned the old proofs) can be recovered from
+	// the new mnemonic via NUT-13 restore. Capture the pre-rekey state so a
+	// zero-success failure can roll back cleanly.
 	const prevMnemonic = getEncryptedMnemonic();
 	const prevSeed = getActiveSeed();
+	const prevEncryptedKey = getEncryptedKey();
+
 	const encryptedNewMnemonic = await encryptKey(newMnemonic, pin);
+	// A2: rotate the secp256k1 private key at the SAME anchor as the mnemonic,
+	// so `seedToPrivateKey(exportSeed(pin)) === stored private key` holds after
+	// a re-key (the invariant). Persisted before any swap → crash-safe.
+	const newPrivateKey = mnemonicToPrivateKey(newMnemonic);
+	const encryptedNewKey = await encryptKey(newPrivateKey, pin);
+
 	setEncryptedMnemonic(encryptedNewMnemonic);
+	setEncryptedKey(encryptedNewKey);
 	setActiveSeed(newSeed);
 	setRekeyJournal({ status: 'pending', encryptedNewMnemonic, startedAt: Date.now() });
 
-	// Phase A — swap (network only). Any failure rolls back the anchor.
+	// Phase A — swap (network) + per-batch commit. Each NUT-03 batch is the
+	// atomic unit of "funds burned at the mint", so each successful batch is
+	// committed IMMEDIATELY (addProofs(new) + removeProofs(old)) before the next
+	// batch is issued. A later batch's failure must never roll the anchor back —
+	// the already-committed batches stay recoverable via the NEW mnemonic.
 	const counters = new Map<string, number>();
 	let batchCount = 0;
+	let swappedAny = false;
 	try {
 		for (const group of groups.values()) {
-			const { fullId, newProofs, batches } = await swapGroupForNewSeed(
-				group.mintUrl,
-				group.keysetId,
-				group.inputs,
-				newSeed
-			);
-			group.keysetId = fullId;
-			group.newProofs = newProofs;
-			counters.set(fullId, newProofs.length);
-			batchCount += batches;
+			await fetchAndCacheKeysets(group.mintUrl);
+			const fullId = resolveKeysetId(group.mintUrl, group.keysetId) || group.keysetId;
+
+			let counter = 0;
+			for (let start = 0; start < group.inputs.length; start += NUT29_MAX_BATCH_SIZE) {
+				const batch = group.inputs.slice(start, start + NUT29_MAX_BATCH_SIZE);
+				batchCount++;
+
+				const newProofs = await swapBatchForNewSeed(
+					group.mintUrl,
+					fullId,
+					batch,
+					newSeed,
+					counter
+				);
+				// The mint has burned this batch's OLD proofs at this point — the
+				// new mnemonic/seed/key must remain anchored no matter what happens
+				// next (including a local IndexedDB write failure below).
+				swappedAny = true;
+
+				counter += batch.length;
+
+				// Per-batch commit: the old proofs are already burned at the mint,
+				// so persist the new proofs + remove the old ones IMMEDIATELY (no
+				// waiting for later batches/groups → no fund-loss window).
+				if (newProofs.length > 0) {
+					await addProofs(newProofs, group.mintUrl, fullId);
+				}
+				await removeProofs(batch.map((p) => p.local_id));
+			}
+
+			counters.set(fullId, counter);
 		}
 	} catch (err) {
-		// Nothing was burned (all swaps must succeed before any commit) →
-		// restore the pre-rekey wallet state.
-		if (prevMnemonic) setEncryptedMnemonic(prevMnemonic);
-		else clearEncryptedMnemonic();
-		if (prevSeed) setActiveSeed(prevSeed);
-		else clearActiveSeed();
-		clearRekeyJournal();
-		throw err;
-	}
-
-	// Phase B — commit (only reached after ALL swaps succeeded).
-	// The mnemonic/seed are already durable above → no fund-loss window.
-	for (const group of groups.values()) {
-		if (group.newProofs.length > 0) {
-			await addProofs(group.newProofs, group.mintUrl, group.keysetId);
+		if (!swappedAny) {
+			// Zero-success: NOTHING was burned at the mint → safe to restore the
+			// pre-rekey wallet state (mnemonic, key, seed, journal) atomically.
+			if (prevMnemonic) setEncryptedMnemonic(prevMnemonic);
+			else clearEncryptedMnemonic();
+			if (prevEncryptedKey) setEncryptedKey(prevEncryptedKey);
+			else clearEncryptedKey();
+			if (prevSeed) setActiveSeed(prevSeed);
+			else clearActiveSeed();
+			clearRekeyJournal();
+			throw err;
 		}
+		// Partial success: some batches were already swapped + committed. The NEW
+		// mnemonic/seed/key + journal are the recovery anchor for those proofs and
+		// MUST be kept. The UI surfaces this error as "re-key not complete —
+		// resume via restore".
+		throw new Error(
+			're-key not complete — some proofs were swapped; resume via restore (NUT-13) from the NEW seed'
+		);
 	}
 
-	// Clear the old proofs (they were burned by the swap at the mint).
-	await removeProofs(proofs.map((p) => p.local_id));
-
+	// Phase B — finalize (only reached after ALL swaps succeeded).
 	// The OLD seed's counters are now meaningless (the derivation root changed):
-	// wipe them, then seed the NEW counters from the swap count.
+	// wipe them, then seed the NEW counters from the per-group swap counts.
 	clearAllCounters();
 	for (const [keysetId, value] of counters) {
 		setCounterK(keysetId, value);

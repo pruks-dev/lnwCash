@@ -53,6 +53,7 @@ import {
 	NUT29_MAX_BATCH_SIZE,
 	getRekeyJournal,
 	clearRekeyJournal,
+	resumeRekeyMnemonic,
 	REKEY_JOURNAL_KEY
 } from '../rekey';
 import {
@@ -63,9 +64,10 @@ import {
 	removeProofs
 } from '../proofsDb';
 import { setActiveSeed, clearActiveSeed, getActiveSeed, deriveSecret } from '../nut13';
-import { mnemonicToSeed } from '../keys';
+import { mnemonicToSeed, seedToPrivateKey } from '../keys';
 import { getCounterK, setCounterK, clearAllCounters, STORAGE_KEY } from '../counterK';
-import { clearAllWalletData, getEncryptedMnemonic } from '../storage';
+import { clearAllWalletData, getEncryptedMnemonic, getEncryptedKey } from '../storage';
+import { importSeed, exportSeed } from '../seed';
 import { swapProofs } from '../../cashu/client';
 import { decryptKey } from '../../crypto/encrypt';
 import type { TokenProof } from '../../types';
@@ -270,5 +272,162 @@ describe('Re-key (rekey.ts — atomic re-seed → swap)', () => {
 		const newSeed = getActiveSeed();
 		expect(newSeed).not.toBeNull();
 		expect(getRekeyJournal()).toBeNull();
+	});
+
+	// ─── TASK-259-FIX-A1: per-batch/per-group commit + conditional rollback ──
+
+	it('partial failure (2 mints): swap#1 success + swap#2 fail → NEW mnemonic retained + group 1 proofs safe + journal kept', async () => {
+		await addProofs([makeProof(0, MINT_A)], MINT_A, KEYSET_ID);
+		await addProofs([makeProof(1, MINT_B)], MINT_B, KEYSET_ID);
+		setActiveSeed(mnemonicToSeed(OLD_MNEMONIC));
+
+		const callOrder: string[] = [];
+		mockSwapProofs.mockImplementation(async (url, inputs, outputs) => {
+			callOrder.push(url as string);
+			if (callOrder.length === 2) throw new Error('second mint unreachable');
+			return {
+				signatures: (inputs as Array<{ id: string; amount: number }>).map((inp, i) => ({
+					id: (outputs?.[i] as { id?: string } | undefined)?.id ?? inp.id,
+					amount: inp.amount,
+					C_: '02' + 'cc'.repeat(32)
+				}))
+			};
+		});
+
+		await expect(rekeyWallet(NEW_MNEMONIC, TEST_PIN)).rejects.toThrow(/resume via restore/i);
+
+		expect(callOrder.length).toBe(2);
+		const [firstMint, secondMint] = callOrder;
+
+		// NEW mnemonic retained (the recovery anchor — NOT discarded).
+		const encrypted = getEncryptedMnemonic();
+		expect(encrypted).not.toBeNull();
+		expect(await decryptKey(encrypted!, TEST_PIN)).toBe(NEW_MNEMONIC);
+
+		// Journal NOT cleared (marks the re-key as pending → resume).
+		expect(getRekeyJournal()).not.toBeNull();
+
+		// New seed still active (NOT rolled back to the old seed).
+		expect(getActiveSeed()).not.toBeNull();
+
+		const stored = await getAllProofs();
+		// Group 1 (first swapped mint): old proof burned → new deterministic proof.
+		const firstMintProofs = stored.filter((p) => p.mint_url === firstMint);
+		expect(firstMintProofs.length).toBe(1);
+		expect(firstMintProofs[0].secret).not.toContain('secret-');
+
+		// Group 2 (failed mint): old proof NOT burned (swap never succeeded).
+		const secondMintProofs = stored.filter((p) => p.mint_url === secondMint);
+		expect(secondMintProofs.length).toBe(1);
+		expect(secondMintProofs[0].secret).toBe(`secret-${secondMint}-1`);
+	});
+
+	it('partial failure (multi-batch > 1000): batch#1 success + batch#2 fail → no fund-loss', { timeout: 30000 }, async () => {
+		const proofs = Array.from({ length: 1001 }, (_, i) => makeProof(i, MINT_A));
+		await addProofs(proofs, MINT_A, KEYSET_ID);
+
+		let call = 0;
+		mockSwapProofs.mockImplementation(async (url, inputs, outputs) => {
+			call++;
+			if (call === 2) throw new Error('second batch unreachable');
+			return {
+				signatures: (inputs as Array<{ id: string; amount: number }>).map((inp, i) => ({
+					id: (outputs?.[i] as { id?: string } | undefined)?.id ?? inp.id,
+					amount: inp.amount,
+					C_: '02' + 'cc'.repeat(32)
+				}))
+			};
+		});
+
+		await expect(rekeyWallet(NEW_MNEMONIC, TEST_PIN)).rejects.toThrow(/resume via restore/i);
+
+		// Both batches were issued (1000 + 1).
+		expect(call).toBe(2);
+
+		// The NEW mnemonic + journal are the recovery anchor for batch #1's 1000
+		// proofs — they must NOT be discarded (no fund-loss).
+		const encrypted = getEncryptedMnemonic();
+		expect(encrypted).not.toBeNull();
+		expect(await decryptKey(encrypted!, TEST_PIN)).toBe(NEW_MNEMONIC);
+		expect(getRekeyJournal()).not.toBeNull();
+
+		// Batch #1's 1000 proofs were committed (burned old → new deterministic).
+		const stored = await getAllProofs();
+		const newProofs = stored.filter((p) => !p.secret.startsWith('secret-'));
+		const oldProofs = stored.filter((p) => p.secret.startsWith('secret-'));
+		expect(newProofs.length).toBe(1000);
+		// Batch #2's single old proof was never burned → still present (not lost).
+		expect(oldProofs.length).toBe(1);
+	});
+
+	it('zero-success rollback restores the OLD mnemonic + private key (A2 rollback)', async () => {
+		// A wallet already anchored on the OLD seed (encrypted key + mnemonic).
+		await importSeed(OLD_MNEMONIC, TEST_PIN, 'Test Wallet');
+		expect(getEncryptedKey()).not.toBeNull();
+
+		await addProofs([makeProof(0, MINT_A)], MINT_A, KEYSET_ID);
+		mockSwapProofs.mockRejectedValue(new Error('mint unreachable'));
+
+		await expect(rekeyWallet(NEW_MNEMONIC, TEST_PIN)).rejects.toThrow(/mint unreachable/);
+
+		// Mnemonic rolled back to OLD mnemonic (not the NEW one).
+		const restoredMnemonic = await decryptKey(getEncryptedMnemonic()!, TEST_PIN);
+		expect(restoredMnemonic).toBe(OLD_MNEMONIC);
+
+		// Private key rolled back to the OLD key (not rotated).
+		const restoredKey = await decryptKey(getEncryptedKey()!, TEST_PIN);
+		expect(restoredKey).toBe(seedToPrivateKey(OLD_MNEMONIC));
+
+		// Journal cleared (nothing pending — clean zero-success rollback).
+		expect(getRekeyJournal()).toBeNull();
+	});
+
+	// ─── TASK-259-FIX-A2: private key rotation invariant ───────
+
+	it('private key invariant: seedToPrivateKey(exportSeed(pin)) === stored private key after re-key', async () => {
+		await importSeed(OLD_MNEMONIC, TEST_PIN, 'Test Wallet');
+		await addProofs([makeProof(0, MINT_A), makeProof(1, MINT_A)], MINT_A, KEYSET_ID);
+
+		await rekeyWallet(NEW_MNEMONIC, TEST_PIN);
+
+		// exportSeed returns the NEW mnemonic (persisted during re-key).
+		const exported = await exportSeed(TEST_PIN);
+		expect(exported).toBe(NEW_MNEMONIC);
+
+		// The invariant: deriving the private key from the exported seed equals
+		// the stored (rotated) private key.
+		const derivedPk = seedToPrivateKey(exported);
+		const storedPk = await decryptKey(getEncryptedKey()!, TEST_PIN);
+		expect(derivedPk).toBe(storedPk);
+
+		// And it genuinely rotated away from the OLD key.
+		expect(derivedPk).not.toBe(seedToPrivateKey(OLD_MNEMONIC));
+	});
+
+	// ─── TASK-259-FIX-A1 (T262-A3): resume path ────────────────
+
+	it('resume path: the journal decrypts back to the NEW mnemonic after partial failure', async () => {
+		await addProofs([makeProof(0, MINT_A)], MINT_A, KEYSET_ID);
+		await addProofs([makeProof(1, MINT_B)], MINT_B, KEYSET_ID);
+
+		let call = 0;
+		mockSwapProofs.mockImplementation(async (url, inputs, outputs) => {
+			call++;
+			if (call === 2) throw new Error('second mint unreachable');
+			return {
+				signatures: (inputs as Array<{ id: string; amount: number }>).map((inp, i) => ({
+					id: (outputs?.[i] as { id?: string } | undefined)?.id ?? inp.id,
+					amount: inp.amount,
+					C_: '02' + 'cc'.repeat(32)
+				}))
+			};
+		});
+
+		await expect(rekeyWallet(NEW_MNEMONIC, TEST_PIN)).rejects.toThrow(/resume via restore/i);
+
+		// The pending journal is the recovery anchor: it must still be readable and
+		// decrypt back to the NEW mnemonic so the UI can re-offer resume/restore.
+		expect(getRekeyJournal()).not.toBeNull();
+		await expect(resumeRekeyMnemonic(TEST_PIN)).resolves.toBe(NEW_MNEMONIC);
 	});
 });

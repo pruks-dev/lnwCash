@@ -39,7 +39,7 @@
 	import { restoreWallet } from '$lib/wallet/restore';
 	import { setActiveSeed, seedFromMnemonic } from '$lib/wallet/nut13';
 	import { fetchAndCacheKeysets } from '$lib/cashu/keyset';
-	import { rekeyWallet } from '$lib/wallet/rekey';
+	import { rekeyWallet, getRekeyJournal } from '$lib/wallet/rekey';
 	import SeedGrid from '$lib/components/SeedGrid.svelte';
 	import SeedVerifyQuiz from '$lib/components/SeedVerifyQuiz.svelte';
 
@@ -142,6 +142,9 @@
 	let rekeyAckChecked: boolean = $state(false);
 	let rekeySkipWarning: boolean = $state(false);
 	let rekeyError: string = $state('');
+	// TASK-259 (resume, T262-A3): a pending (interrupted) re-key is detected at
+	// startup so the wizard can re-offer resume instead of a fresh re-key.
+	let pendingRekeyDetected: boolean = $state(false);
 
 	// PIN state (TASK-209 preserved)
 	let pin: string = $state('');
@@ -259,6 +262,15 @@
 			step = resumed.step;
 			if (resumed.seed) seed = resumed.seed;
 		}
+	});
+
+	// TASK-259 (resume, T262-A3): detect a pending (interrupted) re-key at
+	// startup so the wizard can re-offer resume (via NUT-13 restore from the
+	// NEW seed held in the journal). The journal is only written by rekeyWallet
+	// and cleared on a successful (or zero-success) re-key, so its presence here
+	// means a re-key was interrupted mid-swap.
+	$effect(() => {
+		pendingRekeyDetected = getRekeyJournal() !== null;
 	});
 
 	// TASK-209: load persisted lockout on mount.
@@ -792,6 +804,16 @@
 		step = 'done';
 	}
 
+	// TASK-259 (resume, T262-A3): route into the recover flow so the user can
+	// resume an interrupted re-key via NUT-13 restore from the NEW seed (the
+	// journal's recovery anchor). This is the SAFE resume — it never re-runs the
+	// swap over already-committed proofs.
+	function resumeRekeyViaRestore() {
+		if (typeof window !== 'undefined') {
+			window.location.hash = '/setup?recover=1';
+		}
+	}
+
 	// ─── Language toggle (TASK-207 / D1.1) ───────────────────
 	function switchLanguage(lang: string) {
 		currentLang = lang;
@@ -863,6 +885,24 @@
 				<!-- ─── Unlock PIN (existing wallet, TASK-209 preserved) ─── -->
 				<Heading level="h2" align="center">{stepTitle}</Heading>
 				<div class="form">
+					{#if pendingRekeyDetected}
+						<!-- TASK-259 (resume): an interrupted re-key is pending — offer
+							 resume via restore (NUT-13) from the NEW seed. -->
+						<div class="rekey-warning-banner" role="alert">
+							<Body size="sm" weight="medium">
+								{$_('screen.setup.rekey_resume_title')}
+							</Body>
+							<Body size="sm" color="secondary">
+								{$_('screen.setup.rekey_resume_body')}
+							</Body>
+							<div class="rekey-actions">
+								<Button variant="primary" onclick={resumeRekeyViaRestore} ariaLabel={$_('screen.setup.rekey_resume_action')}>
+									{#snippet children()}{$_('screen.setup.rekey_resume_action')}{/snippet}
+								</Button>
+							</div>
+						</div>
+					{/if}
+
 					<Body size="sm" color="secondary" align="center">
 						{$_('screen.register.unlock_prompt')}
 					</Body>
