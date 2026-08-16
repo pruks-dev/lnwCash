@@ -134,8 +134,9 @@ export async function unlockWallet(pin: string): Promise<WalletState> {
 	// Decrypt the stored BIP39 mnemonic (if present) and set the active NUT-13
 	// seed so the mint path can pull it via getActiveSeed() for deterministic
 	// proof secrets. Graceful: legacy 24-word wallets store no mnemonic, and a
-	// corrupt/undecryptable mnemonic must not block unlock — mint.ts falls back
-	// to random secrets when no active seed is set.
+	// corrupt/undecryptable mnemonic must not block unlock — unlock proceeds
+	// without an active seed (TASK-250: minting now requires a seed instead of
+	// falling back to random secrets).
 	const encryptedMnemonic = getEncryptedMnemonic();
 	if (encryptedMnemonic) {
 		try {

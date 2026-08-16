@@ -71,6 +71,27 @@ export interface RestoreOptions {
 // ─── Core: restore one batch ─────────────────────────────────
 
 /**
+ * Normalize a blinded-message hex string to a canonical form for exact-string
+ * matching: lowercase, no `0x` prefix, no leading-zero padding beyond the
+ * 33-byte compressed-point encoding (66 hex chars).
+ *
+ * F-V30-003: a mint may echo B_ back in a different format (uppercase, an `0x`
+ * prefix, or extra leading zeros). Comparing raw strings would miss the match
+ * and fall back to index alignment — the very bug F-V29-003 fixed. Normalizing
+ * both the map key and the lookup key keeps B_-based alignment robust against
+ * format drift, without touching the counter/highest+1 logic.
+ */
+function normalizeB(B_: string): string {
+	let b = B_.replace(/^0x/i, '');
+	b = b.toLowerCase();
+	// Strip leading-zero padding beyond the canonical 66 hex chars. The
+	// compressed point's own 02/03 prefix byte sits inside the final 66 chars,
+	// so this only ever removes extra padding, never the point prefix.
+	while (b.length > 66 && b[0] === '0') b = b.slice(1);
+	return b;
+}
+
+/**
  * Regenerate `batchSize` blinded outputs starting at `startCounter`, POST them
  * to the mint's restore endpoint, and unblind any returned signatures.
  *
@@ -110,7 +131,7 @@ export async function restoreBatch(
 	// actually signed). F-V29-003: mapping by index assumed a 1:1 echo, which
 	// unblinds with the wrong factor and produces garbage proofs.
 	const byB = new Map<string, { entry: RestoreBatchOutput; offset: number }>();
-	prepared.forEach((entry, offset) => byB.set(entry.B_, { entry, offset }));
+	prepared.forEach((entry, offset) => byB.set(normalizeB(entry.B_), { entry, offset }));
 
 	const response = await restoreOutputs(mintUrl, requestOutputs);
 
@@ -121,7 +142,7 @@ export async function restoreBatch(
 		// fall back to request order when `outputs` is absent (compat mints that
 		// return signatures aligned 1:1 with the request).
 		const echoedB = response.outputs?.[i]?.B_;
-		const matched = echoedB !== undefined ? byB.get(echoedB) : undefined;
+		const matched = echoedB !== undefined ? byB.get(normalizeB(echoedB)) : undefined;
 		const output = matched ? matched.entry : prepared[i];
 		const offset = matched ? matched.offset : i;
 
