@@ -214,6 +214,17 @@
 		filter: brightness(0.9);
 	}
 
+	.stepper-btn-next:active:not(:disabled) {
+		background: var(--color-primary-dark);
+		border-color: var(--color-primary-dark);
+		color: var(--color-primary-contrast);
+	}
+
+	.stepper-btn:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
+	}
+
 	.stepper-btn-arrow {
 		font-size: 0.9rem;
 		line-height: 1;
