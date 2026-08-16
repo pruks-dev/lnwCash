@@ -211,7 +211,8 @@
 	}
 
 	.stepper-btn-next:hover:not(:disabled) {
-		filter: brightness(0.9);
+		background: var(--color-primary-hover);
+		border-color: var(--color-primary-hover);
 	}
 
 	.stepper-btn-next:active:not(:disabled) {
