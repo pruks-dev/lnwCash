@@ -211,14 +211,15 @@
 	}
 
 	.stepper-btn-next:hover:not(:disabled) {
-		background: var(--color-primary-hover);
-		border-color: var(--color-primary-hover);
+		background: var(--color-primary-light);
+		border-color: var(--color-primary-light);
+		color: var(--color-text);
 	}
 
 	.stepper-btn-next:active:not(:disabled) {
-		background: var(--color-primary-hover);
-		border-color: var(--color-primary-hover);
-		color: var(--color-primary-contrast);
+		background: var(--color-primary-light);
+		border-color: var(--color-primary-light);
+		color: var(--color-text);
 	}
 
 	.stepper-btn:focus-visible {

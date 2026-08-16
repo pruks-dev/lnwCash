@@ -1027,15 +1027,17 @@
 				</Body>
 
 			{#if step !== 'restoring' && step !== 'rekey'}
-				<ProgressStepper
-					steps={stepperSteps}
-					currentIndex={stepIndex}
-					canContinue={canContinue}
-					backLabel={$_('common.back')}
-					nextLabel={$_('common.next')}
-					onBack={stepIndex > 0 ? goBack : undefined}
-					onNext={step === 'seed' ? continueFromSeed : step === 'mints' ? continueFromMints : undefined}
-				/>
+				{#key step}
+					<ProgressStepper
+						steps={stepperSteps}
+						currentIndex={stepIndex}
+						canContinue={canContinue}
+						backLabel={$_('common.back')}
+						nextLabel={$_('common.next')}
+						onBack={stepIndex > 0 ? goBack : undefined}
+						onNext={step === 'seed' ? continueFromSeed : step === 'mints' ? continueFromMints : undefined}
+					/>
+				{/key}
 			{/if}
 
 				<Heading level="h2" align="center">{stepTitle}</Heading>
@@ -1583,8 +1585,8 @@
 		flex-direction: column;
 		gap: 2px;
 		padding: var(--space-sm) var(--space-md);
-		background: var(--color-warning-light, #fff3cd);
-		border: 1px solid var(--color-warning, #ff9800);
+		background: var(--color-secondary-light);
+		border: 1px solid var(--color-secondary);
 		border-radius: var(--radius-md);
 	}
 
@@ -1593,8 +1595,8 @@
 		flex-direction: column;
 		gap: var(--space-sm);
 		padding: var(--space-md);
-		background: var(--color-error-light);
-		border: 1px solid var(--color-error);
+		background: var(--color-accent-light);
+		border: 1px solid var(--color-accent);
 		border-radius: var(--radius-md);
 	}
 
