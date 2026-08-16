@@ -1529,14 +1529,20 @@
 
 	.seed-ack {
 		display: flex;
-		align-items: flex-start;
+		align-items: center;
 		gap: var(--space-sm);
 		cursor: pointer;
+		min-height: 44px;
+		padding: var(--space-xs) 0;
 	}
 
 	.seed-ack input {
-		margin-top: 3px;
+		width: 22px;
+		height: 22px;
+		min-width: 22px;
+		margin-top: 0;
 		accent-color: var(--color-primary);
+		cursor: pointer;
 	}
 
 	/* TASK-259: mint selection step (recover wizard) */

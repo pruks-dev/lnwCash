@@ -58,7 +58,7 @@ describe('localStorage service', () => {
 		it('should return defaults when no settings stored', () => {
 			const settings = getSettings();
 			expect(settings.language).toBe('en');
-			expect(settings.theme).toBe('dark');
+			expect(settings.theme).toBe('system');
 			expect(settings.default_mint).toBe('');
 		});
 

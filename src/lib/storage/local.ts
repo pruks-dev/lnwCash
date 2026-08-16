@@ -98,7 +98,7 @@ export function clearWalletMetadata(): boolean {
 
 const DEFAULT_SETTINGS: WalletSettings = {
 	language: 'en',
-	theme: 'dark',
+	theme: 'system',
 	default_mint: '',
 	// TASK-220: PIN keypad shuffle — default OFF per Commander.
 	pin_shuffle: false
