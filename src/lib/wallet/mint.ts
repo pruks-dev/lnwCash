@@ -11,7 +11,8 @@ import {
 	requestMintQuote,
 	mintTokens as postMint,
 	checkMintQuote,
-	pollMintQuoteUntil
+	pollMintQuoteUntil,
+	CashuError
 } from '../cashu/client';
 import { fetchAndCacheKeysets, getAllKeysets, getMintPubkey } from '../cashu/keyset';
 import { blindMessage, unblindSignature, blindingFactorToHex } from '../cashu/blind';
@@ -106,6 +107,26 @@ export function decomposeAmount(amount: number): number[] {
 	}
 
 	return result;
+}
+
+// ─── Benign 11003 handling (TASK-260) ───────────────────────
+//
+// "outputs already signed" (NUT code 11003) is an idempotent mint response: the
+// mint has already signed the exact outputs we submitted. It is NOT a fund-loss
+// or derivation error — it means another tab (or a lost-response retry) already
+// submitted the same B_. Recovery is to advance the counter past the collided
+// outputs and re-derive fresh secrets, not to surface an error loop to the user.
+//
+// This must NOT be a blanket catch: a real error (any other code, or a
+// non-Cashu error) must still fail the mint exactly as before.
+
+/** Max retries when the mint reports benign 11003 (1 initial + 3 retries). */
+const MAX_ALREADY_SIGNED_RETRIES = 3;
+
+/** True only for a CashuError whose code is 11003 (numeric or string). */
+function isAlreadySigned(err: unknown): boolean {
+	if (!(err instanceof CashuError)) return false;
+	return err.code === 11003 || err.code === '11003';
 }
 
 // ─── Phase 1: Request Mint ──────────────────────────────────
@@ -271,55 +292,73 @@ export async function completeMint(
 				}
 			}
 
-			const outputs = createOutputs(amounts, keysetId, resolvedSeed);
+			// TASK-260: derive → submit → advance, retrying once per benign
+			// "outputs already signed" (11003). Each retry advances the counter past
+			// the collided outputs and re-derives fresh secrets.
+			const submitMint = async (): Promise<TokenProof[]> => {
+				const outputs = createOutputs(amounts, keysetId, resolvedSeed);
 
-			// Step 4: Submit outputs to mint
-			const postBody = outputs.map(o => ({
-				amount: o.amount,
-				id: o.id,
-				B_: o.B_
-			}));
+				// Step 4: Submit outputs to mint
+				const postBody = outputs.map(o => ({
+					amount: o.amount,
+					id: o.id,
+					B_: o.B_
+				}));
 
-			const response = await postMint(mintUrl, quoteId, postBody);
+				const response = await postMint(mintUrl, quoteId, postBody);
 
-			// Fetch keysets once for all outputs
-			try {
-				await fetchAndCacheKeysets(mintUrl);
-			} catch {
-				// Continue — unblinding will fall back to multiplicative if keys unavailable
-			}
-
-			// Step 5: Unblind signatures → proofs
-			const mintedProofs: TokenProof[] = response.signatures.map((sig, i) => {
-				const output = outputs[i];
-				// Get the denomination-specific pubkey for this proof's amount
-				const pubkey = getMintPubkey(mintUrl, keysetId, sig.amount);
-				const C = unblindSignature(sig.C_, output.blindingFactor, pubkey);
-				const rHex = blindingFactorToHex(output.blindingFactor);
-				const proof: TokenProof = {
-					id: sig.id,
-					amount: sig.amount,
-					secret: output.secret,
-					C
-				};
-				if (sig.dleq) {
-					proof.dleq = { e: sig.dleq.e, s: sig.dleq.s, r: rHex };
+				// Fetch keysets once for all outputs
+				try {
+					await fetchAndCacheKeysets(mintUrl);
+				} catch {
+					// Continue — unblinding will fall back to multiplicative if keys unavailable
 				}
-				return proof;
-			});
 
-			// Step 6: Store proofs, then advance counter_k in `finally`.
-			// TASK-240 (F-V27-001): the mint has already signed these outputs (postMint
-			// returned), so the NUT-13 counter_k MUST advance even if local persistence
-			// (addProofs) throws — otherwise the next mint re-derives the same B_ and the
-			// mint rejects it with "outputs already signed" (11003).
-			try {
-				await addProofs(mintedProofs, mintUrl, keysetId);
-			} finally {
-				incrementCounterK(keysetId, amounts.length);
+				// Step 5: Unblind signatures → proofs
+				const mintedProofs: TokenProof[] = response.signatures.map((sig, i) => {
+					const output = outputs[i];
+					// Get the denomination-specific pubkey for this proof's amount
+					const pubkey = getMintPubkey(mintUrl, keysetId, sig.amount);
+					const C = unblindSignature(sig.C_, output.blindingFactor, pubkey);
+					const rHex = blindingFactorToHex(output.blindingFactor);
+					const proof: TokenProof = {
+						id: sig.id,
+						amount: sig.amount,
+						secret: output.secret,
+						C
+					};
+					if (sig.dleq) {
+						proof.dleq = { e: sig.dleq.e, s: sig.dleq.s, r: rHex };
+					}
+					return proof;
+				});
+
+				// Step 6: Store proofs, then advance counter_k in `finally`.
+				// TASK-240 (F-V27-001): the mint has already signed these outputs (postMint
+				// returned), so the NUT-13 counter_k MUST advance even if local persistence
+				// (addProofs) throws — otherwise the next mint re-derives the same B_ and the
+				// mint rejects it with "outputs already signed" (11003).
+				try {
+					await addProofs(mintedProofs, mintUrl, keysetId);
+				} finally {
+					incrementCounterK(keysetId, amounts.length);
+				}
+
+				return mintedProofs;
+			};
+
+			for (let attempt = 0; ; attempt++) {
+				try {
+					return await submitMint();
+				} catch (err) {
+					if (isAlreadySigned(err) && attempt < MAX_ALREADY_SIGNED_RETRIES) {
+						// Skip the collided outputs: advance the counter before re-deriving.
+						incrementCounterK(keysetId, amounts.length);
+						continue;
+					}
+					throw err;
+				}
 			}
-
-			return mintedProofs;
 		});
 
 		// Step 7: Record transaction (F-063) — non-blocking, best-effort

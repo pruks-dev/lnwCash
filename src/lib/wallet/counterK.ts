@@ -86,7 +86,7 @@ export function clearAllCounters(): void {
 	}
 }
 
-// ─── Per-keyset derivation lock (TASK-250 RC-3) ──────────────
+// ─── Per-keyset derivation lock (TASK-250 RC-3, TASK-260) ────
 //
 // NUT-13 requires the read → derive → increment window to be atomic per keyset.
 // A mint/receive/melt reads `counter_k`, derives secrets from it, performs
@@ -95,20 +95,25 @@ export function clearAllCounters(): void {
 // counter and derive the same secret/B_ → the mint rejects the second with
 // "outputs already signed" (11003).
 //
-// `withKeysetLock` serializes the whole critical section per keyset using a
-// promise-chain mutex: each caller waits for the previous holder to release
-// before running its function.
+// `withKeysetLock` serializes the whole critical section per keyset in two
+// layers:
+//   1. Cross-tab (TASK-260): the Web Locks API (`navigator.locks.request`)
+//      serializes a named lock ACROSS tabs on the same origin. Two tabs share
+//      the same localStorage counter map but each loads its own copy of this
+//      module, so the in-memory mutex below alone cannot prevent a double-mint
+//      when both tabs read the same counter_k.
+//   2. In-tab: a promise-chain mutex (`keysetLocks`) serializes callers within
+//      this JS context (FIFO). It is also the sole fallback when the Web Locks
+//      API is unavailable (older browsers / non-secure contexts).
 
 const keysetLocks = new Map<string, Promise<void>>();
 
 /**
- * Run `fn` exclusively per keyset. Callers that target the same `keysetId` are
- * serialized (FIFO); callers on different keysets run concurrently.
- *
- * @param keysetId The NUT-13 keyset whose counter is being read/advanced.
- * @param fn The critical section (counter guard + derive + submit + increment).
+ * Run `fn` exclusively per keyset within THIS tab (in-memory mutex). Callers
+ * targeting the same `keysetId` are serialized (FIFO); different keysets run
+ * concurrently.
  */
-export async function withKeysetLock<T>(
+async function withInMemoryKeysetLock<T>(
 	keysetId: string,
 	fn: () => Promise<T> | T
 ): Promise<T> {
@@ -130,6 +135,53 @@ export async function withKeysetLock<T>(
 	} finally {
 		release();
 	}
+}
+
+/** Minimal structural type for the Web Locks API surface we use. */
+interface CrossTabLockManager {
+	request<T>(name: string, callback: () => Promise<T> | T): Promise<T>;
+}
+
+/**
+ * Return the Web Locks API manager when available, otherwise `undefined`.
+ * Web Locks is only present in secure contexts (HTTPS / localhost) and modern
+ * browsers; jsdom (unit tests) and non-secure contexts lack it.
+ */
+function getCrossTabLocks(): CrossTabLockManager | undefined {
+	const nav = globalThis.navigator as unknown as
+		| { locks?: CrossTabLockManager }
+		| undefined;
+	const locks = nav?.locks;
+	return locks && typeof locks.request === 'function' ? locks : undefined;
+}
+
+/**
+ * Run `fn` exclusively per keyset — serialized across tabs via the Web Locks
+ * API (when available) and within this tab via the in-memory mutex.
+ *
+ * @param keysetId The NUT-13 keyset whose counter is being read/advanced.
+ * @param fn The critical section (counter guard + derive + submit + increment).
+ */
+export async function withKeysetLock<T>(
+	keysetId: string,
+	fn: () => Promise<T> | T
+): Promise<T> {
+	const locks = getCrossTabLocks();
+
+	// Fallback (TASK-260): no Web Locks API → in-memory lock only. The caller
+	// (mint.ts) still has a benign-11003 retry as a second line of defense, so
+	// this degrades gracefully instead of crashing.
+	if (!locks) {
+		return withInMemoryKeysetLock(keysetId, fn);
+	}
+
+	// Cross-tab lock name scoped to this app + keyset. The keyset ID is a public
+	// identifier from the mint, so it carries no secret material.
+	const lockName = `lnwcash:counter:${keysetId}`;
+
+	// Acquire the cross-tab lock, then the in-tab mutex inside it (preserves FIFO
+	// fairness within this tab). The Web Lock auto-releases if the tab closes.
+	return locks.request(lockName, () => withInMemoryKeysetLock(keysetId, fn));
 }
 
 export { STORAGE_KEY };
