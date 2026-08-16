@@ -1585,8 +1585,9 @@
 		flex-direction: column;
 		gap: 2px;
 		padding: var(--space-sm) var(--space-md);
-		background: var(--color-secondary-light);
-		border: 1px solid var(--color-secondary);
+		background: rgba(0, 188, 212, 0.12);                                  /* fallback cyan #00bcd4 */
+		background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-md);
 	}
 
@@ -1595,9 +1596,20 @@
 		flex-direction: column;
 		gap: var(--space-sm);
 		padding: var(--space-md);
-		background: var(--color-accent-light);
-		border: 1px solid var(--color-accent);
+		background: rgba(211, 47, 47, 0.12);                                  /* fallback red #d32f2f */
+		background: color-mix(in srgb, var(--color-error) 12%, transparent);
+		border: 1px solid var(--color-error);
 		border-radius: var(--radius-md);
+	}
+
+	/* TASK-UI-WARNING-OPACITY: skip-warning body text → red var(--color-error).
+	   Body child component renders <p data-color="secondary"> with its own scoped rule
+	   `[data-color='secondary'] { color: var(--color-text-secondary) }` (0,2,0).
+	   Setup's scoped class does NOT apply to the child <p>, so the descendant must be
+	   :global() — same pattern as Receive/Send preview-section body targeting. This rule
+	   (0,3,0) outranks Body's (0,2,0). */
+	.rekey-skip-warning :global([data-color='secondary']) {
+		color: var(--color-error);
 	}
 
 	.rekey-actions {
