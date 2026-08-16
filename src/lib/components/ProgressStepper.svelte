@@ -130,8 +130,8 @@
 	}
 
 	.stepper-step.active .stepper-dot {
-		background: var(--color-primary-dark, #00838f);
-		border-color: var(--color-primary-dark, #00838f);
+		background: var(--color-primary, #00bcd4);
+		border-color: var(--color-primary, #00bcd4);
 		color: var(--color-primary-contrast, #ffffff);
 	}
 
@@ -141,8 +141,8 @@
 	}
 
 	.stepper-step.done .stepper-dot {
-		background: var(--color-success, #14b8a6);
-		border-color: var(--color-success, #14b8a6);
+		background: var(--color-primary-light, #4dd0e1);
+		border-color: var(--color-primary-light, #4dd0e1);
 		color: #fff;
 	}
 
@@ -216,8 +216,8 @@
 	}
 
 	.stepper-btn-next:active:not(:disabled) {
-		background: var(--color-primary-dark);
-		border-color: var(--color-primary-dark);
+		background: var(--color-primary-hover);
+		border-color: var(--color-primary-hover);
 		color: var(--color-primary-contrast);
 	}
 

@@ -1492,7 +1492,7 @@
 
 	.lang-btn.active {
 		color: var(--color-primary-contrast, #ffffff);
-		background: var(--color-primary-dark, #00838f);
+		background: var(--color-primary, #00bcd4);
 	}
 
 	.choice-list {
