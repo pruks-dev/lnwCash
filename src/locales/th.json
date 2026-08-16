@@ -181,6 +181,7 @@
 	"screen.setup.done_start": "เริ่มใช้งานกระเป๋า",
 	"screen.setup.step_label_welcome": "ยินดีต้อนรับ",
 	"screen.setup.step_label_seed": "วลีกู้คืน",
+	"screen.setup.step_label_mints": "เลือก Mint",
 	"screen.setup.step_label_verify": "ยืนยัน",
 	"screen.setup.step_label_pin": "ตั้ง PIN",
 	"screen.setup.step_label_done": "เสร็จสิ้น",
