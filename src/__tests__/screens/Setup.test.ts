@@ -10,7 +10,7 @@ import Setup from '../../screens/Setup.svelte';
 import { getWalletStatus, unlockWallet, storeSessionPin } from '$lib/wallet/state';
 import { importSeed, seedToPrivateKey } from '$lib/wallet/seed';
 import { generateMnemonic } from '$lib/wallet/keys';
-import { setActiveMintUrl, getAllMintConfigs } from '$lib/wallet/store';
+import { setActiveMintUrl } from '$lib/wallet/store';
 import { restoreWallet } from '$lib/wallet/restore';
 import { fetchAndCacheKeysets } from '$lib/cashu/keyset';
 import { locale } from 'svelte-i18n';
@@ -55,7 +55,8 @@ vi.mock('$lib/wallet/state', () => ({
 		walletName: 'LNWCASH Wallet',
 		createdAt: Date.now()
 	})),
-	storeSessionPin: vi.fn()
+	storeSessionPin: vi.fn(),
+	getSessionPin: vi.fn(() => null)
 }));
 
 vi.mock('$lib/wallet/seed', () => ({
@@ -112,6 +113,10 @@ vi.mock('$lib/wallet/nut13', () => ({
 	getActiveSeed: vi.fn(() => null)
 }));
 
+vi.mock('$lib/wallet/rekey', () => ({
+	rekeyWallet: vi.fn(async () => ({ success: true, swappedCount: 0, receivedCount: 0, batches: 0 }))
+}));
+
 vi.mock('$lib/cashu/keyset', () => ({
 	fetchAndCacheKeysets: vi.fn(async () => [])
 }));
@@ -155,6 +160,13 @@ async function enterPinTwice(container: HTMLElement) {
 	const digits = digitButtons(container);
 	for (let i = 0; i < 4; i++) await fireEvent.click(digits[i]);
 	for (let i = 0; i < 4; i++) await fireEvent.click(digits[i]);
+}
+
+/** Add a mint via the mint-selection UI (recover wizard, TASK-259). */
+async function addMintViaUI(container: HTMLElement, url: string) {
+	const addInput = container.querySelector('.add-mint-row input') as HTMLInputElement;
+	await fireEvent.input(addInput, { target: { value: url } });
+	await fireEvent.click(screen.getByText('screen.setup.mints_add'));
 }
 
 describe('Setup (TASK-207 wizard + TASK-209 PIN preserved)', () => {
@@ -254,12 +266,15 @@ describe('Setup (TASK-207 wizard + TASK-209 PIN preserved)', () => {
 	});
 
 	// ─── Recover flow ───────────────────────────────────────
-	it('recover → enter seed → PIN step (skips verify)', async () => {
+	it('recover → enter seed → mint selection → PIN step (skips verify)', async () => {
 		const { container } = render(Setup, {});
 		await fireEvent.click(screen.getByText('screen.setup.welcome_recover'));
 		expect(screen.getByText('screen.setup.seed_recover_prompt')).toBeTruthy();
 		const input = container.querySelector('input') as HTMLInputElement;
 		await fireEvent.input(input, { target: { value: MNEMONIC } });
+		await fireEvent.click(nextButton(container)!);
+		// TASK-259: mint selection step (default mint pre-selected) before restore
+		expect(screen.getByText('screen.setup.mints_title')).toBeTruthy();
 		await fireEvent.click(nextButton(container)!);
 		expect(screen.getByText('screen.register.pin_placeholder')).toBeTruthy();
 	});
@@ -329,15 +344,11 @@ describe('Setup (TASK-207 wizard + TASK-209 PIN preserved)', () => {
 		expect(container.querySelectorAll('.seed-cell').length).toBe(12);
 	});
 
-	// ─── TASK-217: multi-mint NUT-9 restore ─────────────────
-	it('recover restores funds across ALL configured mints (multi-mint)', async () => {
+	// ─── TASK-217/TASK-259: multi-mint NUT-9 restore ─────────
+	it('recover restores funds across the user-selected mints (multi-mint)', async () => {
 		// Reset seedToPrivateKey (a prior test overrides it to throw for the
 		// "invalid seed" case — clearAllMocks does not reset implementations).
 		vi.mocked(seedToPrivateKey).mockReturnValue('private-key');
-		vi.mocked(getAllMintConfigs).mockReturnValue([
-			{ url: 'https://mint-a.example', name: 'Mint A' },
-			{ url: 'https://mint-b.example', name: 'Mint B' }
-		] as any);
 		vi.mocked(fetchAndCacheKeysets).mockResolvedValue([
 			{ id: 'ks-active-1', unit: 'sat', active: true }
 		] as any);
@@ -351,6 +362,18 @@ describe('Setup (TASK-207 wizard + TASK-209 PIN preserved)', () => {
 		await fireEvent.click(screen.getByText('screen.setup.welcome_recover'));
 		const input = container.querySelector('input') as HTMLInputElement;
 		await fireEvent.input(input, { target: { value: MNEMONIC } });
+		await fireEvent.click(nextButton(container)!);
+
+		// TASK-259: mint selection — add mint A + B, uncheck the default mint.
+		await addMintViaUI(container, 'https://mint-a.example');
+		await addMintViaUI(container, 'https://mint-b.example');
+		const defaultCheckbox = Array.from(
+			container.querySelectorAll('.mint-select-row input') as NodeListOf<HTMLInputElement>
+		).find((cb) => (cb.closest('.mint-select-row')?.textContent ?? '').includes('mint.lnw.cash'));
+		expect(defaultCheckbox, 'default mint checkbox').toBeTruthy();
+		defaultCheckbox!.checked = false;
+		await fireEvent.change(defaultCheckbox!);
+
 		await fireEvent.click(nextButton(container)!);
 		await enterPinTwice(container);
 

@@ -43,9 +43,6 @@
 	import { changePin } from '$lib/wallet/state';
 	import { InvalidPinError, WalletNotInitializedError } from '$lib/wallet/errors';
 
-	// TASK-245 (F-V26-003): Re-seed → swap migration (user-confirmed).
-	import { detectLegacyProofs, migrateWallet } from '$lib/wallet/migration';
-
 	interface Props {
 		onBack?: () => void;
 	}
@@ -70,27 +67,6 @@
 	const PIN_LENGTH = 4;
 	let changePinStep: 1 | 2 | 3 = $state(1);
 	let changePinShakeKey: number = $state(0);
-
-	// TASK-245: Migrate wallet flow (confirm → PIN → progress → success/error).
-	type MigratePhase = 'confirm' | 'pin' | 'progress' | 'success' | 'error';
-	let showMigrate: boolean = $state(false);
-	let migratePhase: MigratePhase = $state('confirm');
-	let migrateLegacyCount: number = $state(0);
-	let migratePin: string = $state('');
-	let migrateError: string = $state('');
-	let migrateResult: { swapped: number } | null = $state(null);
-	let migrateShakeKey: number = $state(0);
-
-	// TASK-245: modal title per phase.
-	const migrateTitle = $derived(
-		migratePhase === 'confirm'
-			? $_('settings.migrate.confirm_title')
-			: migratePhase === 'success'
-				? $_('settings.migrate.success')
-				: migratePhase === 'error'
-					? $_('settings.migrate.error')
-					: $_('settings.migrate.title')
-	);
 
 	// TASK-220: step title + filled-dot count for the current numpad step.
 	const changePinStepTitle = $derived(
@@ -298,74 +274,6 @@
 		}
 	}
 
-	// TASK-245: Migrate wallet flow — user-confirmed (MANDATE-029), never auto.
-	async function openMigrate() {
-		migrateError = '';
-		migrateResult = null;
-		try {
-			const legacy = await detectLegacyProofs();
-			if (legacy.length === 0) {
-				showToast($_('settings.migrate.not_needed'), 'info');
-				return;
-			}
-			migrateLegacyCount = legacy.length;
-			migratePhase = 'confirm';
-			migratePin = '';
-			showMigrate = true;
-		} catch {
-			showToast($_('common.error'), 'error');
-		}
-	}
-
-	function closeMigrate() {
-		showMigrate = false;
-		migratePhase = 'confirm';
-		migratePin = '';
-		migrateError = '';
-		migrateResult = null;
-	}
-
-	function startMigratePin() {
-		migratePhase = 'pin';
-		migratePin = '';
-		migrateError = '';
-	}
-
-	async function runMigration() {
-		migrateError = '';
-		migratePhase = 'progress';
-		try {
-			const result = await migrateWallet(migratePin);
-			migrateResult = { swapped: result.swappedCount };
-			migratePhase = 'success';
-			showToast($_('settings.migrate.success'), 'success');
-		} catch (e) {
-			if (e instanceof InvalidPinError) {
-				migrateError = $_('settings.migrate.wrong_pin');
-				migratePhase = 'pin';
-				migratePin = '';
-				migrateShakeKey += 1;
-			} else {
-				migrateError = e instanceof Error ? e.message : $_('common.error');
-				migratePhase = 'error';
-			}
-		}
-	}
-
-	function handleMigratePinDigit(digit: string) {
-		migrateError = '';
-		if (migratePhase !== 'pin') return;
-		if (migratePin.length >= PIN_LENGTH) return;
-		migratePin += digit;
-		if (migratePin.length === PIN_LENGTH) void runMigration();
-	}
-
-	function handleMigratePinBackspace() {
-		migrateError = '';
-		if (migratePhase !== 'pin') return;
-		migratePin = migratePin.slice(0, -1);
-	}
-
 	function handleBack() {
 		onBack?.();
 	}
@@ -505,19 +413,6 @@
 						<Body size="sm" color="secondary">{$_('settings.pin_shuffle.description')}</Body>
 					</div>
 				</div>
-
-				<Divider />
-
-				<!-- TASK-245: Migrate wallet (re-seed → swap, user-confirmed) -->
-				<ListItem
-					title={$_('settings.migrate.title')}
-					onclick={openMigrate}
-				>
-					{#snippet trailing()}
-						<ArrowRight size={16} />
-					{/snippet}
-				</ListItem>
-				<Body size="sm" color="secondary">{$_('settings.migrate.description')}</Body>
 			</div>
 		</Card>
 
@@ -658,71 +553,6 @@
 			</button>
 		</div>
 	</Modal>
-
-	<!-- TASK-245: Migrate wallet modal (confirm → PIN → progress → success/error) -->
-	<Modal open={showMigrate} onclose={closeMigrate} title={migrateTitle}>
-		<div class="migrate-form">
-			{#if migratePhase === 'confirm'}
-				<Body size="sm" color="secondary">
-					{$_('settings.migrate.confirm_body', { values: { count: migrateLegacyCount } })}
-				</Body>
-				<div class="migrate-actions">
-					<Button variant="secondary" onclick={closeMigrate} ariaLabel={$_('common.cancel')}>
-						{#snippet children()}{$_('common.cancel')}{/snippet}
-					</Button>
-					<Button
-						variant="primary"
-						onclick={startMigratePin}
-						ariaLabel={$_('settings.migrate.confirm_button')}
-					>
-						{#snippet children()}{$_('settings.migrate.confirm_button')}{/snippet}
-					</Button>
-				</div>
-			{:else if migratePhase === 'pin'}
-				<Body size="sm" color="secondary">{$_('settings.migrate.pin_title')}</Body>
-				<div class="migrate-entry">
-					<PinDots
-						length={migratePin.length}
-						total={PIN_LENGTH}
-						error={!!migrateError}
-						shakeKey={migrateShakeKey}
-					/>
-					<Keypad
-						onDigit={handleMigratePinDigit}
-						onBackspace={handleMigratePinBackspace}
-						shuffle={pinShuffle}
-					/>
-				</div>
-				{#if migrateError}
-					<p class="migrate-error" role="alert">{migrateError}</p>
-				{/if}
-			{:else if migratePhase === 'progress'}
-				<div class="migrate-progress" role="status">
-					<span class="migrate-spinner" aria-hidden="true"></span>
-					<Body size="sm" color="secondary">{$_('settings.migrate.progress')}</Body>
-				</div>
-			{:else if migratePhase === 'success'}
-				<Body size="sm" color="secondary">
-					{$_('settings.migrate.success_detail', { values: { swapped: migrateResult?.swapped ?? 0 } })}
-				</Body>
-				<div class="migrate-actions">
-					<Button variant="primary" onclick={closeMigrate} ariaLabel={$_('common.close')}>
-						{#snippet children()}{$_('common.close')}{/snippet}
-					</Button>
-				</div>
-			{:else}
-				<p class="migrate-error" role="alert">{migrateError}</p>
-				<div class="migrate-actions">
-					<Button variant="secondary" onclick={closeMigrate} ariaLabel={$_('common.close')}>
-						{#snippet children()}{$_('common.close')}{/snippet}
-					</Button>
-					<Button variant="primary" onclick={startMigratePin} ariaLabel={$_('common.retry')}>
-						{#snippet children()}{$_('common.retry')}{/snippet}
-					</Button>
-				</div>
-			{/if}
-		</div>
-	</Modal>
 </div>
 
 <style>
@@ -810,7 +640,7 @@
 
 	.option-btn.active {
 		color: var(--color-primary-contrast);
-		background: var(--color-primary-dark);
+		background: var(--color-primary);
 	}
 
 	.option-btn:hover:not(.active) {
@@ -974,56 +804,6 @@
 	.forgot-pin-link:hover,
 	.forgot-pin-link:focus-visible {
 		color: var(--color-primary-dark);
-	}
-
-	/* TASK-245: Migrate wallet modal */
-	.migrate-form {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-		min-width: 280px;
-	}
-
-	.migrate-actions {
-		display: flex;
-		gap: var(--space-sm);
-		justify-content: flex-end;
-		margin-top: var(--space-xs);
-	}
-
-	.migrate-entry {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-xs);
-	}
-
-	.migrate-error {
-		margin: 0;
-		font-size: var(--font-size-sm);
-		color: var(--color-error);
-	}
-
-	.migrate-progress {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		gap: var(--space-sm);
-		padding: var(--space-md) 0;
-	}
-
-	.migrate-spinner {
-		width: 16px;
-		height: 16px;
-		border: 2px solid var(--color-border);
-		border-top-color: var(--color-primary);
-		border-radius: 50%;
-		animation: migrate-spin 0.8s linear infinite;
-	}
-
-	@keyframes migrate-spin {
-		to {
-			transform: rotate(360deg);
-		}
 	}
 
 	.bottom-spacer {

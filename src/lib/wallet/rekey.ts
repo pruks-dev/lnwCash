@@ -1,35 +1,43 @@
 /**
- * TASK-245 (F-V26-003): Re-seed → swap migration.
+ * TASK-259 (BLUEPRINT-003 v1.6.0 rev8, INTENT-003): Re-key — atomic re-seed → swap.
  *
- * Moves a legacy wallet (pre-v1.4.1 — random-secret proofs from melt/swap) to
- * full NUT-13 determinism:
+ * Re-key is an AUTOMATIC step in the SETUP WIZARD after NUT-9 restore
+ * (Setup.svelte recover flow), not a Settings feature. It moves the wallet off
+ * its (possibly compromised) OLD seed onto a fresh 12-word BIP39 seed:
  *
- *   1. Generate a NEW 12-word BIP39 mnemonic → 64-byte seed.
+ *   1. The wizard generates a NEW 12-word mnemonic, shows it (SeedGrid + paper
+ *      ack + verify quiz — identical to the TASK-208 create flow), then calls
+ *      `rekeyWallet(newMnemonic, pin, options)`.
  *   2. Swap ALL unspent proofs (NUT-03) for new proofs whose secrets are
  *      deterministically derived from the NEW seed.
  *   3. counter_k init = number of swapped outputs (NOT 0), so future
  *      deterministic mints never re-derive an output the mint already signed.
- *   4. Crash-safe atomicity (TASK-245-fix / T246-SEC-01): the NEW encrypted
- *      mnemonic is persisted + the NEW seed activated BEFORE any swap is issued,
- *      and a "pending migration" journal is written — so there is NO checkpoint
- *      where proofs are burned but the new seed is not yet recoverable. A swap
- *      failure rolls back to the pre-migration state (old proofs, old seed, old
- *      mnemonic all intact — no fund loss).
+ *   4. NUT-29 batching: ≤ 1000 inputs/outputs per single swap request.
+ *   5. Crash-safe atomicity: the NEW encrypted mnemonic is persisted + the NEW
+ *      seed activated BEFORE any swap, and a "pending rekey" journal is written.
+ *      A swap failure rolls back to the pre-rekey state (old proofs, old seed,
+ *      old mnemonic all intact — no fund loss).
+ *   6. Swap only mints that actually hold unspent proofs (grouped by
+ *      `proof.mint_url`), optionally restricted to the mints the user selected
+ *      in the recover wizard (`options.mints`).
  *
- * ⚠️ MANDATE-029 — USER-CONFIRMED: this module NEVER auto-migrates. The UI
- * (Settings.svelte) must obtain explicit user confirmation + re-verified PIN
- * before calling migrateWallet(). `detectLegacyProofs()` is the read-only
- * gate the UI uses to decide whether to offer migration.
+ * ⚠️ MANDATE-029 — USER-CONFIRMED: this module NEVER auto-rekeys. The Setup
+ * wizard must obtain explicit user confirmation (SeedGrid + paper ack + verify
+ * quiz) before calling `rekeyWallet()`. Skipping is a UI decision that carries a
+ * strong "seed compromised" warning; the core has no silent-skip path.
+ *
+ * ⚠️ No crypto primitives changed — this reuses `keys.ts` (BIP39),
+ * `nut13.ts` (deriveSecretAndR), `encrypt.ts` (encryptKey) and `blind.ts`
+ * exactly as the removed migration engine did.
  */
-import { generateMnemonic, mnemonicToSeed } from './keys';
+import { mnemonicToSeed } from './keys';
 import {
-	deriveSecret,
 	deriveSecretAndR,
 	getActiveSeed,
 	setActiveSeed,
 	clearActiveSeed
 } from './nut13';
-import { getCounterK, setCounterK } from './counterK';
+import { setCounterK, clearAllCounters } from './counterK';
 import {
 	getUnspentProofs,
 	addProofs,
@@ -39,14 +47,12 @@ import {
 import { swapProofs } from '../cashu/client';
 import { blindMessage, unblindSignature, blindingFactorToHex } from '../cashu/blind';
 import { fetchAndCacheKeysets, getMintPubkey, resolveKeysetId } from '../cashu/keyset';
-import { verifyPin, encryptKey } from '../crypto/encrypt';
+import { encryptKey } from '../crypto/encrypt';
 import {
-	getPinHash,
 	getEncryptedMnemonic,
 	setEncryptedMnemonic,
 	clearEncryptedMnemonic
 } from './storage';
-import { InvalidPinError, WalletNotInitializedError } from './errors';
 import type { TokenProof, EncryptedKey } from '../types';
 
 // ─── Constants ───────────────────────────────────────────────
@@ -56,7 +62,7 @@ export const NUT29_MAX_BATCH_SIZE = 1000;
 
 // ─── Types ───────────────────────────────────────────────────
 
-export interface MigrateResult {
+export interface RekeyResult {
 	success: boolean;
 	/** Number of old proofs swapped (burned at the mint). */
 	swappedCount: number;
@@ -64,7 +70,15 @@ export interface MigrateResult {
 	receivedCount: number;
 	/** Number of NUT-03 swap requests issued (batches). */
 	batches: number;
-	error?: string;
+}
+
+export interface RekeyOptions {
+	/**
+	 * Restrict the swap to these mint URLs (normalized, no trailing slash).
+	 * Defaults to every mint that holds unspent proofs — which already means
+	 * "only mints with unspent proofs" since the swap groups by `proof.mint_url`.
+	 */
+	mints?: string[];
 }
 
 interface GroupPlan {
@@ -74,38 +88,37 @@ interface GroupPlan {
 	newProofs: TokenProof[];
 }
 
-// ─── Migration journal (TASK-245-fix / T246-SEC-01) ──────────
+// ─── Rekey journal (crash-safe atomicity) ────────────────────
 //
 // A NUT-03 swap SPENDS (burns) the OLD proofs at the mint before the client
-// receives the NEW proofs. To keep migrateWallet() recoverable at every crash
+// receives the NEW proofs. To keep `rekeyWallet()` recoverable at every crash
 // checkpoint, the encrypted NEW mnemonic is persisted to real storage AND a
-// "pending migration" journal is written to localStorage BEFORE any swap is
-// issued. The mnemonic is the recovery anchor; the journal marks that a
-// migration was interrupted so the UI can re-offer it (resume) or recover.
+// "pending rekey" journal is written to localStorage BEFORE any swap is issued.
+// The mnemonic is the recovery anchor; the journal marks that a re-key was
+// interrupted so the UI can re-offer it (resume) or recover via NUT-13 restore.
 //
 //   - crash before swap  → real mnemonic persisted, journal present, old proofs
-//                          still valid → detectLegacyProofs() keeps reporting
-//                          them (journal-aware) so migration is re-offered.
+//                          still valid → the swap can be re-attempted.
 //   - crash after swap   → mnemonic persisted → swapped proofs recoverable via
 //                          NUT-13 restore (restore.ts) from the new mnemonic.
 //   - crash after commit → journal cleared → clean.
 
-export const MIGRATION_JOURNAL_KEY = 'lnwcash_migration_journal';
+export const REKEY_JOURNAL_KEY = 'lnwcash_rekey_journal';
 
-export interface MigrationJournal {
+export interface RekeyJournal {
 	status: 'pending';
 	/** The encrypted NEW mnemonic (recovery anchor), encrypted under the PIN. */
 	encryptedNewMnemonic: EncryptedKey;
-	/** Timestamp when the migration started (diagnostics only). */
+	/** Timestamp when the re-key started (diagnostics only). */
 	startedAt: number;
 }
 
-/** Read the pending-migration journal, or null when no migration is pending. */
-export function getMigrationJournal(): MigrationJournal | null {
+/** Read the pending-rekey journal, or null when no re-key is pending. */
+export function getRekeyJournal(): RekeyJournal | null {
 	try {
-		const raw = localStorage.getItem(MIGRATION_JOURNAL_KEY);
+		const raw = localStorage.getItem(REKEY_JOURNAL_KEY);
 		if (!raw) return null;
-		const parsed = JSON.parse(raw) as MigrationJournal | null;
+		const parsed = JSON.parse(raw) as RekeyJournal | null;
 		if (
 			parsed &&
 			parsed.status === 'pending' &&
@@ -120,75 +133,24 @@ export function getMigrationJournal(): MigrationJournal | null {
 	}
 }
 
-function setMigrationJournal(journal: MigrationJournal): void {
+function setRekeyJournal(journal: RekeyJournal): void {
 	try {
-		localStorage.setItem(MIGRATION_JOURNAL_KEY, JSON.stringify(journal));
+		localStorage.setItem(REKEY_JOURNAL_KEY, JSON.stringify(journal));
 	} catch {
 		// localStorage unavailable — best-effort; the in-memory seed still
 		// guards the in-process commit path.
 	}
 }
 
-export function clearMigrationJournal(): void {
+export function clearRekeyJournal(): void {
 	try {
-		localStorage.removeItem(MIGRATION_JOURNAL_KEY);
+		localStorage.removeItem(REKEY_JOURNAL_KEY);
 	} catch {
 		/* ignore */
 	}
 }
 
-// ─── Detection ───────────────────────────────────────────────
-
-/**
- * Whether a stored proof's `secret` is derivable from the given seed for some
- * counter `k ∈ [0, counter_k]` of its keyset. A legacy (pre-v1.4.1) proof has
- * a random secret and will never match a deterministic derivation.
- */
-function isDeterministicProof(proof: StoredProof, seed: Uint8Array): boolean {
-	const limit = getCounterK(proof.keyset_id);
-	for (let k = 0; k <= limit; k++) {
-		try {
-			if (deriveSecret(seed, proof.keyset_id, k) === proof.secret) return true;
-		} catch {
-			// Unsupported keyset version → cannot be derived from this seed.
-			return false;
-		}
-	}
-	return false;
-}
-
-/**
- * Detect legacy (random-secret) proofs from pre-v1.4.1.
- *
- * - No unspent proofs → empty.
- * - Active seed present → returns the proofs whose secret is NOT derivable
- *   from that seed (a precise per-proof check).
- * - No active seed (locked or legacy): a stored mnemonic implies a post-v1.4.1
- *   wallet (deterministic by construction) → empty; no mnemonic implies a
- *   legacy wallet → all proofs are legacy.
- *
- * This is the read-only gate for the "Migrate wallet" UI entry.
- */
-export async function detectLegacyProofs(): Promise<StoredProof[]> {
-	const proofs = await getUnspentProofs();
-	if (proofs.length === 0) return [];
-
-	const seed = getActiveSeed();
-	if (seed) {
-		return proofs.filter((p) => !isDeterministicProof(p, seed));
-	}
-
-	// A pending migration journal means a previous migration was interrupted
-	// (crash/kill): the old proofs may not have been swapped yet → keep
-	// reporting them as legacy so the UI re-offers migration (resume).
-	if (getMigrationJournal()) {
-		return proofs;
-	}
-
-	return getEncryptedMnemonic() ? [] : proofs;
-}
-
-// ─── Swap orchestration (Phase A — network only, no writes) ──
+// ─── Swap orchestration (network only, no writes) ────────────
 
 /**
  * Swap one (mint, keyset) group of old proofs for new deterministic proofs
@@ -266,46 +228,51 @@ async function swapGroupForNewSeed(
 // ─── Public API ──────────────────────────────────────────────
 
 /**
- * Migrate a legacy wallet to a fresh deterministic seed.
+ * Re-key the wallet: swap all unspent proofs for proofs derived from a NEW seed.
  *
- * 1. Verify the PIN (final cryptographic gate — MANDATE-029 user confirmation).
- * 2. Generate a new mnemonic → seed.
+ * 1. Derive the 64-byte seed from the (already shown + verified) new mnemonic.
+ * 2. Group unspent proofs by (mint_url, keyset_id) — restricting to
+ *    `options.mints` when provided. Mints with no unspent proofs are skipped
+ *    automatically (no group → no swap).
  * 3. Persist the NEW encrypted mnemonic + activate the NEW seed BEFORE any swap
- *    (the recovery anchor), and write the "pending migration" journal.
- * 4. Swap all unspent proofs for new seed-derived proofs (NUT-03, batched).
- *    Any swap failure rolls back to the pre-migration state (no fund loss).
- * 5. Commit: persist new proofs → clear old proofs → counter_k := swap count →
- *    clear the journal.
+ *    (the recovery anchor), and write the "pending rekey" journal.
+ * 4. Swap each group (NUT-03, batched per NUT-29). Any swap failure rolls back
+ *    to the pre-rekey state (no fund loss).
+ * 5. Commit: persist new proofs → clear old proofs → clear ALL old counters →
+ *    counter_k := swap count per keyset → clear the journal.
  *
- * Atomicity (TASK-245-fix / T246-SEC-01): the new mnemonic is durable before
- * the mint ever spends an old proof, so there is no checkpoint where proofs are
- * burned but the seed is unrecoverable.
+ * The wallet is assumed to already be unlocked (the Setup recover flow has just
+ * created + unlocked it), so no PIN re-verification is performed here — `pin`
+ * is used only to encrypt the new mnemonic. User confirmation is enforced by
+ * the wizard (SeedGrid + paper ack + verify quiz) before this is called.
  *
- * @throws InvalidPinError if the PIN is wrong
- * @throws WalletNotInitializedError if no wallet exists
- * @throws Error (propagated) if any swap fails
+ * @param newMnemonic 12-word BIP39 mnemonic for the NEW seed.
+ * @param pin The wallet PIN (encrypts the new mnemonic).
+ * @param options Optional mint restriction.
+ * @throws Error (propagated) if any swap fails (state rolled back).
  */
-export async function migrateWallet(pin: string): Promise<MigrateResult> {
-	const pinHash = getPinHash();
-	if (!pinHash) {
-		throw new WalletNotInitializedError();
-	}
-	const valid = await verifyPin(pin, pinHash);
-	if (!valid) {
-		throw new InvalidPinError();
-	}
-
-	// Gather unspent proofs (spent proofs are already burned; orphaned excluded).
-	const proofs = await getUnspentProofs();
-	if (proofs.length === 0) {
-		return { success: true, swappedCount: 0, receivedCount: 0, batches: 0 };
-	}
-
+export async function rekeyWallet(
+	newMnemonic: string,
+	pin: string,
+	options: RekeyOptions = {}
+): Promise<RekeyResult> {
 	// New mnemonic → 64-byte seed (the new deterministic root).
-	const newMnemonic = generateMnemonic();
 	const newSeed = mnemonicToSeed(newMnemonic);
 
-	// Group proofs by (mint_url, keyset_id).
+	// Gather unspent proofs (spent proofs are already burned; orphaned excluded).
+	const allProofs = await getUnspentProofs();
+
+	// Optional mint restriction (normalized URLs, no trailing slash).
+	const mintsFilter = options.mints
+		? new Set(options.mints.map((u) => u.replace(/\/+$/, '')))
+		: null;
+
+	const proofs = mintsFilter
+		? allProofs.filter((p) => mintsFilter.has(p.mint_url))
+		: allProofs;
+
+	// Group proofs by (mint_url, keyset_id). Only mints with unspent proofs
+	// appear here — a mint with no unspent proofs is never swapped.
 	const groups = new Map<string, GroupPlan>();
 	for (const p of proofs) {
 		const key = `${p.mint_url}\u0000${p.keyset_id}`;
@@ -317,18 +284,18 @@ export async function migrateWallet(pin: string): Promise<MigrateResult> {
 		group.inputs.push(p);
 	}
 
-	// ── Recovery anchor (TASK-245-fix) ──────────────────────────
+	// ── Recovery anchor ────────────────────────────────────────
 	// Persist the NEW encrypted mnemonic + activate the NEW seed BEFORE any
 	// swap. Once this is durable, a crash at ANY later point (including after
 	// the mint has burned the old proofs) can be recovered from the new
-	// mnemonic via NUT-13 restore. Capture the pre-migration state so a swap
-	// FAILURE can roll back cleanly.
+	// mnemonic via NUT-13 restore. Capture the pre-rekey state so a swap FAILURE
+	// can roll back cleanly.
 	const prevMnemonic = getEncryptedMnemonic();
 	const prevSeed = getActiveSeed();
 	const encryptedNewMnemonic = await encryptKey(newMnemonic, pin);
 	setEncryptedMnemonic(encryptedNewMnemonic);
 	setActiveSeed(newSeed);
-	setMigrationJournal({ status: 'pending', encryptedNewMnemonic, startedAt: Date.now() });
+	setRekeyJournal({ status: 'pending', encryptedNewMnemonic, startedAt: Date.now() });
 
 	// Phase A — swap (network only). Any failure rolls back the anchor.
 	const counters = new Map<string, number>();
@@ -348,12 +315,12 @@ export async function migrateWallet(pin: string): Promise<MigrateResult> {
 		}
 	} catch (err) {
 		// Nothing was burned (all swaps must succeed before any commit) →
-		// restore the pre-migration wallet state.
+		// restore the pre-rekey wallet state.
 		if (prevMnemonic) setEncryptedMnemonic(prevMnemonic);
 		else clearEncryptedMnemonic();
 		if (prevSeed) setActiveSeed(prevSeed);
 		else clearActiveSeed();
-		clearMigrationJournal();
+		clearRekeyJournal();
 		throw err;
 	}
 
@@ -368,13 +335,14 @@ export async function migrateWallet(pin: string): Promise<MigrateResult> {
 	// Clear the old proofs (they were burned by the swap at the mint).
 	await removeProofs(proofs.map((p) => p.local_id));
 
-	// counter_k init = swap count (NOT 0) — prevents re-deriving an output the
-	// mint already signed under the new seed.
+	// The OLD seed's counters are now meaningless (the derivation root changed):
+	// wipe them, then seed the NEW counters from the swap count.
+	clearAllCounters();
 	for (const [keysetId, value] of counters) {
 		setCounterK(keysetId, value);
 	}
 
-	clearMigrationJournal();
+	clearRekeyJournal();
 
 	return {
 		success: true,
@@ -382,26 +350,4 @@ export async function migrateWallet(pin: string): Promise<MigrateResult> {
 		receivedCount: [...counters.values()].reduce((a, b) => a + b, 0),
 		batches: batchCount
 	};
-}
-
-/**
- * Recover the wallet after an interrupted migration (TASK-245-fix).
- *
- * If a pending migration journal exists (a previous migrateWallet() was killed
- * mid-flight), promote the journaled NEW mnemonic into the real mnemonic
- * storage so the swapped proofs can be recovered from it via NUT-13 restore.
- * Intended to be called once at app start (future wiring); idempotent and safe
- * when no migration is pending.
- *
- * The journal is intentionally NOT cleared here — it marks the migration as
- * incomplete until a full migrateWallet() completes, so the UI keeps offering
- * migration (resume) via detectLegacyProofs().
- *
- * @returns true when a pending migration was found (and its mnemonic promoted).
- */
-export function recoverPendingMigration(): boolean {
-	const journal = getMigrationJournal();
-	if (!journal) return false;
-	setEncryptedMnemonic(journal.encryptedNewMnemonic);
-	return true;
 }

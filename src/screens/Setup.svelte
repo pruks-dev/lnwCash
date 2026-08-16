@@ -22,12 +22,13 @@
 		unlockWallet,
 		getWalletStatus,
 		storeSessionPin,
+		getSessionPin,
 		type WalletState
 	} from '$lib/wallet/state';
 	import { importSeed, seedToPrivateKey } from '$lib/wallet/seed';
 	import { generateMnemonic } from '$lib/wallet/keys';
 	import { InvalidPinError, WalletNotInitializedError } from '$lib/wallet/errors';
-	import { setActiveMintUrl, getAllMintConfigs } from '$lib/wallet/store';
+	import { setActiveMintUrl } from '$lib/wallet/store';
 	import { DEFAULT_MINT_CONFIG } from '$lib/wallet/config';
 	import { getSettings, setSettings } from '$lib/storage/local';
 	// TASK-220: "forgot PIN" → seed recovery via #/setup?recover=1
@@ -38,6 +39,7 @@
 	import { restoreWallet } from '$lib/wallet/restore';
 	import { setActiveSeed, seedFromMnemonic } from '$lib/wallet/nut13';
 	import { fetchAndCacheKeysets } from '$lib/cashu/keyset';
+	import { rekeyWallet } from '$lib/wallet/rekey';
 	import SeedGrid from '$lib/components/SeedGrid.svelte';
 	import SeedVerifyQuiz from '$lib/components/SeedVerifyQuiz.svelte';
 
@@ -71,11 +73,27 @@
 
 	// ─── Wizard model ─────────────────────────────────────────
 	type SetupMode = 'create' | 'recover' | 'unlock';
-	type WizardStep = 'welcome' | 'seed' | 'verify' | 'pin' | 'restoring' | 'done';
+	type WizardStep =
+		| 'welcome'
+		| 'seed'
+		| 'verify'
+		| 'mints'
+		| 'pin'
+		| 'restoring'
+		| 'rekey'
+		| 'done';
 	type PinEntryMode = 'keypad' | 'input';
 
 	const CREATE_STEPS: WizardStep[] = ['welcome', 'seed', 'verify', 'pin', 'done'];
-	const RECOVER_STEPS: WizardStep[] = ['welcome', 'seed', 'pin', 'restoring', 'done'];
+	const RECOVER_STEPS: WizardStep[] = [
+		'welcome',
+		'seed',
+		'mints',
+		'pin',
+		'restoring',
+		'rekey',
+		'done'
+	];
 
 	// TASK-209 (D5): PIN is 4 digits (was 6)
 	const PIN_LENGTH = 4;
@@ -112,6 +130,19 @@
 	// 'restoring' step (seed state is cleared at finalization for security).
 	let restoreSeedBytes: Uint8Array | null = null;
 
+	// TASK-259: mint selection (recover wizard) — mints to scan for proofs.
+	let selectedMints: string[] = $state([]);
+	let customMintUrl: string = $state('');
+	let mintError: string = $state('');
+
+	// TASK-259: re-key step (recover wizard) — new seed + swap.
+	type RekeyPhase = 'seed' | 'verify' | 'running' | 'error';
+	let rekeyMnemonic: string = $state('');
+	let rekeyPhase: RekeyPhase = $state('seed');
+	let rekeyAckChecked: boolean = $state(false);
+	let rekeySkipWarning: boolean = $state(false);
+	let rekeyError: string = $state('');
+
 	// PIN state (TASK-209 preserved)
 	let pin: string = $state('');
 	let confirmPin: string = $state('');
@@ -131,11 +162,12 @@
 	const stepIndex = $derived(Math.max(0, wizardSteps.indexOf(step)));
 	const isUnlock = $derived((mode as SetupMode) === 'unlock');
 
-	// 'restoring' is a transient processing state, not a user step — hide it
-	// from the numbered stepper (recover flow still shows welcome/seed/pin/done).
+	// 'restoring' and 'rekey' are transient processing steps, not user steps —
+	// hide them from the numbered stepper (recover flow still shows
+	// welcome/seed/mints/pin/done).
 	const stepperSteps: StepperStep[] = $derived(
 		wizardSteps
-			.filter((s) => s !== 'restoring')
+			.filter((s) => s !== 'restoring' && s !== 'rekey')
 			.map((s) => ({
 				id: s,
 				label: $_('screen.setup.step_label_' + s)
@@ -144,17 +176,23 @@
 
 	// TASK-208: whether the "next" control is allowed at the current step.
 	// Create seed step is gated on the paper-only checkbox (D3); recover seed
-	// stays enabled (validated on click); PIN requires a full 4-digit pair.
+	// stays enabled (validated on click); the mint-selection step requires at
+	// least one mint; PIN requires a full 4-digit pair.
 	const canContinue = $derived(
 		(step as WizardStep) === 'pin'
 			? pin.length === PIN_LENGTH && confirmPin.length === PIN_LENGTH
 			: (step as WizardStep) === 'seed' && mode === 'create'
 				? seedAckChecked
-				: true
+				: (step as WizardStep) === 'mints'
+					? selectedMints.length > 0
+					: true
 	);
 
 	// TASK-208: normalized phrase words (used by SeedGrid + SeedVerifyQuiz).
 	const seedWords = $derived(seed.trim().split(/\s+/).filter(Boolean));
+
+	// TASK-259: normalized new re-key phrase words (SeedGrid + verify quiz).
+	const rekeyWords = $derived(rekeyMnemonic.trim().split(/\s+/).filter(Boolean));
 
 	// TASK-208: canonical space-separated recover phrase, derived from the 12
 	// individual word boxes (used for validation + finalize; crypto API unchanged).
@@ -259,10 +297,22 @@
 	});
 
 	// Auto-advance the blocking 'restoring' step once the NUT-9 restore
-	// completes. On error we stay on 'restoring' (user retries or waits).
+	// completes → proceed to the automatic re-key step (TASK-259). On error we
+	// stay on 'restoring' (user retries or waits).
 	$effect(() => {
 		if (step === 'restoring' && restoreStatus === 'done') {
-			step = 'done';
+			step = 'rekey';
+		}
+	});
+
+	// TASK-259: enter the re-key step → generate the fresh 12-word mnemonic once.
+	$effect(() => {
+		if (step === 'rekey' && rekeyMnemonic === '') {
+			rekeyMnemonic = generateMnemonic();
+			rekeyPhase = 'seed';
+			rekeyAckChecked = false;
+			rekeySkipWarning = false;
+			rekeyError = '';
 		}
 	});
 
@@ -278,6 +328,7 @@
 		recoverWords = emptyRecoverWords();
 		seedError = '';
 		restoreSeedBytes = null;
+		rekeyMnemonic = '';
 	});
 
 	// ─── TASK-209 (D5): Lockout + sharded entry helpers ───────
@@ -469,6 +520,10 @@
 		recoverWords = emptyRecoverWords();
 		seedError = '';
 		restoreSeedBytes = null;
+		// TASK-259: default mint selection (mint.lnw.cash) for the recover scan.
+		selectedMints = [DEFAULT_MINT_CONFIG.url];
+		customMintUrl = '';
+		mintError = '';
 		step = 'seed';
 	}
 
@@ -499,6 +554,50 @@
 		}
 		seed = seedInput.trim().toLowerCase().replace(/\s+/g, ' ');
 		seedError = '';
+		// TASK-259: recover → mint selection (before scanning proofs).
+		if (selectedMints.length === 0) selectedMints = [DEFAULT_MINT_CONFIG.url];
+		customMintUrl = '';
+		mintError = '';
+		step = 'mints';
+	}
+
+	// ─── TASK-259: mint selection (recover wizard) ───────────
+
+	function toggleMint(mintUrl: string) {
+		mintError = '';
+		if (selectedMints.includes(mintUrl)) {
+			selectedMints = selectedMints.filter((m) => m !== mintUrl);
+		} else {
+			selectedMints = [...selectedMints, mintUrl];
+		}
+	}
+
+	function addMint() {
+		mintError = '';
+		const url = customMintUrl.trim().replace(/\/+$/, '');
+		if (!url) {
+			mintError = $_('common.error_mint_url_required');
+			return;
+		}
+		if (!/^https?:\/\//i.test(url)) {
+			mintError = $_('common.error_invalid_url');
+			return;
+		}
+		if (selectedMints.includes(url)) {
+			mintError = $_('screen.setup.mints_duplicate');
+			return;
+		}
+		selectedMints = [...selectedMints, url];
+		customMintUrl = '';
+	}
+
+	function continueFromMints() {
+		clearError();
+		if (selectedMints.length === 0) {
+			mintError = $_('screen.setup.mints_required');
+			return;
+		}
+		mintError = '';
 		step = 'pin';
 	}
 
@@ -601,14 +700,14 @@
 		restoredProofs = 0;
 		restoreProgress = '';
 		try {
-			// TASK-217: restore across ALL configured mints, not just the active one.
-			const mints = getAllMintConfigs();
+			// TASK-259: restore across the USER-SELECTED mints (mint selection step),
+			// not all configured mints. Each selected mint is scanned for proofs.
+			const mints = selectedMints;
 			let total = 0;
 			for (let i = 0; i < mints.length; i++) {
-				const mint = mints[i];
-				const mintUrl = mint.url.replace(/\/+$/, '');
+				const mintUrl = mints[i].replace(/\/+$/, '');
 				// Per-mint progress (honest status): show which mint is being restored.
-				restoreProgress = `${i + 1}/${mints.length}: ${mint.name || mintUrl}`;
+				restoreProgress = `${i + 1}/${mints.length}: ${mintUrl}`;
 				const keysets = await fetchAndCacheKeysets(mintUrl);
 				const active = keysets.filter((k) => k.active);
 				for (const ks of active) {
@@ -627,9 +726,9 @@
 
 	function goBack() {
 		clearError();
-		// Block back navigation while the NUT-9 restore is running — the user
-		// must wait for restore to complete (or fail and retry).
-		if (step === 'restoring') return;
+		// Block back navigation while the NUT-9 restore is running and during the
+		// re-key step — the user must finish re-key (or explicitly skip).
+		if (step === 'restoring' || step === 'rekey') return;
 		const idx = stepIndex;
 		if (idx > 0) {
 			step = wizardSteps[idx - 1];
@@ -647,6 +746,50 @@
 		if (restoreSeedBytes) {
 			void restoreFunds(restoreSeedBytes);
 		}
+	}
+
+	// ─── TASK-259: re-key (new seed + atomic swap) ───────────
+
+	// Verify quiz (re-key) completion → run the atomic swap.
+	function onRekeyVerifyComplete(passed: boolean) {
+		if (passed) {
+			void runRekey();
+		}
+	}
+
+	async function runRekey() {
+		rekeyError = '';
+		rekeyPhase = 'running';
+		try {
+			// The PIN was just set during this recover flow (storeSessionPin was
+			// called in handleRegister). rekeyWallet uses it only to encrypt the
+			// NEW mnemonic — no re-verification needed (user already confirmed
+			// via SeedGrid + paper ack + verify quiz).
+			const pinForRekey = getSessionPin() ?? pin;
+			await rekeyWallet(rekeyMnemonic, pinForRekey, { mints: selectedMints });
+			rekeyMnemonic = '';
+			step = 'done';
+		} catch (e) {
+			rekeyPhase = 'error';
+			rekeyError = e instanceof Error ? e.message : $_('common.error');
+		}
+	}
+
+	// Skip re-key — REQUIRES explicit confirmation (strong "seed compromised"
+	// warning). There is NO silent auto-skip: default is to re-key.
+	function requestSkipRekey() {
+		rekeySkipWarning = true;
+	}
+
+	function cancelSkipRekey() {
+		rekeySkipWarning = false;
+	}
+
+	function confirmSkipRekey() {
+		// User explicitly chose to keep the (possibly compromised) old seed.
+		rekeySkipWarning = false;
+		rekeyMnemonic = '';
+		step = 'done';
 	}
 
 	// ─── Language toggle (TASK-207 / D1.1) ───────────────────
@@ -667,7 +810,7 @@
 
 	function persistWizard() {
 		try {
-			if (mode === 'unlock' || step === 'welcome' || step === 'done' || step === 'restoring') {
+			if (mode === 'unlock' || step === 'welcome' || step === 'done' || step === 'restoring' || step === 'rekey') {
 				sessionStorage.removeItem(RESUME_KEY);
 				return;
 			}
@@ -703,8 +846,10 @@
 		step === 'welcome' ? $_('screen.setup.title') :
 		step === 'seed' ? $_('screen.setup.seed_title') :
 		step === 'verify' ? $_('screen.setup.verify_title') :
+		step === 'mints' ? $_('screen.setup.mints_title') :
 		step === 'pin' ? $_('screen.register.title') :
 		step === 'restoring' ? $_('screen.setup.restoring_title') :
+		step === 'rekey' ? $_('screen.setup.rekey_title') :
 		$_('screen.setup.done_title')
 	);
 </script>
@@ -841,7 +986,7 @@
 					{$_('screen.setup.title')}
 				</Body>
 
-			{#if step !== 'restoring'}
+			{#if step !== 'restoring' && step !== 'rekey'}
 				<ProgressStepper
 					steps={stepperSteps}
 					currentIndex={stepIndex}
@@ -849,7 +994,7 @@
 					backLabel={$_('common.back')}
 					nextLabel={$_('common.next')}
 					onBack={stepIndex > 0 ? goBack : undefined}
-					onNext={step === 'seed' ? continueFromSeed : undefined}
+					onNext={step === 'seed' ? continueFromSeed : step === 'mints' ? continueFromMints : undefined}
 				/>
 			{/if}
 
@@ -931,6 +1076,51 @@
 						{#if seedError}
 							<div class="error-banner" role="alert">
 								<Body size="sm">{seedError}</Body>
+							</div>
+						{/if}
+					</div>
+
+				{:else if step === 'mints'}
+					<!-- TASK-259: mint selection (recover wizard) — choose which mints
+						 to scan for proofs before restore. Default = mint.lnw.cash. -->
+					<div class="form">
+						<Body size="sm" color="secondary" align="center">
+							{$_('screen.setup.mints_prompt')}
+						</Body>
+
+						<div class="mint-select-list" role="group" aria-label={$_('screen.setup.mints_title')}>
+							{#each selectedMints as mintUrl (mintUrl)}
+								<label class="mint-select-row">
+									<input
+										type="checkbox"
+										checked={selectedMints.includes(mintUrl)}
+										onchange={() => toggleMint(mintUrl)}
+									/>
+									<Body size="sm">{mintUrl}</Body>
+								</label>
+							{/each}
+						</div>
+
+						<div class="add-mint-row">
+							<Input
+								type="text"
+								label={$_('screen.setup.mints_add_label')}
+								placeholder={$_('common.placeholder_mint_url')}
+								value={customMintUrl}
+								oninput={(e) => { customMintUrl = (e.target as HTMLInputElement).value; mintError = ''; }}
+							/>
+							<Button
+								variant="secondary"
+								onclick={addMint}
+								ariaLabel={$_('screen.setup.mints_add')}
+							>
+								{#snippet children()}{$_('screen.setup.mints_add')}{/snippet}
+							</Button>
+						</div>
+
+						{#if mintError}
+							<div class="error-banner" role="alert">
+								<Body size="sm">{mintError}</Body>
 							</div>
 						{/if}
 					</div>
@@ -1040,6 +1230,98 @@
 							{/if}
 						{/if}
 					</div>
+				</div>
+
+			{:else if step === 'rekey'}
+				<!-- TASK-259: automatic re-key step after restore. Default = re-key
+					 (fresh 12-word seed → SeedGrid + paper ack + verify quiz → atomic
+					 swap). Skip requires an explicit "seed compromised" confirmation. -->
+				<div class="form">
+					{#if rekeySkipWarning}
+						<div class="rekey-skip-warning" role="alert">
+							<Heading level="h4">{$_('screen.setup.rekey_skip_warning_title')}</Heading>
+							<Body size="sm" color="secondary">{$_('screen.setup.rekey_skip_warning_body')}</Body>
+							<div class="rekey-actions">
+								<Button variant="secondary" onclick={cancelSkipRekey} ariaLabel={$_('common.cancel')}>
+									{#snippet children()}{$_('common.cancel')}{/snippet}
+								</Button>
+								<Button variant="primary" onclick={confirmSkipRekey} ariaLabel={$_('screen.setup.rekey_skip_confirm')}>
+									{#snippet children()}{$_('screen.setup.rekey_skip_confirm')}{/snippet}
+								</Button>
+							</div>
+						</div>
+					{:else if rekeyPhase === 'seed'}
+						<div class="rekey-warning-banner" role="note">
+							<Body size="sm" weight="medium">{$_('screen.setup.rekey_compromised')}</Body>
+						</div>
+
+						<Body size="sm" color="secondary" align="center">
+							{$_('screen.setup.rekey_prompt')}
+						</Body>
+
+						<SeedGrid words={rekeyWords} />
+
+						<ul class="paper-warnings">
+							<li><Body size="sm" color="secondary">{$_('recovery.warning.paper_only')}</Body></li>
+							<li><Body size="sm" color="secondary">{$_('recovery.warning.never_share')}</Body></li>
+							<li><Body size="sm" color="secondary">{$_('recovery.warning.anyone_access')}</Body></li>
+							<li><Body size="sm" color="secondary">{$_('recovery.warning.lose_access')}</Body></li>
+						</ul>
+
+						<label class="seed-ack">
+							<input type="checkbox" bind:checked={rekeyAckChecked} />
+							<Body size="sm">{$_('recovery.warning.checkbox_label')}</Body>
+						</label>
+
+						<Button
+							variant="primary"
+							size="lg"
+							onclick={() => { rekeyPhase = 'verify'; }}
+							disabled={!rekeyAckChecked}
+						>
+							{#snippet children()}{$_('common.next')}{/snippet}
+						</Button>
+
+						<Button variant="ghost" size="sm" onclick={requestSkipRekey}>
+							{#snippet children()}{$_('screen.setup.rekey_skip')}{/snippet}
+						</Button>
+					{:else if rekeyPhase === 'verify'}
+						<SeedVerifyQuiz
+							words={rekeyWords}
+							prompt={$_('recovery.quiz.prompt')}
+							wordLabelPrefix={$_('recovery.quiz.word_label_prefix')}
+							wrongLabel={$_('recovery.quiz.wrong')}
+							retryLabel={$_('recovery.quiz.retry')}
+							onComplete={onRekeyVerifyComplete}
+						/>
+						<Button variant="ghost" size="sm" onclick={() => { rekeyPhase = 'seed'; }}>
+							{#snippet children()}{$_('common.back')}{/snippet}
+						</Button>
+					{:else if rekeyPhase === 'running'}
+						<div class="restore-status" role="status" aria-live="polite">
+							<div class="restore-spinner" aria-hidden="true">
+								<svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+									<circle cx="20" cy="20" r="16" stroke="currentColor" stroke-width="3" opacity="0.25" />
+									<path d="M20 4a16 16 0 0 1 13.9 8" stroke="currentColor" stroke-width="3" stroke-linecap="round" />
+								</svg>
+							</div>
+							<Body size="sm" color="secondary">{$_('screen.setup.rekey_running')}</Body>
+						</div>
+					{:else}
+						{#if rekeyError}
+							<div class="error-banner" role="alert">
+								<Body size="sm">{rekeyError}</Body>
+							</div>
+						{/if}
+						<div class="rekey-actions">
+							<Button variant="secondary" onclick={requestSkipRekey}>
+								{#snippet children()}{$_('screen.setup.rekey_skip')}{/snippet}
+							</Button>
+							<Button variant="primary" onclick={runRekey} ariaLabel={$_('common.retry')}>
+								{#snippet children()}{$_('common.retry')}{/snippet}
+							</Button>
+						</div>
+					{/if}
 				</div>
 
 			{:else if step === 'done'}
@@ -1215,6 +1497,66 @@
 	.seed-ack input {
 		margin-top: 3px;
 		accent-color: var(--color-primary);
+	}
+
+	/* TASK-259: mint selection step (recover wizard) */
+	.mint-select-list {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-xs);
+	}
+
+	.mint-select-row {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		padding: var(--space-sm) var(--space-md);
+		background: var(--color-surface-variant);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		cursor: pointer;
+	}
+
+	.mint-select-row input {
+		accent-color: var(--color-primary);
+	}
+
+	.add-mint-row {
+		display: flex;
+		align-items: flex-end;
+		gap: var(--space-sm);
+	}
+
+	.add-mint-row :global(.input-wrap) {
+		flex: 1;
+	}
+
+	/* TASK-259: re-key step (recover wizard) */
+	.rekey-warning-banner {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		padding: var(--space-sm) var(--space-md);
+		background: var(--color-warning-light, #fff3cd);
+		border: 1px solid var(--color-warning, #ff9800);
+		border-radius: var(--radius-md);
+	}
+
+	.rekey-skip-warning {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+		padding: var(--space-md);
+		background: var(--color-error-light);
+		border: 1px solid var(--color-error);
+		border-radius: var(--radius-md);
+	}
+
+	.rekey-actions {
+		display: flex;
+		gap: var(--space-sm);
+		justify-content: flex-end;
+		margin-top: var(--space-xs);
 	}
 
 	/* Seed import — 12 individual word boxes in a responsive grid (TASK-208) */
