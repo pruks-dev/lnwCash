@@ -39,7 +39,7 @@
 	import { restoreWallet } from '$lib/wallet/restore';
 	import { setActiveSeed, seedFromMnemonic } from '$lib/wallet/nut13';
 	import { fetchAndCacheKeysets } from '$lib/cashu/keyset';
-	import { rekeyWallet, getRekeyJournal } from '$lib/wallet/rekey';
+	import { rekeyWallet, getRekeyJournal, clearRekeyJournal } from '$lib/wallet/rekey';
 	import SeedGrid from '$lib/components/SeedGrid.svelte';
 	import SeedVerifyQuiz from '$lib/components/SeedVerifyQuiz.svelte';
 
@@ -232,18 +232,10 @@
 			pinShuffle = false;
 		}
 
-		// TASK-220: "forgot PIN" → jump straight into seed recovery
-		// (recover mode + seed step), bypassing the unlock shortcut.
-		if (getHashParam('recover') === '1') {
-			mode = 'recover';
-			step = 'seed';
-			seed = '';
-			recoverWords = emptyRecoverWords();
-			seedError = '';
-			return;
-		}
-
-		// Existing wallet → skip straight to PIN unlock
+		// TASK-272 (fix 4): an EXISTING wallet always forces the unlock screen —
+		// even with a ?recover=1 hash. Recovery (importSeed) silently overwrites
+		// the existing wallet, so it must only be reachable when the wallet is
+		// UNINITIALIZED. Check this BEFORE the recover shortcut.
 		try {
 			const status = getWalletStatus();
 			if (status.state !== 'UNINITIALIZED') {
@@ -252,7 +244,18 @@
 				return;
 			}
 		} catch {
-			// UNINITIALIZED — continue to welcome/resume
+			// UNINITIALIZED — continue to recover/resume
+		}
+
+		// TASK-220: "forgot PIN" → jump straight into seed recovery
+		// (recover mode + seed step). Only reached when NO wallet exists.
+		if (getHashParam('recover') === '1') {
+			mode = 'recover';
+			step = 'seed';
+			seed = '';
+			recoverWords = emptyRecoverWords();
+			seedError = '';
+			return;
 		}
 
 		// sessionStorage resume (TASK-207: resume + exit warning)
@@ -730,6 +733,11 @@
 			}
 			restoreStatus = 'done';
 			restoreProgress = '';
+			// R2 (TASK-266): a successful NUT-9 restore resolves any pending
+			// (interrupted) re-key — the funds are now recovered from the NEW seed
+			// held in the journal. Clear the journal so the resume banner does not
+			// stay stuck on the next unlock.
+			clearRekeyJournal();
 		} catch {
 			restoreStatus = 'error';
 			restoreProgress = '';
@@ -811,6 +819,12 @@
 	function resumeRekeyViaRestore() {
 		if (typeof window !== 'undefined') {
 			window.location.hash = '/setup?recover=1';
+			// R1 (TASK-266): the mount $effect that reads `getHashParam('recover')`
+			// runs only ONCE (window.location.hash is not a reactive dependency),
+			// so a hash change alone is a no-op while the setup screen is already
+			// mounted — the user pressed resume and nothing happened. Force a full
+			// reload so the effect re-runs and routes into the recover flow.
+			window.location.reload();
 		}
 	}
 

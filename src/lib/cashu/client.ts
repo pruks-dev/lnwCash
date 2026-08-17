@@ -664,6 +664,21 @@ export async function swapProofs(
 ): Promise<{
 	signatures: Array<{ id: string; amount: number; C_: string; dleq?: { e: string; s: string } }>;
 }> {
+	// Defense-in-depth (F262-R4): validate each input proof's signature (C)
+	// before sending. C is the unblinded BDHKE signature — a compressed
+	// secp256k1 point serialized as 33 bytes / 66 hex chars (`02`/`03` prefix).
+	// A malformed C would otherwise reach the mint and fail late (or corrupt
+	// the swap), so reject it locally first.
+	const SIG_POINT_HEX_RE = /^0[23][0-9a-fA-F]{64}$/;
+	for (const p of proofs) {
+		if (typeof p.C !== 'string' || !SIG_POINT_HEX_RE.test(p.C)) {
+			throw new Error(
+				'Invalid proof signature (C): expected a 66-char hex-encoded compressed ' +
+					'secp256k1 point with a 02/03 prefix'
+			);
+		}
+	}
+
 	const inputs = proofs.map(p => ({ secret: p.secret, C: p.C, amount: p.amount, id: p.id }));
 	const body: Record<string, unknown> = { inputs };
 	if (outputs && outputs.length > 0) {

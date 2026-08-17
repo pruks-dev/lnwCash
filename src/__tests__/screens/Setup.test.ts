@@ -115,7 +115,8 @@ vi.mock('$lib/wallet/nut13', () => ({
 
 vi.mock('$lib/wallet/rekey', () => ({
 	rekeyWallet: vi.fn(async () => ({ success: true, swappedCount: 0, receivedCount: 0, batches: 0 })),
-	getRekeyJournal: vi.fn(() => null)
+	getRekeyJournal: vi.fn(() => null),
+	clearRekeyJournal: vi.fn()
 }));
 
 vi.mock('$lib/cashu/keyset', () => ({
@@ -174,6 +175,9 @@ describe('Setup (TASK-207 wizard + TASK-209 PIN preserved)', () => {
 	beforeEach(() => {
 		localStorage.clear();
 		sessionStorage.clear();
+		// TASK-272 (fix 4): reset the URL hash so a prior ?recover=1 test does
+		// not leak into the next test (getHashParam reads window.location.hash).
+		history.replaceState(null, '', '/');
 		vi.clearAllMocks();
 		vi.mocked(generateMnemonic).mockReturnValue(MNEMONIC);
 		vi.mocked(getWalletStatus).mockReturnValue({
@@ -332,6 +336,43 @@ describe('Setup (TASK-207 wizard + TASK-209 PIN preserved)', () => {
 		const enteredPin = vi.mocked(unlockWallet).mock.calls[0][0] as string;
 		expect(enteredPin).toHaveLength(4);
 		expect(storeSessionPin).toHaveBeenCalled();
+	});
+
+	// ─── TASK-272 (fix 4): existing wallet + ?recover=1 → unlock ──
+	it('existing wallet + ?recover=1 still forces unlock (does NOT shortcut recover)', () => {
+		vi.mocked(getWalletStatus).mockReturnValue({
+			state: 'LOCKED',
+			walletName: 'LNWCASH Wallet',
+			createdAt: 1
+		});
+		window.location.hash = '/setup?recover=1';
+		render(Setup, {});
+		// unlock screen shown — NOT the recover seed step.
+		expect(screen.getByText('screen.register.unlock_prompt')).toBeTruthy();
+		expect(screen.queryByText('screen.setup.seed_recover_prompt')).toBeNull();
+	});
+
+	it('existing wallet (UNLOCKED) + ?recover=1 still forces unlock', () => {
+		vi.mocked(getWalletStatus).mockReturnValue({
+			state: 'UNLOCKED',
+			walletName: 'LNWCASH Wallet',
+			createdAt: 1
+		});
+		window.location.hash = '/setup?recover=1';
+		render(Setup, {});
+		expect(screen.getByText('screen.register.unlock_prompt')).toBeTruthy();
+		expect(screen.queryByText('screen.setup.seed_recover_prompt')).toBeNull();
+	});
+
+	it('UNINITIALIZED + ?recover=1 enters recover (seed) mode', () => {
+		vi.mocked(getWalletStatus).mockReturnValue({
+			state: 'UNINITIALIZED',
+			walletName: null,
+			createdAt: null
+		});
+		window.location.hash = '/setup?recover=1';
+		render(Setup, {});
+		expect(screen.getByText('screen.setup.seed_recover_prompt')).toBeTruthy();
 	});
 
 	// ─── sessionStorage resume ──────────────────────────────

@@ -4,7 +4,7 @@
  * A legacy (24-word) wallet has no mnemonic, so `getActiveSeed()` returns null.
  * The old `createOutputs()` silently fell back to `generateRandomSecret()`,
  * producing proofs that can never be recovered from the seed. Minting now throws
- * a clear migration error instead of falling back.
+ * a clear re-key/recover error instead of falling back.
  */
 import 'fake-indexeddb/auto';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -116,13 +116,13 @@ describe('TASK-250 RC-2: mint requires seed (no random fallback)', () => {
 		resetProofDB();
 	});
 
-	it('no active seed → clear migration error, mintTokens NOT called (no random fallback)', async () => {
+	it('no active seed → clear re-key/recover error, mintTokens NOT called (no random fallback)', async () => {
 		clearActiveSeed(); // simulate a legacy wallet with no mnemonic
 
 		const result = await completeMint(MINT_URL, 'q', 3, KEYSET_ID, false);
 
 		expect(result.success).toBe(false);
-		expect(result.error).toMatch(/seed|migrat/i);
+		expect(result.error).toMatch(/seed|re-key|recover/i);
 		// Must NOT derive random secrets and submit — no mintTokens call.
 		expect(client.mintTokens).not.toHaveBeenCalled();
 		// Counter must remain untouched.

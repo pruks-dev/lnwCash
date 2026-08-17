@@ -313,7 +313,7 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 	if (!seed) {
 		throw new Error(
 			'NUT-13: no active wallet seed — deterministic swap receive requires a seed-phrase wallet. ' +
-			'This legacy wallet has no mnemonic; migrate the wallet (TASK-245) before receiving tokens, ' +
+			'This legacy wallet has no mnemonic; re-key or recover to a seed-phrase wallet before receiving tokens, ' +
 			'otherwise received proofs would be unrecoverable on restore.'
 		);
 	}

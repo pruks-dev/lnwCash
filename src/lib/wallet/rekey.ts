@@ -34,7 +34,7 @@
  *
  * ⚠️ No crypto primitives changed — this reuses `keys.ts` (BIP39),
  * `nut13.ts` (deriveSecretAndR), `encrypt.ts` (encryptKey) and `blind.ts`
- * exactly as the removed migration engine did.
+ * exactly as the previous wallet flow did.
  */
 import { mnemonicToSeed, mnemonicToPrivateKey } from './keys';
 import {
@@ -50,10 +50,10 @@ import {
 	removeProofs,
 	type StoredProof
 } from './proofsDb';
-import { swapProofs } from '../cashu/client';
+import { swapProofs, checkState } from '../cashu/client';
 import { blindMessage, unblindSignature, blindingFactorToHex } from '../cashu/blind';
 import { fetchAndCacheKeysets, getMintPubkey, resolveKeysetId } from '../cashu/keyset';
-import { encryptKey, decryptKey } from '../crypto/encrypt';
+import { encryptKey } from '../crypto/encrypt';
 import {
 	getEncryptedMnemonic,
 	setEncryptedMnemonic,
@@ -62,6 +62,7 @@ import {
 	setEncryptedKey,
 	clearEncryptedKey
 } from './storage';
+import { getPrivateKey, refreshUnlockedPrivateKey } from './state';
 import type { TokenProof, EncryptedKey } from '../types';
 
 // ─── Constants ───────────────────────────────────────────────
@@ -158,21 +159,6 @@ export function clearRekeyJournal(): void {
 	}
 }
 
-/**
- * Resume a pending (interrupted) re-key: decrypt the journal's recovery anchor
- * (the encrypted NEW mnemonic) back to its plaintext so the UI can re-offer the
- * re-key or route into the NUT-13 restore flow.
- *
- * @throws if there is no pending journal, or if the PIN is wrong (AES-GCM auth).
- */
-export async function resumeRekeyMnemonic(pin: string): Promise<string> {
-	const journal = getRekeyJournal();
-	if (!journal) {
-		throw new Error('re-key resume failed: no pending re-key journal');
-	}
-	return decryptKey(journal.encryptedNewMnemonic, pin);
-}
-
 // ─── Swap orchestration (network only, no writes) ────────────
 
 /**
@@ -244,6 +230,43 @@ async function swapBatchForNewSeed(
 }
 
 // ─── Public API ──────────────────────────────────────────────
+
+/**
+ * R5 (TASK-266): verify via NUT-07 checkState whether ANY old proof was
+ * actually burned (SPENT/PENDING) at its mint. This guards the zero-success
+ * rollback against the "swap succeeded server-side but the response was lost"
+ * race: `swapProofs` can throw (e.g. a timeout after the mint committed) while
+ * `swappedAny` is still false — rolling back in that case would orphan the
+ * already-swapped funds.
+ *
+ * @returns true when at least one old proof is SPENT/PENDING (a swap went
+ *          through → do NOT roll back); false when every old proof is still
+ *          UNSPENT, or when checkState is unreachable (the same mint
+ *          unreachability that caused the swap to fail → assume nothing was
+ *          burned and roll back).
+ */
+async function anyOldProofBurned(proofs: StoredProof[]): Promise<boolean> {
+	const byMint = new Map<string, StoredProof[]>();
+	for (const p of proofs) {
+		const list = byMint.get(p.mint_url) ?? [];
+		list.push(p);
+		byMint.set(p.mint_url, list);
+	}
+	for (const [mintUrl, mintProofs] of byMint) {
+		try {
+			const res = await checkState(
+				mintUrl,
+				mintProofs.map((p) => ({ secret: p.secret, C: p.C }))
+			);
+			if (res.states.some((s) => s.state === 'SPENT' || s.state === 'PENDING')) {
+				return true;
+			}
+		} catch {
+			// checkState unreachable — assume nothing was burned (see docs above).
+		}
+	}
+	return false;
+}
 
 /**
  * Re-key the wallet: swap all unspent proofs for proofs derived from a NEW seed.
@@ -319,6 +342,17 @@ export async function rekeyWallet(
 	const prevMnemonic = getEncryptedMnemonic();
 	const prevSeed = getActiveSeed();
 	const prevEncryptedKey = getEncryptedKey();
+	// TASK-273 (fix 6c): capture the current in-memory unlocked key so a
+	// zero-success rollback can restore it (key/seed consistency must survive a
+	// failed re-key, not just the persisted blobs).
+	let prevPrivateKey: string | null = null;
+	try {
+		prevPrivateKey = getPrivateKey();
+	} catch {
+		// Wallet not unlocked (e.g. tests calling rekeyWallet directly) — there is
+		// no in-memory key to preserve; rollback will restore null.
+		prevPrivateKey = null;
+	}
 
 	const encryptedNewMnemonic = await encryptKey(newMnemonic, pin);
 	// A2: rotate the secp256k1 private key at the SAME anchor as the mnemonic,
@@ -330,6 +364,10 @@ export async function rekeyWallet(
 	setEncryptedMnemonic(encryptedNewMnemonic);
 	setEncryptedKey(encryptedNewKey);
 	setActiveSeed(newSeed);
+	// TASK-273 (fix 6c): rotate the in-memory unlocked key to the NEW key at the
+	// same anchor, so getPrivateKey() (used by mint/melt/swap) never diverges
+	// from the NEW seed's derived key after a no-skip re-key.
+	refreshUnlockedPrivateKey(newPrivateKey);
 	setRekeyJournal({ status: 'pending', encryptedNewMnemonic, startedAt: Date.now() });
 
 	// Phase A — swap (network) + per-batch commit. Each NUT-03 batch is the
@@ -377,16 +415,28 @@ export async function rekeyWallet(
 		}
 	} catch (err) {
 		if (!swappedAny) {
-			// Zero-success: NOTHING was burned at the mint → safe to restore the
-			// pre-rekey wallet state (mnemonic, key, seed, journal) atomically.
-			if (prevMnemonic) setEncryptedMnemonic(prevMnemonic);
-			else clearEncryptedMnemonic();
-			if (prevEncryptedKey) setEncryptedKey(prevEncryptedKey);
-			else clearEncryptedKey();
-			if (prevSeed) setActiveSeed(prevSeed);
-			else clearActiveSeed();
-			clearRekeyJournal();
-			throw err;
+			// R5 (TASK-266): confirm via NUT-07 that the mint did NOT actually
+			// burn any old proof before rolling back (see anyOldProofBurned).
+			// If a swap went through server-side but the response was lost, we
+			// must NOT roll back — the swapped funds would be orphaned.
+			const burned = await anyOldProofBurned(proofs);
+			if (!burned) {
+				// Zero-success: NOTHING was burned at the mint → safe to restore
+				// the pre-rekey wallet state (mnemonic, key, seed, journal)
+				// atomically.
+				if (prevMnemonic) setEncryptedMnemonic(prevMnemonic);
+				else clearEncryptedMnemonic();
+				if (prevEncryptedKey) setEncryptedKey(prevEncryptedKey);
+				else clearEncryptedKey();
+				if (prevSeed) setActiveSeed(prevSeed);
+				else clearActiveSeed();
+				// TASK-273 (fix 6c): restore the in-memory key too (atomicity).
+				refreshUnlockedPrivateKey(prevPrivateKey);
+				clearRekeyJournal();
+				throw err;
+			}
+			// A swap actually burned old proofs → fall through to the
+			// partial-success handling below (keep the anchor + journal).
 		}
 		// Partial success: some batches were already swapped + committed. The NEW
 		// mnemonic/seed/key + journal are the recovery anchor for those proofs and

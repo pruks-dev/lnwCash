@@ -232,6 +232,18 @@ export async function clearAllWalletData(): Promise<void> {
 	clearWalletMetadata();
 	clearAllCounters();
 
+	// TASK-273 (fix 5): wipe the ENTIRE localStorage (not selective key counting)
+	// so a full delete leaves ZERO residue — rekey journal, lockout counter +
+	// device secret, active mint, autolock timeout, keyset cache, mint configs,
+	// and settings. The explicit clear*() calls above also removed the native
+	// secure-storage mirrors (Android Keystore / iOS Keychain), which
+	// localStorage.clear() cannot reach.
+	try {
+		localStorage.clear();
+	} catch {
+		// localStorage unavailable — best effort
+	}
+
 	// Clear proofs DB (may fail in test environments — handle gracefully)
 	try {
 		const { deleteProofDB } = await import('./proofsDb');

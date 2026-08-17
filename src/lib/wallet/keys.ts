@@ -22,7 +22,7 @@
  * Backward compatibility (dual support):
  * - Legacy wallets used a 24-word direct-mapped phrase (32-byte key + 1-byte
  *   SHA-256 checksum → 33 bytes → 24 × 11-bit words). Those wallets remain
- *   fully unlockable via the legacy path; no forced migration.
+ *   fully unlockable via the legacy path; no forced re-key.
  */
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { sha256, sha512 } from '@noble/hashes/sha2.js';

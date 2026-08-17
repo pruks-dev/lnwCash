@@ -199,10 +199,10 @@ export async function getBalanceByMint(): Promise<Record<string, number>> {
 	return breakdown;
 }
 
-// ─── TASK-101 (F-072): Proof Migration ────────────────────────
+// ─── TASK-101 (F-072): Proof Re-tagging ───────────────────────
 
 /**
- * Information about a known mint for proof migration.
+ * Information about a known mint for proof re-tagging.
  * Used to cross-check proofs' keyset_id against registered mints.
  */
 export interface KnownMintInfo {
@@ -213,9 +213,9 @@ export interface KnownMintInfo {
 }
 
 /**
- * Migration result — counts of what happened during migration.
+ * Re-tagging result — counts of what happened during re-tagging.
  */
-export interface MigrationResult {
+export interface RetaggingResult {
 	/** Proofs that were already correctly tagged */
 	unchanged: number;
 	/** Proofs re-tagged (mint_url updated) to correct mint */
@@ -229,7 +229,7 @@ export interface MigrationResult {
 /**
  * TASK-101 (F-072): Update a proof's mint_url field.
  *
- * Used during proof migration when a proof's keyset_id matches a different
+ * Used during proof re-tagging when a proof's keyset_id matches a different
  * mint than its stored mint_url — re-tags the proof so it appears under
  * the correct mint's unspent balance.
  */
@@ -265,7 +265,7 @@ export async function markOrphaned(localId: string): Promise<void> {
 }
 
 /**
- * TASK-101 (F-072): Scan all proofs and migrate/re-tag based on known mint keysets.
+ * TASK-101 (F-072): Scan all proofs and re-tag based on known mint keysets.
  *
  * For each proof in the database:
  *  1. Look up its keyset_id against all known mints' keysets
@@ -279,13 +279,13 @@ export async function markOrphaned(localId: string): Promise<void> {
  *
  * @param knownMints - Array of registered mints with their known keyset IDs
  * @param dryRun - If true, only reports what would change without applying changes
- * @returns MigrationResult with counts
+ * @returns RetaggingResult with counts
  */
-export async function migrateProofs(
+export async function retagProofs(
 	knownMints: KnownMintInfo[],
 	dryRun: boolean = false
-): Promise<MigrationResult> {
-	const result: MigrationResult = {
+): Promise<RetaggingResult> {
+	const result: RetaggingResult = {
 		unchanged: 0,
 		retagged: 0,
 		orphaned: 0,
@@ -382,10 +382,10 @@ export async function clearOrphaned(localId: string): Promise<void> {
 }
 
 /**
- * TASK-101 (F-072): Check if migration is needed (any proofs with mismatch exist).
- * Quick check before running full migration — returns true if migration needed.
+ * TASK-101 (F-072): Check if re-tagging is needed (any proofs with mismatch exist).
+ * Quick check before running full re-tagging — returns true if re-tagging needed.
  */
-export async function needsMigration(knownMints: KnownMintInfo[]): Promise<boolean> {
-	const dryRunResult = await migrateProofs(knownMints, true);
+export async function needsRetagging(knownMints: KnownMintInfo[]): Promise<boolean> {
+	const dryRunResult = await retagProofs(knownMints, true);
 	return dryRunResult.retagged > 0 || dryRunResult.orphaned > 0;
 }

@@ -24,6 +24,7 @@ const { MINT_A, MINT_B, KEYSET_ID, NEW_MNEMONIC, OLD_MNEMONIC } = vi.hoisted(() 
 
 vi.mock('../../cashu/client', () => ({
 	swapProofs: vi.fn(),
+	checkState: vi.fn(),
 	CashuError: class extends Error {},
 	MintUnreachableError: class extends Error {},
 	NetworkError: class extends Error {},
@@ -53,7 +54,6 @@ import {
 	NUT29_MAX_BATCH_SIZE,
 	getRekeyJournal,
 	clearRekeyJournal,
-	resumeRekeyMnemonic,
 	REKEY_JOURNAL_KEY
 } from '../rekey';
 import {
@@ -65,16 +65,19 @@ import {
 } from '../proofsDb';
 import { setActiveSeed, clearActiveSeed, getActiveSeed, deriveSecret } from '../nut13';
 import { mnemonicToSeed, seedToPrivateKey } from '../keys';
+import { unlockWallet, getPrivateKey } from '../state';
 import { getCounterK, setCounterK, clearAllCounters, STORAGE_KEY } from '../counterK';
 import { clearAllWalletData, getEncryptedMnemonic, getEncryptedKey } from '../storage';
 import { importSeed, exportSeed } from '../seed';
 import { swapProofs } from '../../cashu/client';
+import { checkState } from '../../cashu/client';
 import { decryptKey } from '../../crypto/encrypt';
 import type { TokenProof } from '../../types';
 
 const TEST_PIN = '123456';
 
 const mockSwapProofs = vi.mocked(swapProofs);
+const mockCheckState = vi.mocked(checkState);
 
 /** A restored proof whose secret is arbitrary (NOT derivable from the new seed). */
 function makeProof(i: number, mintUrl: string): TokenProof {
@@ -101,6 +104,9 @@ describe('Re-key (rekey.ts — atomic re-seed → swap)', () => {
 		clearRekeyJournal();
 		vi.clearAllMocks();
 		defaultSwapImpl();
+		// R5 (TASK-266): default NUT-07 checkState → nothing burned (empty states),
+		// so the zero-success rollback path proceeds as before.
+		mockCheckState.mockResolvedValue({ states: [] });
 		clearActiveSeed();
 	});
 
@@ -428,6 +434,92 @@ describe('Re-key (rekey.ts — atomic re-seed → swap)', () => {
 		// The pending journal is the recovery anchor: it must still be readable and
 		// decrypt back to the NEW mnemonic so the UI can re-offer resume/restore.
 		expect(getRekeyJournal()).not.toBeNull();
-		await expect(resumeRekeyMnemonic(TEST_PIN)).resolves.toBe(NEW_MNEMONIC);
+		await expect(
+			decryptKey(getRekeyJournal()!.encryptedNewMnemonic, TEST_PIN)
+		).resolves.toBe(NEW_MNEMONIC);
+	});
+
+	// ─── TASK-266 (R5): NUT-07 checkState guard before rollback ──
+
+	it('zero-success rollback: NUT-07 confirms UNSPENT → rolls back to original state', async () => {
+		await importSeed(OLD_MNEMONIC, TEST_PIN, 'Test Wallet');
+		await addProofs([makeProof(0, MINT_A)], MINT_A, KEYSET_ID);
+
+		mockSwapProofs.mockRejectedValue(new Error('mint unreachable'));
+		// NUT-07 checkState is reachable and confirms the OLD proof was never
+		// burned (UNSPENT) → the zero-success rollback is safe.
+		mockCheckState.mockResolvedValue({
+			states: [{ secret: `secret-${MINT_A}-0`, state: 'UNSPENT' }]
+		});
+
+		await expect(rekeyWallet(NEW_MNEMONIC, TEST_PIN)).rejects.toThrow(/mint unreachable/);
+
+		// checkState was actually consulted before the rollback decision.
+		expect(mockCheckState).toHaveBeenCalledWith(
+			MINT_A,
+			expect.arrayContaining([{ secret: `secret-${MINT_A}-0`, C: 'C-0' }])
+		);
+
+		// Original state restored: OLD mnemonic + key, journal cleared.
+		expect(await decryptKey(getEncryptedMnemonic()!, TEST_PIN)).toBe(OLD_MNEMONIC);
+		expect(await decryptKey(getEncryptedKey()!, TEST_PIN)).toBe(seedToPrivateKey(OLD_MNEMONIC));
+		expect(getRekeyJournal()).toBeNull();
+
+		// Old proof untouched (never burned).
+		const stored = await getAllProofs();
+		expect(stored.map((p) => p.secret)).toEqual([`secret-${MINT_A}-0`]);
+	});
+
+	it('zero-success + server-side burn detected (NUT-07 SPENT) → NO rollback (anchor kept)', async () => {
+		await importSeed(OLD_MNEMONIC, TEST_PIN, 'Test Wallet');
+		await addProofs([makeProof(0, MINT_A)], MINT_A, KEYSET_ID);
+
+		// The swap "failed" from the client's view (response lost), but the mint
+		// actually committed — NUT-07 reports the old proof as SPENT.
+		mockSwapProofs.mockRejectedValue(new Error('response lost after commit'));
+		mockCheckState.mockResolvedValue({
+			states: [{ secret: `secret-${MINT_A}-0`, state: 'SPENT' }]
+		});
+
+		// NOT the raw zero-success error — upgraded to the partial-success
+		// "resume via restore" path (anchor + journal MUST be kept).
+		await expect(rekeyWallet(NEW_MNEMONIC, TEST_PIN)).rejects.toThrow(/resume via restore/i);
+
+		// Anchor kept: NEW mnemonic persisted, journal NOT cleared.
+		expect(await decryptKey(getEncryptedMnemonic()!, TEST_PIN)).toBe(NEW_MNEMONIC);
+		expect(getRekeyJournal()).not.toBeNull();
+	});
+
+	// ─── TASK-273 (fix 6c): in-memory unlocked key refresh after re-key ───
+
+	it('re-key (no-skip) refreshes the in-memory unlocked key to the NEW key (6c)', async () => {
+		await importSeed(OLD_MNEMONIC, TEST_PIN, 'Test Wallet');
+		await unlockWallet(TEST_PIN);
+		// Pre-rekey: in-memory key is the OLD key.
+		expect(getPrivateKey()).toBe(seedToPrivateKey(OLD_MNEMONIC));
+
+		await addProofs([makeProof(0, MINT_A)], MINT_A, KEYSET_ID);
+
+		await rekeyWallet(NEW_MNEMONIC, TEST_PIN);
+
+		// Key/seed match after a no-skip re-key: getPrivateKey() (used by
+		// mint/melt/swap) now returns the NEW seed's derived key, not the stale
+		// OLD key — so deterministic operations won't mismatch.
+		expect(getPrivateKey()).toBe(seedToPrivateKey(NEW_MNEMONIC));
+		expect(getPrivateKey()).not.toBe(seedToPrivateKey(OLD_MNEMONIC));
+	});
+
+	it('zero-success rollback restores the in-memory unlocked key to the OLD key (6c atomicity)', async () => {
+		await importSeed(OLD_MNEMONIC, TEST_PIN, 'Test Wallet');
+		await unlockWallet(TEST_PIN);
+		await addProofs([makeProof(0, MINT_A)], MINT_A, KEYSET_ID);
+
+		mockSwapProofs.mockRejectedValue(new Error('mint unreachable'));
+
+		await expect(rekeyWallet(NEW_MNEMONIC, TEST_PIN)).rejects.toThrow(/mint unreachable/);
+
+		// The in-memory key is restored to the OLD key along with the persisted
+		// blobs — key/seed consistency survives the zero-success rollback.
+		expect(getPrivateKey()).toBe(seedToPrivateKey(OLD_MNEMONIC));
 	});
 });

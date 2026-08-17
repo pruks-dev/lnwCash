@@ -160,11 +160,11 @@ describe('TASK-F2-CHANGE-DERIVED: transfer change deterministic, send random', (
 		}
 	});
 
-	it('legacy wallet (no active seed) → clear migration error, NOT random fallback', async () => {
+	it('legacy wallet (no active seed) → clear re-key/recover error, NOT random fallback', async () => {
 		await addProofs([makeProof('p1', 32)], MINT_URL, KEYSET_ID);
 		clearActiveSeed(); // simulate a legacy wallet with no mnemonic
 
-		await expect(sendTokens(10, MINT_URL)).rejects.toThrow(/seed|migrat/i);
+		await expect(sendTokens(10, MINT_URL)).rejects.toThrow(/seed|re-key|recover/i);
 		// counter must remain untouched (no random change fallback)
 		expect(getCounterK(KEYSET_ID)).toBe(0);
 	});

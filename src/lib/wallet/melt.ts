@@ -78,15 +78,15 @@ export interface MeltCompleteResult {
  * reproducible from the seed (NUT-9 restore) — otherwise change funds are
  * silently lost on restore.
  *
- * @throws a clear migration error if no active seed is set (legacy wallet with
- *   no mnemonic) — never falls back to a random secret.
+ * @throws a clear re-key/recover error if no active seed is set (legacy wallet
+ *   with no mnemonic) — never falls back to a random secret.
  */
 function requireChangeSeed(): Uint8Array {
 	const seed = getActiveSeed();
 	if (!seed) {
 		throw new Error(
 			'NUT-13: no active wallet seed — deterministic melt change requires a seed-phrase wallet. ' +
-			'This legacy wallet has no mnemonic; migrate the wallet (TASK-245) before melting, ' +
+			'This legacy wallet has no mnemonic; re-key or recover to a seed-phrase wallet before melting, ' +
 			'otherwise change funds would be unrecoverable on restore.'
 		);
 	}

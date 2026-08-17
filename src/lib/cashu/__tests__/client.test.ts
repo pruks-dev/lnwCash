@@ -11,6 +11,7 @@ import {
 	requestMeltQuote,
 	meltTokens,
 	checkState,
+	swapProofs,
 	CashuError,
 	MintUnreachableError,
 	NetworkError
@@ -422,6 +423,40 @@ describe('Cashu mint HTTP client', () => {
 			const body = JSON.parse(init.body as string);
 			expect(body.Ys).toContain(correctY);
 			expect(body.Ys).not.toContain(wrongY);
+		});
+	});
+
+	// ─── swapProofs (NUT-03) ──────────────────────────────────
+
+	describe('swapProofs', () => {
+		// A well-formed unblinded signature is a compressed secp256k1 point:
+		// 33 bytes / 66 hex chars with a 02/03 prefix.
+		const VALID_C = '02' + 'ab'.repeat(32); // 66 chars
+		const VALID_PROOF = { secret: '00'.repeat(32), C: VALID_C, amount: 1, id: 'ks' };
+
+		it('TASK-267 (R4): rejects a proof with a wrong signature (C) length', async () => {
+			await expect(
+				swapProofs(MINT_A, [{ secret: '00'.repeat(32), C: '02abcd', amount: 1, id: 'ks' }])
+			).rejects.toThrow(/signature/i);
+			expect(mockFetch).not.toHaveBeenCalled();
+		});
+
+		it('TASK-267 (R4): rejects a proof with a non-hex / wrong-prefix signature (C)', async () => {
+			await expect(
+				swapProofs(MINT_A, [{ secret: '00'.repeat(32), C: 'zz'.repeat(33), amount: 1, id: 'ks' }])
+			).rejects.toThrow(/signature/i);
+			expect(mockFetch).not.toHaveBeenCalled();
+		});
+
+		it('TASK-267 (R4): accepts a well-formed 66-char compressed-point signature and sends', async () => {
+			mockFetch.mockResolvedValueOnce({
+				ok: true,
+				json: () => Promise.resolve({ signatures: [{ id: 'ks', amount: 1, C_: VALID_C }] })
+			});
+
+			const res = await swapProofs(MINT_A, [VALID_PROOF]);
+			expect(res.signatures).toHaveLength(1);
+			expect(mockFetch).toHaveBeenCalledTimes(1);
 		});
 	});
 

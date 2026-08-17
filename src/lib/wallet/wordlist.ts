@@ -8,7 +8,7 @@
  *   "license", "lift"; containing non-standard "africa"/"after"). It is
  *   preserved verbatim (padded to 2048 entries at the tail) so legacy 24-word
  *   direct-mapped wallets still unlock and export exactly as before — no
- *   forced migration. The 3 padded tail entries were previously "undefined"
+ *   forced re-key. The 3 padded tail entries were previously "undefined"
  *   (indices 2045-2047); no valid legacy phrase ever referenced them.
  *
  * Source (canonical): https://github.com/bitcoin/bips/blob/master/bip-0039/english.txt

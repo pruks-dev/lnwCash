@@ -40,8 +40,12 @@
 
 	// TASK-220: Change PIN flow + toast + error types
 	import { showToast } from '$lib/stores/toast';
-	import { changePin } from '$lib/wallet/state';
+	import { changePin, deleteWallet } from '$lib/wallet/state';
 	import { InvalidPinError, WalletNotInitializedError } from '$lib/wallet/errors';
+
+	// TASK-265: Backup / Delete Wallet Data
+	import { exportSeed } from '$lib/wallet/seed';
+	import SeedGrid from '$lib/components/SeedGrid.svelte';
 
 	interface Props {
 		onBack?: () => void;
@@ -266,11 +270,167 @@
 		}
 	}
 
-	// TASK-220: "forgot PIN" → seed recovery (Setup recover flow via hash param).
-	function handleForgotPin() {
-		navigateTo('setup');
-		if (typeof window !== 'undefined') {
-			window.location.hash = '/setup?recover=1';
+	// ─── TASK-265: Backup ────────────────────────────────────────
+
+	// Backup modal state — PIN verify (phase 'pin') → SeedGrid (phase 'seed').
+	let showBackup: boolean = $state(false);
+	let backupPhase: 'pin' | 'seed' = $state('pin');
+	let backupPin: string = $state('');
+	let backupError: string = $state('');
+	let backupLoading: boolean = $state(false);
+	let backupSeed: string = $state('');
+	let backupShakeKey: number = $state(0);
+
+	const backupSeedWords = $derived(backupSeed.trim().split(/\s+/).filter(Boolean));
+
+	function openBackup() {
+		backupPhase = 'pin';
+		backupPin = '';
+		backupError = '';
+		backupLoading = false;
+		backupSeed = '';
+		backupShakeKey = 0;
+		showBackup = true;
+	}
+
+	function closeBackup() {
+		showBackup = false;
+		backupPin = '';
+		backupError = '';
+		backupLoading = false;
+		backupSeed = '';
+		backupPhase = 'pin';
+		backupShakeKey = 0;
+	}
+
+	// Verify PIN via exportSeed → on success reveal the recovery phrase.
+	// Seed is NEVER shown unless the correct PIN was provided first.
+	async function submitBackupPin() {
+		backupError = '';
+		if (backupPin.length < PIN_LENGTH) {
+			backupError = $_('screen.register.error_too_short');
+			return;
+		}
+		backupLoading = true;
+		try {
+			const seed = await exportSeed(backupPin);
+			backupSeed = seed;
+			backupPhase = 'seed';
+		} catch (e) {
+			if (e instanceof InvalidPinError) {
+				backupError = $_('settings.backup.wrong_pin');
+			} else if (e instanceof WalletNotInitializedError) {
+				backupError = e.message;
+			} else if (e instanceof Error) {
+				backupError = e.message;
+			} else {
+				backupError = $_('common.error');
+			}
+			backupPin = '';
+			backupShakeKey += 1;
+		} finally {
+			backupLoading = false;
+		}
+	}
+
+	function handleBackupPinDigit(digit: string) {
+		backupError = '';
+		if (backupLoading) return;
+		if (backupPin.length >= PIN_LENGTH) return;
+		backupPin += digit;
+		if (backupPin.length === PIN_LENGTH) void submitBackupPin();
+	}
+
+	function handleBackupPinBackspace() {
+		backupError = '';
+		if (backupLoading) return;
+		backupPin = backupPin.slice(0, -1);
+	}
+
+	// ─── TASK-265: Delete Wallet Data ───────────────────────────
+
+	// Delete modal state — PIN verify (phase 'pin') → confirm (phase 'confirm').
+	let showDelete: boolean = $state(false);
+	let deletePhase: 'pin' | 'confirm' = $state('pin');
+	let deletePin: string = $state('');
+	let deleteError: string = $state('');
+	let deleteLoading: boolean = $state(false);
+	let deleteShakeKey: number = $state(0);
+
+	function openDelete() {
+		deletePhase = 'pin';
+		deletePin = '';
+		deleteError = '';
+		deleteLoading = false;
+		deleteShakeKey = 0;
+		showDelete = true;
+	}
+
+	function closeDelete() {
+		showDelete = false;
+		deletePin = '';
+		deleteError = '';
+		deleteLoading = false;
+		deletePhase = 'pin';
+		deleteShakeKey = 0;
+	}
+
+	// Verify PIN (via exportSeed — reveals nothing, just verifies) before the
+	// destructive confirm dialog can appear.
+	async function submitDeletePin() {
+		deleteError = '';
+		if (deletePin.length < PIN_LENGTH) {
+			deleteError = $_('screen.register.error_too_short');
+			return;
+		}
+		deleteLoading = true;
+		try {
+			await exportSeed(deletePin);
+			deletePhase = 'confirm';
+		} catch (e) {
+			if (e instanceof InvalidPinError) {
+				deleteError = $_('settings.delete.wrong_pin');
+			} else if (e instanceof Error) {
+				deleteError = e.message;
+			} else {
+				deleteError = $_('common.error');
+			}
+			deletePin = '';
+			deleteShakeKey += 1;
+		} finally {
+			deleteLoading = false;
+		}
+	}
+
+	function handleDeletePinDigit(digit: string) {
+		deleteError = '';
+		if (deleteLoading) return;
+		if (deletePin.length >= PIN_LENGTH) return;
+		deletePin += digit;
+		if (deletePin.length === PIN_LENGTH) void submitDeletePin();
+	}
+
+	function handleDeletePinBackspace() {
+		deleteError = '';
+		if (deleteLoading) return;
+		deletePin = deletePin.slice(0, -1);
+	}
+
+	// Full wipe is permanent — only runs after PIN verify + explicit confirm.
+	async function confirmDelete() {
+		deleteError = '';
+		deleteLoading = true;
+		try {
+			await deleteWallet();
+			closeDelete();
+			navigateTo('setup');
+			if (typeof window !== 'undefined') {
+				window.location.hash = '/setup';
+			}
+		} catch (e) {
+			deleteError = e instanceof Error ? e.message : $_('common.error');
+		} finally {
+			deleteLoading = false;
 		}
 	}
 
@@ -451,6 +611,37 @@
 			</div>
 		</Card>
 
+		<!-- ─── Backup Section (TASK-265) ────────────────────── -->
+		<Card variant="basic" padding="md">
+			<div class="section">
+				<Heading level="h4">{$_('settings.backup.title')}</Heading>
+				<Body size="sm" color="secondary">{$_('settings.backup.description')}</Body>
+
+				<ListItem
+					title={$_('settings.backup.show_seed')}
+					onclick={openBackup}
+				>
+					{#snippet trailing()}
+						<ArrowRight size={16} />
+					{/snippet}
+				</ListItem>
+			</div>
+		</Card>
+
+		<!-- ─── Delete Wallet Data Section (TASK-265) ──────── -->
+		<Card variant="basic" padding="md">
+			<div class="section">
+				<Heading level="h4">{$_('settings.delete.title')}</Heading>
+				<Button
+					variant="secondary"
+					onclick={openDelete}
+					ariaLabel={$_('settings.delete.button')}
+				>
+					{#snippet children()}{$_('settings.delete.button')}{/snippet}
+				</Button>
+			</div>
+		</Card>
+
 		<!-- ─── About Section ─────────────────────────────── -->
 		<Card variant="basic" padding="md">
 			<div class="section">
@@ -547,10 +738,97 @@
 			{#if changePinError}
 				<p class="change-pin-error" role="alert">{changePinError}</p>
 			{/if}
+		</div>
+	</Modal>
 
-			<button type="button" class="forgot-pin-link" onclick={handleForgotPin}>
-				{$_('settings.change_pin.forgot_pin')}
-			</button>
+	<!-- TASK-265: Backup modal — PIN verify → SeedGrid (12-word) -->
+	<Modal open={showBackup} onclose={closeBackup} title={$_('settings.backup.title')}>
+		<div class="backup-form">
+			{#if backupPhase === 'pin'}
+				<Body size="sm" color="secondary" align="center">
+					{$_('settings.backup.verify_prompt')}
+				</Body>
+				<div class="change-pin-entry">
+					<PinDots
+						length={backupPin.length}
+						total={PIN_LENGTH}
+						error={!!backupError}
+						shakeKey={backupShakeKey}
+					/>
+					<Keypad
+						onDigit={handleBackupPinDigit}
+						onBackspace={handleBackupPinBackspace}
+						disabled={backupLoading}
+						shuffle={pinShuffle}
+					/>
+				</div>
+				{#if backupError}
+					<p class="change-pin-error" role="alert">{backupError}</p>
+				{/if}
+			{:else}
+				<!-- no-screenshot banner (reuses create-flow copy) -->
+				<div class="no-screenshot-banner" role="note">
+					<Body size="sm" weight="medium">{$_('recovery.warning.title')}</Body>
+					<Body size="sm" color="secondary">{$_('recovery.warning.no_screenshot')}</Body>
+				</div>
+				<SeedGrid words={backupSeedWords} />
+				<ul class="paper-warnings">
+					<li><Body size="sm" color="secondary">{$_('recovery.warning.paper_only')}</Body></li>
+					<li><Body size="sm" color="secondary">{$_('recovery.warning.never_share')}</Body></li>
+					<li><Body size="sm" color="secondary">{$_('recovery.warning.anyone_access')}</Body></li>
+					<li><Body size="sm" color="secondary">{$_('recovery.warning.lose_access')}</Body></li>
+				</ul>
+			{/if}
+		</div>
+	</Modal>
+
+	<!-- TASK-265: Delete modal — PIN verify → confirm dialog (strong warning) -->
+	<Modal open={showDelete} onclose={closeDelete} title={$_('settings.delete.title')}>
+		<div class="backup-form">
+			{#if deletePhase === 'pin'}
+				<Body size="sm" color="secondary" align="center">
+					{$_('settings.delete.verify_prompt')}
+				</Body>
+				<div class="change-pin-entry">
+					<PinDots
+						length={deletePin.length}
+						total={PIN_LENGTH}
+						error={!!deleteError}
+						shakeKey={deleteShakeKey}
+					/>
+					<Keypad
+						onDigit={handleDeletePinDigit}
+						onBackspace={handleDeletePinBackspace}
+						disabled={deleteLoading}
+						shuffle={pinShuffle}
+					/>
+				</div>
+				{#if deleteError}
+					<p class="change-pin-error" role="alert">{deleteError}</p>
+				{/if}
+			{:else}
+				<div class="delete-warning" role="alert">
+					<Heading level="h4">{$_('settings.delete.confirm_title')}</Heading>
+					<Body size="sm">{$_('settings.delete.warning')}</Body>
+					<Body size="sm" color="secondary">{$_('settings.delete.confirm_body')}</Body>
+				</div>
+				{#if deleteError}
+					<p class="change-pin-error" role="alert">{deleteError}</p>
+				{/if}
+				<div class="delete-actions">
+					<Button variant="ghost" onclick={closeDelete} ariaLabel={$_('common.cancel')}>
+						{#snippet children()}{$_('common.cancel')}{/snippet}
+					</Button>
+					<Button
+						variant="primary"
+						onclick={confirmDelete}
+						loading={deleteLoading}
+						ariaLabel={$_('settings.delete.confirm_button')}
+					>
+						{#snippet children()}{$_('settings.delete.confirm_button')}{/snippet}
+					</Button>
+				</div>
+			{/if}
 		</div>
 	</Modal>
 </div>
@@ -789,24 +1067,51 @@
 		gap: var(--space-xs);
 	}
 
-	.forgot-pin-link {
-		align-self: center;
-		padding: var(--space-xs) var(--space-sm);
-		background: none;
-		border: none;
-		color: var(--color-primary);
-		font-size: var(--font-size-sm);
-		font-weight: var(--font-weight-medium);
-		cursor: pointer;
-		text-decoration: underline;
-	}
-
-	.forgot-pin-link:hover,
-	.forgot-pin-link:focus-visible {
-		color: var(--color-primary-hover);
-	}
-
 	.bottom-spacer {
 		height: 80px;
+	}
+
+	/* TASK-265: Backup / Delete modal forms */
+	.backup-form {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+		min-width: 280px;
+	}
+
+	.no-screenshot-banner {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		padding: var(--space-sm) var(--space-md);
+		background: var(--color-surface-variant);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+	}
+
+	.paper-warnings {
+		margin: 0;
+		padding-left: var(--space-lg);
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-xs);
+	}
+
+	.delete-warning {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+		padding: var(--space-md);
+		background: rgba(211, 47, 47, 0.12);                                  /* fallback red #d32f2f */
+		background: color-mix(in srgb, var(--color-error) 12%, transparent);
+		border: 1px solid var(--color-error);
+		border-radius: var(--radius-md);
+	}
+
+	.delete-actions {
+		display: flex;
+		gap: var(--space-sm);
+		justify-content: flex-end;
+		margin-top: var(--space-xs);
 	}
 </style>

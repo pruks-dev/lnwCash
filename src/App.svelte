@@ -83,6 +83,18 @@
 		const routeCleanup = onRouteChange((screen: ScreenKey) => {
 			activeScreen = screen;
 			showQRScan = false;
+			// TASK-272 (fix 6b/7): <Setup> renders ONLY under appView === 'setup'.
+			// Navigating to the /setup route (delete → reset, forgot-PIN, direct
+			// URL) must flip appView to 'setup' so the centered setup-container
+			// renders — never a duplicate <Setup> inside main-content.
+			if (screen === 'setup') {
+				try {
+					walletStatus = getWalletStatus();
+				} catch {
+					// ignore — keep the previous walletStatus
+				}
+				appView = 'setup';
+			}
 		});
 
 		// TASK-092 (F-061): Wallet state + auto-unlock via sessionStorage PIN
@@ -229,6 +241,18 @@
 			// TASK-218: arm auto-lock app-wide + reset the lock signal
 			walletLockedStore.set(false);
 			startAutoLock();
+			// TASK-272 (fix 6a): after flipping to 'main', clear a stale '/setup'
+			// hash and navigate home. <Setup> now renders ONLY under
+			// appView === 'setup' (fix 7), so a leftover /setup hash would
+			// otherwise leave the main content blank after unlock/create.
+			if (getCurrentScreen() === 'setup') {
+				navigateTo('home');
+			}
+		} else if (state.state === 'LOCKED') {
+			// TASK-272 (fix 6d): handle LOCKED (not only UNLOCKED) — keep the app
+			// on the setup (unlock) screen instead of ignoring the state and
+			// leaving a stale view behind.
+			appView = 'setup';
 		}
 	}
 
@@ -317,10 +341,6 @@
 					<History />
 				{:else if (activeScreen as string) === 'settings'}
 					<Settings onBack={handleBack} />
-				{:else if (activeScreen as string) === 'setup'}
-					<!-- TASK-220: render Setup (e.g. "forgot PIN" → seed recovery)
-					     when navigating to the setup route while the wallet is unlocked -->
-					<Setup onWalletReady={handleWalletReady} />
 				{/if}
 			</div>
 

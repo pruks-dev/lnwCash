@@ -90,7 +90,7 @@ export async function sendTokens(
 			if (!changeSeed) {
 				throw new Error(
 					'NUT-13: no active wallet seed — deterministic change requires a seed-phrase wallet. ' +
-					'This legacy wallet has no mnemonic; migrate the wallet (TASK-245) before sending, ' +
+					'This legacy wallet has no mnemonic; re-key or recover to a seed-phrase wallet before sending, ' +
 					'otherwise change funds would be unrecoverable on restore.'
 				);
 			}

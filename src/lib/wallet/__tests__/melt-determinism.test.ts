@@ -185,15 +185,15 @@ describe('NUT-13 deterministic melt change (TASK-244)', () => {
 		expect(getCounterK(KEYSET_ID)).toBe(4);
 	});
 
-	it('legacy wallet (no active seed) → clear migration error, NOT random fallback', async () => {
+	it('legacy wallet (no active seed) → clear re-key/recover error, NOT random fallback', async () => {
 		clearActiveSeed(); // simulate legacy wallet with no mnemonic
 
 		const result = await meltFlow(MINT_URL, 'lnbc...', 50);
 
 		expect(result.success).toBe(false);
 		expect(result.error).toBeTruthy();
-		expect(result.error).toMatch(/seed|migrat/i);
-		// must NOT silently fall back to random — error must point at migration
+		expect(result.error).toMatch(/seed|re-key|recover/i);
+		// must NOT silently fall back to random — error must point at re-key/recover
 		expect(result.error).not.toContain('preimage-abc');
 	});
 });

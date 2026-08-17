@@ -16,7 +16,7 @@ import { seedToPrivateKey } from '$lib/wallet/seed';
 import { generateMnemonic } from '$lib/wallet/keys';
 import { restoreWallet } from '$lib/wallet/restore';
 import { fetchAndCacheKeysets } from '$lib/cashu/keyset';
-import { rekeyWallet } from '$lib/wallet/rekey';
+import { rekeyWallet, getRekeyJournal, clearRekeyJournal } from '$lib/wallet/rekey';
 
 // Distinct 12-word phrases.
 const RECOVER_MNEMONIC =
@@ -122,7 +122,8 @@ vi.mock('$lib/cashu/keyset', () => ({
 
 vi.mock('$lib/wallet/rekey', () => ({
 	rekeyWallet: vi.fn(async () => ({ success: true, swappedCount: 0, receivedCount: 0, batches: 0 })),
-	getRekeyJournal: vi.fn(() => null)
+	getRekeyJournal: vi.fn(() => null),
+	clearRekeyJournal: vi.fn()
 }));
 
 // ─── Helpers ────────────────────────────────────────────────
@@ -265,5 +266,62 @@ describe('Setup recover — TASK-259 mint selection + re-key', () => {
 		await fireEvent.click(screen.getByText('screen.setup.rekey_skip_confirm'));
 		await waitFor(() => expect(screen.getByText('screen.setup.done_title')).toBeTruthy());
 		expect(rekeyWallet).not.toHaveBeenCalled();
+	});
+
+	// ─── TASK-266 (R1/R2): resume + journal clear ────────────
+
+	it('resume re-key (R1): pressing resume triggers a full reload (no longer a no-op)', async () => {
+		vi.mocked(getWalletStatus).mockReturnValue({
+			state: 'LOCKED',
+			walletName: 'LNWCASH Wallet',
+			createdAt: 1
+		});
+		vi.mocked(getRekeyJournal).mockReturnValue({
+			status: 'pending',
+			encryptedNewMnemonic: { salt: 's', iv: 'i', data: 'd' },
+			startedAt: Date.now()
+		} as never);
+
+		// jsdom's `window.location.reload` is a non-configurable own property that
+		// throws "Not implemented" — swap the whole (configurable) `window.location`
+		// for a stub whose `reload` is a spy.
+		const reloadSpy = vi.fn();
+		const originalLocation = window.location;
+		Object.defineProperty(window, 'location', {
+			configurable: true,
+			writable: true,
+			value: { ...originalLocation, reload: reloadSpy }
+		});
+
+		try {
+			render(Setup, {});
+
+			// pending-rekey resume banner is shown in unlock mode.
+			expect(screen.getByText('screen.setup.rekey_resume_title')).toBeTruthy();
+
+			await fireEvent.click(
+				screen.getByRole('button', { name: 'screen.setup.rekey_resume_action' })
+			);
+
+			// R1: the resume action is no longer a no-op — it forces a reload so the
+			// mount $effect re-runs and routes into the recover flow.
+			expect(reloadSpy).toHaveBeenCalled();
+		} finally {
+			Object.defineProperty(window, 'location', {
+				configurable: true,
+				writable: true,
+				value: originalLocation
+			});
+		}
+	});
+
+	it('restore success clears the pending re-key journal (R2: banner not stuck)', async () => {
+		vi.mocked(clearRekeyJournal).mockClear();
+		const { container } = render(Setup, {});
+		await reachRekeyStep(container);
+
+		// A successful NUT-9 restore resolves the pending re-key → journal cleared,
+		// so the resume banner does not stay stuck on the next unlock.
+		expect(clearRekeyJournal).toHaveBeenCalled();
 	});
 });

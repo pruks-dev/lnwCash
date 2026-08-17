@@ -26,7 +26,9 @@ import {
 	type WalletStateEnum
 } from './storage';
 import { deleteProofDB } from './proofsDb';
-import { setWalletMetadata } from '../storage/local';
+import { deleteDatabase } from '../storage/db';
+import { setWalletMetadata, clearSettings } from '../storage/local';
+import { clearMintConfigs } from './store';
 import { InvalidPinError, WalletLockedError, WalletNotInitializedError } from './errors';
 import { setActiveSeed, clearActiveSeed, seedFromMnemonic } from './nut13';
 import { clearAllCounters } from './counterK';
@@ -223,7 +225,21 @@ export async function deleteWallet(): Promise<void> {
 	unlockedPrivateKey = null;
 	clearActiveSeed();
 	clearSessionPin();
+	// TASK-265 + TASK-273 (fix 5): reset the in-memory mint config store + user
+	// settings, then wipe storage COMPLETELY — clearAllWalletData() removes the
+	// core keys (+ their native secure-storage mirrors) + IndexedDB proofs, and
+	// the final localStorage.clear() is the authoritative full wipe that removes
+	// EVERY remaining key (rekey journal, lockout counter + device secret, active
+	// mint, autolock timeout, keyset cache) so localStorage.length === 0.
+	clearMintConfigs();
+	clearSettings();
 	await clearAllWalletData();
+	localStorage.clear();
+	// TASK-276 (fix 8): also delete the transactions IndexedDB. The wallet keeps
+	// TWO IndexedDB stores — proofsDb.ts (proofs, already wiped by
+	// clearAllWalletData()/deleteProofDB) and storage/db.ts (transactions). A
+	// full wallet delete must wipe BOTH so no transaction history survives.
+	await deleteDatabase();
 }
 
 /**
@@ -257,6 +273,25 @@ export function getPrivateKey(): string {
 		throw new WalletLockedError();
 	}
 	return unlockedPrivateKey;
+}
+
+/**
+ * TASK-273 (fix 6c): refresh the in-memory unlocked private key after a re-key.
+ *
+ * rekeyWallet() persists the NEW encrypted key + activates the NEW seed BEFORE
+ * swapping, so the in-memory key must rotate to the NEW key at the same anchor —
+ * otherwise getPrivateKey() returns a stale OLD key while every NUT-13 proof
+ * secret is derived from the NEW seed (key/seed mismatch → mint/melt/swap
+ * signatures fail or derive wrong keys).
+ *
+ * This is an internal wallet-module hook (NOT a public unlock path): it does not
+ * verify a PIN. Callers must only pass the key they already derived from the NEW
+ * mnemonic inside rekeyWallet(), or null to clear (zero-success rollback).
+ *
+ * @param privateKey New plaintext private key (base64url), or null to clear.
+ */
+export function refreshUnlockedPrivateKey(privateKey: string | null): void {
+	unlockedPrivateKey = privateKey;
 }
 
 /**

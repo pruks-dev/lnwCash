@@ -122,10 +122,10 @@ describe('NUT-13 deterministic swap receive (TASK-244)', () => {
 		].sort());
 	});
 
-	it('legacy wallet (no active seed) → clear migration error, NOT random fallback', async () => {
+	it('legacy wallet (no active seed) → clear re-key/recover error, NOT random fallback', async () => {
 		clearActiveSeed(); // simulate legacy wallet with no mnemonic
 
-		await expect(receiveTokens('cashuAdummy')).rejects.toThrow(/seed|migrat/i);
+		await expect(receiveTokens('cashuAdummy')).rejects.toThrow(/seed|re-key|recover/i);
 	});
 });
 

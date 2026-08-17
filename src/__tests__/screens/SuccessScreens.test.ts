@@ -13,7 +13,7 @@
  * - Token QR at TOP for Send Cashu
  * - Copy button works
  * - OK button navigates to home
- * - All hex via tokens (TASK-167 migration)
+ * - All hex via tokens (TASK-167)
  * - Spacing-only dividers (F-V18-007)
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

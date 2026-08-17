@@ -9,7 +9,6 @@
  *   - wrong current PIN (InvalidPinError) resets to step 1 and shows the error.
  *   - new PIN mismatch resets to step 2 and is rejected before calling changePin.
  *   - the "←" step-back button returns to the previous step.
- *   - "forgot PIN" link navigates to the setup (seed recovery) route.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, within, cleanup, fireEvent, waitFor } from '@testing-library/svelte';
@@ -145,9 +144,8 @@ describe('Settings Change PIN (TASK-220)', () => {
 		expect(screen.getByText('settings.change_pin.current_pin')).toBeTruthy();
 	});
 
-	it('"forgot PIN" link navigates to the setup (seed recovery) route', async () => {
+	it('does NOT show a "forgot PIN" link (recovery is only via Delete → recover)', async () => {
 		await openChangePinModal();
-		await fireEvent.click(screen.getByText('settings.change_pin.forgot_pin'));
-		expect(navigateToMock).toHaveBeenCalledWith('setup');
+		expect(screen.queryByText('settings.change_pin.forgot_pin')).toBeNull();
 	});
 });

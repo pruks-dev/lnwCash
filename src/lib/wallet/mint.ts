@@ -261,12 +261,12 @@ export async function completeMint(
 		// TASK-250 (RC-2): minting now REQUIRES a seed — no random-secret fallback.
 		// A legacy (24-word) wallet has no mnemonic, so deterministic NUT-13 output
 		// derivation is impossible; minting with random secrets would create proofs
-		// that cannot be recovered on restore. Point the user at migration instead.
+		// that cannot be recovered on restore. Point the user at re-key/recover instead.
 		const resolvedSeed = seed ?? getActiveSeed();
 		if (!resolvedSeed) {
 			throw new Error(
 				'NUT-13: no active wallet seed — deterministic mint requires a seed-phrase wallet. ' +
-				'This legacy wallet has no mnemonic; migrate the wallet (TASK-245) before minting, ' +
+				'This legacy wallet has no mnemonic; re-key or recover to a seed-phrase wallet before minting, ' +
 				'otherwise minted proofs would be unrecoverable on restore.'
 			);
 		}

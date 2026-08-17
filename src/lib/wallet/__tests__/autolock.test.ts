@@ -100,7 +100,7 @@ describe('AutoLockTimer (TASK-210)', () => {
 			setAutolockTimeout(15);
 			expect(getAutolockTimeout()).toBe(15);
 			expect(getAutolockTimeoutMinutes()).toBe(15);
-			// raw value persisted under the migration key
+			// raw value persisted under the autolock-timeout key
 			expect(localStorage.getItem('lnwcash_autolock_timeout')).toBe('15');
 		});
 

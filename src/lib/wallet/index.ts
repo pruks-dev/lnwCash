@@ -39,15 +39,15 @@ export {
 	getBalanceByMint as getTotalBalanceBreakdown,
 	getProofCount,
 	clearProofs,
-	migrateProofs,
+	retagProofs,
 	getOrphanedProofs,
 	clearOrphaned,
-	needsMigration,
+	needsRetagging,
 	updateProofMintUrl,
 	markOrphaned,
 	type StoredProof,
 	type KnownMintInfo,
-	type MigrationResult
+	type RetaggingResult
 } from './proofsDb';
 
 export {
