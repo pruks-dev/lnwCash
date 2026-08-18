@@ -350,6 +350,20 @@
 	}
 
 	/**
+	 * TASK-293: mobile/tablet has no Enter key — the Resolve button is the
+	 * tap-equivalent of Enter. It is only rendered for lnurl / lightning
+	 * address (see currentInputType in the template), so it never interferes
+	 * with the bolt11 path.
+	 */
+	function handleResolveClick() {
+		const text = lightningInvoiceInput.trim();
+		const type = detectInputType(text);
+		if (type === 'lnurl' || type === 'lightning_address') {
+			resolveLnurlInput(text);
+		}
+	}
+
+	/**
 	 * F-062: Validate bolt11 invoice using full bech32 decoder.
 	 * Validates checksum, extracts amount, description, and payment hash.
 	 * Rejects invalid invoices early before melt flow.
@@ -407,6 +421,10 @@
 		if (isLightningAddress(trimmed)) return 'lightning_address';
 		return 'unknown';
 	}
+
+	// TASK-293: reactive classification of the current invoice input — drives
+	// the visibility of the Resolve button (only lnurl / lightning address).
+	const currentInputType: InputType = $derived(detectInputType(lightningInvoiceInput));
 
 	function resetLnurlFlow() {
 		lnurlFlowState = 'idle';
@@ -906,6 +924,16 @@
 								aria-label={$_('screen.send.enter_invoice')}
 							></textarea>
 							<p class="invoice-hint">{$_('screen.send.lnaddr.enter_hint')}</p>
+							{#if currentInputType === 'lnurl' || currentInputType === 'lightning_address'}
+								<Button
+									variant="primary"
+									size="md"
+									onclick={handleResolveClick}
+									ariaLabel={$_('screen.send.lnaddr.resolve_button')}
+								>
+									{#snippet children()}{$_('screen.send.lnaddr.resolve_button')}{/snippet}
+								</Button>
+							{/if}
 							<div class="invoice-input-actions">
 								<Button variant="ghost" size="sm" onclick={handlePasteInvoice}>
 									{#snippet children()}<span class="btn-icon-text"><span class="btn-icon-label">{$_('common.paste')}</span></span>{/snippet}

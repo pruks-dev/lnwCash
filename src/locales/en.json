@@ -360,6 +360,7 @@
 
 	"screen.send.lnaddr.resolving": "Resolving lightning address...",
 	"screen.send.lnaddr.enter_hint": "Press Enter to resolve a lightning address or LNURL",
+	"screen.send.lnaddr.resolve_button": "Resolve",
 	"screen.send.lnaddr.back": "Change address",
 	"screen.send.lnaddr.domain_label": "Domain",
 	"screen.send.lnaddr.min_max_label": "Amount limits",
