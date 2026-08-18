@@ -359,6 +359,7 @@
 	"screen.send.success_token_truncated": "Token string (truncated)",
 
 	"screen.send.lnaddr.resolving": "Resolving lightning address...",
+	"screen.send.lnaddr.back": "Change address",
 	"screen.send.lnaddr.domain_label": "Domain",
 	"screen.send.lnaddr.min_max_label": "Amount limits",
 	"screen.send.lnaddr.comment_label": "Comment",

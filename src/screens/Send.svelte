@@ -845,30 +845,32 @@
 					</Card>
 				</div>
 			{:else}
-				<Card variant="basic" padding="lg">
-					<div class="invoice-input-section">
-						<Heading level="h3">{$_('screen.send.enter_invoice')}</Heading>
-						<textarea
-							class="invoice-textarea"
-							value={lightningInvoiceInput}
-							oninput={handleInvoiceInput}
-							placeholder={$_('screen.send.invoice_placeholder')}
-							rows={3}
-							disabled={lightningState === 'fee-calculating'}
-							aria-label={$_('screen.send.enter_invoice')}
-						></textarea>
-						<div class="invoice-input-actions">
-							<Button variant="ghost" size="sm" onclick={handlePasteInvoice}>
-								{#snippet children()}<span class="btn-icon-text"><span class="btn-icon-label">{$_('common.paste')}</span></span>{/snippet}
-							</Button>
-							{#if onQRScan}
-								<Button variant="ghost" size="sm" onclick={onQRScan}>
-									{#snippet children()}<span class="btn-icon-text"><Iconly name="Scan" size={14} /><span class="btn-icon-label">{$_('screen.send.scan_qr')}</span></span>{/snippet}
+				{#if lnurlFlowState === 'idle'}
+					<Card variant="basic" padding="lg">
+						<div class="invoice-input-section">
+							<Heading level="h3">{$_('screen.send.enter_invoice')}</Heading>
+							<textarea
+								class="invoice-textarea"
+								value={lightningInvoiceInput}
+								oninput={handleInvoiceInput}
+								placeholder={$_('screen.send.invoice_placeholder')}
+								rows={3}
+								disabled={lightningState === 'fee-calculating'}
+								aria-label={$_('screen.send.enter_invoice')}
+							></textarea>
+							<div class="invoice-input-actions">
+								<Button variant="ghost" size="sm" onclick={handlePasteInvoice}>
+									{#snippet children()}<span class="btn-icon-text"><span class="btn-icon-label">{$_('common.paste')}</span></span>{/snippet}
 								</Button>
-							{/if}
+								{#if onQRScan}
+									<Button variant="ghost" size="sm" onclick={onQRScan}>
+										{#snippet children()}<span class="btn-icon-text"><Iconly name="Scan" size={14} /><span class="btn-icon-label">{$_('screen.send.scan_qr')}</span></span>{/snippet}
+									</Button>
+								{/if}
+							</div>
 						</div>
-					</div>
-				</Card>
+					</Card>
+				{/if}
 
 				{#if lnurlFlowState !== 'idle'}
 					{#if lnurlFlowState === 'resolving'}
@@ -881,6 +883,20 @@
 					{:else if lnurlPayInfo}
 						<Card variant="basic" padding="md">
 							<div class="preview-section" data-flow="send-lnurl">
+								<!-- TASK-287: back button. This branch is only reachable when
+								     lnurlPayInfo is set, i.e. state ∈ {ready, requesting, error}
+								     (the sibling `resolving` branch renders first, and the whole
+								     block sits inside `{#if lnurlFlowState !== 'idle'}`), so it is
+								     never shown while idle or resolving. -->
+								<button
+									type="button"
+									class="lnaddr-back-btn"
+									onclick={resetLnurlFlow}
+									aria-label={$_('screen.send.lnaddr.back')}
+								>
+									<ArrowLeft size={16} />
+									<span>{$_('screen.send.lnaddr.back')}</span>
+								</button>
 								{#if lnurlDescription}
 									<div class="detail-row">
 										<Body size="sm" color="secondary">{$_('screen.send.description')}</Body>
@@ -1368,6 +1384,34 @@
 	.btn-icon-label {
 		display: inline-block;
 		line-height: 1;
+	}
+
+	/* ─── LNURL back button (TASK-287) ─── */
+	.lnaddr-back-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: flex-start;
+		gap: var(--space-xs);
+		padding: var(--space-xs) 0;
+		border: none;
+		background: transparent;
+		color: var(--color-primary);
+		font-family: var(--font-family);
+		font-size: var(--font-size-sm);
+		font-weight: var(--font-weight-semibold);
+		cursor: pointer;
+		transition: color var(--transition-fast);
+		-webkit-tap-highlight-color: transparent;
+	}
+
+	.lnaddr-back-btn:hover {
+		color: var(--color-primary-hover);
+	}
+
+	.lnaddr-back-btn:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
+		border-radius: var(--radius-sm);
 	}
 
 	/* ─── Amount Display ──────────────── */
