@@ -94,6 +94,9 @@
 	let paidInvoiceAmount: number = $state(0);
 	let paidFee: number = $state(0);
 	let mintUrl: string = $state('');
+	// TASK-297: DOM ref for the invoice textarea — used to focus it when the
+	// Send button is pressed on empty/unknown input (no-op otherwise).
+	let invoiceTextarea: HTMLTextAreaElement | undefined = $state();
 
 	// ─── LNURL / Lightning address state (TASK-280) ─────────
 	// Sub-flow runs inside the Lightning tab. It shares `lightningState`
@@ -350,16 +353,23 @@
 	}
 
 	/**
-	 * TASK-293: mobile/tablet has no Enter key — the Resolve button is the
-	 * tap-equivalent of Enter. It is only rendered for lnurl / lightning
-	 * address (see currentInputType in the template), so it never interferes
-	 * with the bolt11 path.
+	 * TASK-297: unified "Send" button — shown always (except when the bolt11
+	 * preview is active or a LNURL resolve has left idle). It dispatches by
+	 * input type, superseding TASK-293's Resolve button (which was rendered
+	 * only for lnurl / lightning address):
+	 *   bolt11             → validateInvoiceSimple
+	 *   lnurl / address    → resolveLnurlInput
+	 *   unknown / empty    → no-op (focus the textarea so the user can type/paste)
 	 */
-	function handleResolveClick() {
+	function handleSendClick() {
 		const text = lightningInvoiceInput.trim();
 		const type = detectInputType(text);
-		if (type === 'lnurl' || type === 'lightning_address') {
+		if (type === 'bolt11') {
+			validateInvoiceSimple(text);
+		} else if (type === 'lnurl' || type === 'lightning_address') {
 			resolveLnurlInput(text);
+		} else {
+			invoiceTextarea?.focus();
 		}
 	}
 
@@ -421,10 +431,6 @@
 		if (isLightningAddress(trimmed)) return 'lightning_address';
 		return 'unknown';
 	}
-
-	// TASK-293: reactive classification of the current invoice input — drives
-	// the visibility of the Resolve button (only lnurl / lightning address).
-	const currentInputType: InputType = $derived(detectInputType(lightningInvoiceInput));
 
 	function resetLnurlFlow() {
 		lnurlFlowState = 'idle';
@@ -915,6 +921,7 @@
 							<textarea
 								class="invoice-textarea"
 								value={lightningInvoiceInput}
+								bind:this={invoiceTextarea}
 								oninput={handleInvoiceInput}
 								onpaste={handleInvoicePaste}
 								onkeydown={handleInvoiceKeydown}
@@ -924,14 +931,14 @@
 								aria-label={$_('screen.send.enter_invoice')}
 							></textarea>
 							<p class="invoice-hint">{$_('screen.send.lnaddr.enter_hint')}</p>
-							{#if currentInputType === 'lnurl' || currentInputType === 'lightning_address'}
+							{#if !lightningInvoiceValid && lnurlFlowState === 'idle'}
 								<Button
 									variant="primary"
 									size="md"
-									onclick={handleResolveClick}
-									ariaLabel={$_('screen.send.lnaddr.resolve_button')}
+									onclick={handleSendClick}
+									ariaLabel={$_('screen.send.lnaddr.send_button')}
 								>
-									{#snippet children()}{$_('screen.send.lnaddr.resolve_button')}{/snippet}
+									{#snippet children()}{$_('screen.send.lnaddr.send_button')}{/snippet}
 								</Button>
 							{/if}
 							<div class="invoice-input-actions">
