@@ -366,6 +366,7 @@
 	"screen.send.success_token_truncated": "Token (ย่อ)",
 
 	"screen.send.lnaddr.resolving": "กำลังค้นหา lightning address...",
+	"screen.send.lnaddr.enter_hint": "กด Enter เพื่อ resolve lightning address หรือ LNURL",
 	"screen.send.lnaddr.back": "เปลี่ยนที่อยู่",
 	"screen.send.lnaddr.domain_label": "โดเมน",
 	"screen.send.lnaddr.min_max_label": "ช่วงจำนวนเงิน",

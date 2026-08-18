@@ -113,7 +113,8 @@ describe('Send LNURL amount bounds + errors (TASK-280)', () => {
 	async function enterAddress() {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
 		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
-		await fireEvent.input(textarea, { target: { value: 'PrukS@coinos.io' } });
+		// TASK-290: paste is the resolve trigger (typing no longer auto-resolves)
+		await fireEvent.paste(textarea, { clipboardData: { getData: () => 'PrukS@coinos.io' } });
 	}
 
 	async function waitResolved() {

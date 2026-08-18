@@ -283,8 +283,8 @@
 
 	// ─── Lightning tab handlers ──────────────────────────────
 
-	function handleInvoiceInput(e: Event) {
-		lightningInvoiceInput = (e.target as HTMLTextAreaElement).value;
+	/** Reset Lightning-tab input state + any in-flight LNURL sub-flow. */
+	function resetLightningInputState() {
 		lightningInvoiceValid = false;
 		lightningInvoiceAmount = 0;
 		lightningInvoiceDesc = '';
@@ -293,9 +293,54 @@
 		lightningError = '';
 		lightningState = 'idle';
 		resetLnurlFlow();
+	}
 
-		// Auto-detect the input type: bolt11 → validate, lnurl/address → resolve
+	/**
+	 * TASK-290: typing does NOT auto-resolve a lightning address / lnurl —
+	 * there is no checksum, so a partially-typed address (e.g. `user@dom`)
+	 * always fails prematurely. Address/lnurl resolve now waits for Enter or
+	 * paste. bolt11 (lnbc) keeps auto-validating because it has a checksum.
+	 */
+	function handleInvoiceInput(e: Event) {
+		lightningInvoiceInput = (e.target as HTMLTextAreaElement).value;
+		resetLightningInputState();
+
+		// bolt11 auto-validates on input (unchanged); lnurl/address does NOT.
 		const text = lightningInvoiceInput.trim();
+		if (detectInputType(text) === 'bolt11') {
+			validateInvoiceSimple(text);
+		}
+	}
+
+	/**
+	 * TASK-290: Enter resolves a lightning address / lnurl (preventDefault to
+	 * avoid inserting a newline). bolt11 re-validates harmlessly (it already
+	 * auto-validated on input).
+	 */
+	function handleInvoiceKeydown(e: KeyboardEvent) {
+		if (e.key !== 'Enter') return;
+		e.preventDefault();
+		const text = lightningInvoiceInput.trim();
+		const type = detectInputType(text);
+		if (type === 'lnurl' || type === 'lightning_address') {
+			resolveLnurlInput(text);
+		} else if (type === 'bolt11') {
+			validateInvoiceSimple(text);
+		}
+	}
+
+	/**
+	 * TASK-290: paste auto-resolves a lightning address / lnurl (a paste carries
+	 * a complete address, unlike char-by-char typing). preventDefault so the
+	 * follow-up `input` event does not reset the resolve we just kicked off.
+	 */
+	function handleInvoicePaste(e: ClipboardEvent) {
+		const pasted = e.clipboardData?.getData('text/plain') ?? '';
+		if (!pasted) return;
+		e.preventDefault();
+		lightningInvoiceInput = pasted;
+		resetLightningInputState();
+		const text = pasted.trim();
 		const type = detectInputType(text);
 		if (type === 'bolt11') {
 			validateInvoiceSimple(text);
@@ -845,7 +890,7 @@
 					</Card>
 				</div>
 			{:else}
-				{#if lnurlFlowState === 'idle'}
+				{#if lnurlFlowState === 'idle' || lnurlFlowState === 'error'}
 					<Card variant="basic" padding="lg">
 						<div class="invoice-input-section">
 							<Heading level="h3">{$_('screen.send.enter_invoice')}</Heading>
@@ -853,11 +898,14 @@
 								class="invoice-textarea"
 								value={lightningInvoiceInput}
 								oninput={handleInvoiceInput}
+								onpaste={handleInvoicePaste}
+								onkeydown={handleInvoiceKeydown}
 								placeholder={$_('screen.send.invoice_placeholder')}
 								rows={3}
 								disabled={lightningState === 'fee-calculating'}
 								aria-label={$_('screen.send.enter_invoice')}
 							></textarea>
+							<p class="invoice-hint">{$_('screen.send.lnaddr.enter_hint')}</p>
 							<div class="invoice-input-actions">
 								<Button variant="ghost" size="sm" onclick={handlePasteInvoice}>
 									{#snippet children()}<span class="btn-icon-text"><span class="btn-icon-label">{$_('common.paste')}</span></span>{/snippet}
@@ -1359,6 +1407,15 @@
 	.invoice-textarea:disabled {
 		background: var(--color-surface-variant);
 		opacity: 0.7;
+	}
+
+	/* TASK-290: helper hint under the invoice textarea (Enter to resolve) */
+	.invoice-hint {
+		margin: 0;
+		font-family: var(--font-family);
+		font-size: var(--font-size-xs);
+		color: var(--color-text-secondary);
+		line-height: var(--line-height-normal);
 	}
 
 	.invoice-input-actions {

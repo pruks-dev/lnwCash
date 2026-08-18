@@ -125,9 +125,9 @@ describe('Send LNURL UI collapse (TASK-287)', () => {
 		expect(document.querySelector('.invoice-textarea')).toBeTruthy();
 		expect(screen.getByText('common.paste')).toBeTruthy();
 
-		// trigger auto-resolve
+		// trigger auto-resolve (TASK-290: paste is the resolve trigger)
 		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
-		await fireEvent.input(textarea, { target: { value: 'PrukS@coinos.io' } });
+		await fireEvent.paste(textarea, { clipboardData: { getData: () => 'PrukS@coinos.io' } });
 
 		// resolution completed → LNURL card visible
 		expect(await screen.findByText('Paying PrukS@coinos.io')).toBeTruthy();
@@ -156,7 +156,7 @@ describe('Send LNURL UI collapse (TASK-287)', () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
 
 		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
-		await fireEvent.input(textarea, { target: { value: 'PrukS@coinos.io' } });
+		await fireEvent.paste(textarea, { clipboardData: { getData: () => 'PrukS@coinos.io' } });
 
 		// resolving state: spinner shown, textarea hidden, back button NOT shown
 		expect(await screen.findByText('screen.send.lnaddr.resolving')).toBeTruthy();
