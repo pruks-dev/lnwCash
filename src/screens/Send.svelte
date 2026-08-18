@@ -28,6 +28,20 @@
 	import { navigateTo, getHashParam, clearHashParams } from '$lib/router';
 	import { getMintConfig } from '$lib/wallet/store';
 	import { decodeBolt11, isValidBolt11, type Bolt11Decoded, type Bolt11Error } from '$lib/wallet/bolt11';
+	// TASK-280: LNURL-pay + lightning address resolver (TASK-279)
+	import {
+		isLightningAddress,
+		isLnurlBech32,
+		parseLightningAddress,
+		resolveLightningAddress,
+		resolveLnurl,
+		requestLnurlInvoice,
+		parseMetadata,
+		msatToSat,
+		satToMsat,
+		LnurlError,
+		type LnurlPayInfo
+	} from '$lib/wallet/lnurl';
 
 	import Card from '$lib/components/ui/Card.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
@@ -80,6 +94,24 @@
 	let paidInvoiceAmount: number = $state(0);
 	let paidFee: number = $state(0);
 	let mintUrl: string = $state('');
+
+	// ─── LNURL / Lightning address state (TASK-280) ─────────
+	// Sub-flow runs inside the Lightning tab. It shares `lightningState`
+	// for the melt (sending/success/error) so the melt success UI is reused.
+	type LnurlFlowState = 'idle' | 'resolving' | 'ready' | 'requesting' | 'error';
+	let lnurlFlowState: LnurlFlowState = $state('idle');
+	let lnurlPayInfo: LnurlPayInfo | null = $state(null);
+	let lnurlCallback: string = $state('');
+	let lnurlDomain: string = $state('');
+	let lnurlDescription: string = $state('');
+	let lnurlMinSat: number = $state(0);
+	let lnurlMaxSat: number = $state(0);
+	let lnurlCommentAllowed: number = $state(0);
+	let lnurlAmount: string = $state('0');
+	let lnurlComment: string = $state('');
+	let lnurlInvoice: string = $state('');
+	let lnurlError: string = $state('');
+	let lastResolvedInput: string = $state('');
 
 	// ─── Cashu state ─────────────────────────────────────────
 	type CashuState = 'idle' | 'preview' | 'loading' | 'success' | 'error';
@@ -145,14 +177,20 @@
 
 	// TASK-122: Read scanned QR value from shared store (QRScan → Send)
 	// TASK-133 (F-V13-010): Also read invoice from URL hash params
+	// TASK-280: also accept lightning address + lnurl bech32 from QR / hash
 	onMount(() => {
 		const unsub = scannedQRValue.subscribe((value) => {
-			if (value && (value.startsWith('lnbc') || value.startsWith('lntb') || value.startsWith('lnurl'))) {
-				lightningInvoiceInput = value;
-				scannedQRValue.set(null);
-				// Auto-validate the invoice from QR scan
-				if (value.startsWith('lnbc') || value.startsWith('lntb') || value.startsWith('lnbcrt')) {
-					validateInvoiceSimple(value);
+			if (value) {
+				const type = detectInputType(value);
+				if (type !== 'unknown') {
+					lightningInvoiceInput = value;
+					scannedQRValue.set(null);
+					// Auto-validate / auto-resolve the scanned value
+					if (type === 'bolt11') {
+						validateInvoiceSimple(value);
+					} else {
+						resolveLnurlInput(value);
+					}
 				}
 			}
 		});
@@ -162,10 +200,13 @@
 		if (invoiceParam) {
 			lightningInvoiceInput = decodeURIComponent(invoiceParam);
 			clearHashParams();
-			// Auto-validate the invoice from URL param
+			// Auto-validate / auto-resolve the URL param
 			const val = lightningInvoiceInput;
-			if (val.startsWith('lnbc') || val.startsWith('lntb') || val.startsWith('lnbcrt')) {
+			const type = detectInputType(val);
+			if (type === 'bolt11') {
 				validateInvoiceSimple(val);
+			} else if (type === 'lnurl' || type === 'lightning_address') {
+				resolveLnurlInput(val);
 			}
 		}
 
@@ -251,11 +292,15 @@
 		lightningTotal = 0;
 		lightningError = '';
 		lightningState = 'idle';
+		resetLnurlFlow();
 
-		// Auto-validate on input — only try bolt11 invoices
+		// Auto-detect the input type: bolt11 → validate, lnurl/address → resolve
 		const text = lightningInvoiceInput.trim();
-		if (text.startsWith('lnbc') || text.startsWith('lntb') || text.startsWith('lnbcrt')) {
+		const type = detectInputType(text);
+		if (type === 'bolt11') {
 			validateInvoiceSimple(text);
+		} else if (type === 'lnurl' || type === 'lightning_address') {
+			resolveLnurlInput(text);
 		}
 	}
 
@@ -296,13 +341,182 @@
 		return parts.length > 0 ? parts.join(' — ') : decoded.hrp;
 	}
 
+	// ─── TASK-280: LNURL / lightning address flow ───────────
+
+	type InputType = 'bolt11' | 'lnurl' | 'lightning_address' | 'unknown';
+
+	/**
+	 * Classify a pasted/scanned string:
+	 *   - bolt11 invoice (lnbc / lntb / lnbcrt)
+	 *   - lnurl bech32 (lnurl1...)
+	 *   - lightning address (username@domain, no scheme)
+	 *   - unknown
+	 */
+	function detectInputType(text: string): InputType {
+		const trimmed = text.trim();
+		if (!trimmed) return 'unknown';
+		if (trimmed.startsWith('lnbc') || trimmed.startsWith('lntb') || trimmed.startsWith('lnbcrt')) {
+			return 'bolt11';
+		}
+		if (isLnurlBech32(trimmed)) return 'lnurl';
+		if (isLightningAddress(trimmed)) return 'lightning_address';
+		return 'unknown';
+	}
+
+	function resetLnurlFlow() {
+		lnurlFlowState = 'idle';
+		lnurlPayInfo = null;
+		lnurlCallback = '';
+		lnurlDomain = '';
+		lnurlDescription = '';
+		lnurlMinSat = 0;
+		lnurlMaxSat = 0;
+		lnurlCommentAllowed = 0;
+		lnurlAmount = '0';
+		lnurlComment = '';
+		lnurlInvoice = '';
+		lnurlError = '';
+		lastResolvedInput = '';
+	}
+
+	/** Map LNURL resolve/request errors to i18n messages. */
+	function mapLnurlError(error: unknown, phase: 'resolve' | 'invoice'): string {
+		if (error instanceof LnurlError) {
+			if (error.code === 'invalid_tag') return $_('screen.send.lnaddr.error_tag');
+			if (phase === 'invoice' && (error.code === 'invalid_response' || error.code === 'http_error')) {
+				return $_('screen.send.lnaddr.error_invoice');
+			}
+			return $_('screen.send.lnaddr.error_resolve');
+		}
+		return phase === 'invoice'
+			? $_('screen.send.lnaddr.error_invoice')
+			: $_('screen.send.lnaddr.error_resolve');
+	}
+
+	/**
+	 * Resolve a lightning address or lnurl bech32 → LnurlPayInfo.
+	 * On success: populate description/domain/min/max and set state 'ready'.
+	 * On failure: state 'error' with a clear i18n message.
+	 */
+	async function resolveLnurlInput(input: string): Promise<void> {
+		if (input === lastResolvedInput && lnurlFlowState !== 'idle') return;
+		const type = detectInputType(input);
+		if (type !== 'lnurl' && type !== 'lightning_address') return;
+		lastResolvedInput = input;
+		lnurlFlowState = 'resolving';
+		lnurlError = '';
+
+		try {
+			let domain = '';
+			if (type === 'lightning_address') {
+				const parsed = parseLightningAddress(input);
+				if (!parsed) {
+					lnurlError = $_('screen.send.lnaddr.error_resolve');
+					lnurlFlowState = 'error';
+					return;
+				}
+				domain = parsed.domain;
+				const resolved = await resolveLightningAddress(parsed.username, parsed.domain);
+				lnurlPayInfo = resolved.info;
+				lnurlCallback = resolved.callbackUrl;
+			} else {
+				const resolved = await resolveLnurl(input);
+				lnurlPayInfo = resolved.info;
+				lnurlCallback = resolved.callbackUrl;
+				// Derive display domain from the callback URL (validated http/https).
+				try {
+					domain = new URL(resolved.callbackUrl).hostname;
+				} catch {
+					domain = '';
+				}
+			}
+
+			lnurlDomain = domain;
+			lnurlDescription = parseMetadata(lnurlPayInfo.metadata, domain || lnurlCallback);
+			lnurlMinSat = msatToSat(lnurlPayInfo.minSendable);
+			lnurlMaxSat = msatToSat(lnurlPayInfo.maxSendable);
+			lnurlCommentAllowed =
+				typeof lnurlPayInfo.commentAllowed === 'number' ? lnurlPayInfo.commentAllowed : 0;
+			lnurlFlowState = 'ready';
+		} catch (err) {
+			lnurlError = mapLnurlError(err, 'resolve');
+			lnurlFlowState = 'error';
+		}
+	}
+
+	/**
+	 * Validate amount → request bolt11 invoice → verify → feed meltFlow.
+	 * Reuses the exact same melt path (withTransactionGuard + WalletLockedError)
+	 * as the bolt11 invoice flow.
+	 */
+	async function handleLnurlRequestInvoice(): Promise<void> {
+		if (lnurlFlowState !== 'ready' && lnurlFlowState !== 'error') return;
+		if (!lnurlPayInfo || !lnurlCallback) {
+			lnurlError = $_('screen.send.lnaddr.error_resolve');
+			lnurlFlowState = 'error';
+			return;
+		}
+
+		const amountSatFloat = parseFloat(lnurlAmount);
+		if (isNaN(amountSatFloat) || amountSatFloat <= 0) {
+			lnurlError = $_('screen.send.lnaddr.error_no_amount');
+			lnurlFlowState = 'error';
+			return;
+		}
+		const amountSat = Math.floor(amountSatFloat);
+		const amountMsat = satToMsat(amountSat);
+
+		// amount_sat * 1000 ∈ [minSendable, maxSendable]
+		if (amountMsat < lnurlPayInfo.minSendable || amountMsat > lnurlPayInfo.maxSendable) {
+			lnurlError = $_('screen.send.lnaddr.error_min_max', {
+				values: { min: formatSat(lnurlMinSat), max: formatSat(lnurlMaxSat) }
+			});
+			lnurlFlowState = 'error';
+			return;
+		}
+
+		lnurlFlowState = 'requesting';
+		lnurlError = '';
+
+		try {
+			const comment = lnurlCommentAllowed > 0 && lnurlComment.trim() !== '' ? lnurlComment.trim() : undefined;
+			const pr = await requestLnurlInvoice(lnurlCallback, amountMsat, comment);
+
+			// Verify the returned bolt11 invoice before feeding meltFlow.
+			const decoded = decodeBolt11(pr);
+			if ('code' in decoded) {
+				lnurlError = $_('screen.send.lnaddr.error_invoice');
+				lnurlFlowState = 'error';
+				return;
+			}
+			if (decoded.amountSat > 0 && decoded.amountSat !== amountSat) {
+				lnurlError = $_('screen.send.lnaddr.error_amount_mismatch');
+				lnurlFlowState = 'error';
+				return;
+			}
+
+			lnurlInvoice = pr;
+			// Feed meltFlow — same path as bolt11 (reuse, do NOT modify melt.ts).
+			await executeMelt(pr, amountSat);
+			// Restore the retry-able state (on melt failure the shared success/error
+			// UI takes over; this keeps the LNURL numpad enabled for a retry).
+			lnurlFlowState = 'ready';
+		} catch (err) {
+			lnurlError = mapLnurlError(err, 'invoice');
+			lnurlFlowState = 'error';
+		}
+	}
+
 	async function handlePasteInvoice() {
 		try {
 			const text = await navigator.clipboard.readText();
 			if (text) {
 				lightningInvoiceInput = text;
-				if (text.startsWith('lnbc') || text.startsWith('lntb') || text.startsWith('lnbcrt')) {
+				const type = detectInputType(text);
+				if (type === 'bolt11') {
 					validateInvoiceSimple(text);
+				} else if (type === 'lnurl' || type === 'lightning_address') {
+					resolveLnurlInput(text);
 				}
 			}
 		} catch {
@@ -354,6 +568,14 @@
 	}
 
 	async function executeLightningSend() {
+		await executeMelt(lightningInvoiceInput.trim(), lightningInvoiceAmount || 1);
+	}
+
+	/**
+	 * TASK-280: Shared melt executor — reused by both the bolt11 invoice flow
+	 * and the LNURL/lightning address flow. DO NOT modify melt.ts (reuse meltFlow).
+	 */
+	async function executeMelt(invoice: string, amountSat: number): Promise<void> {
 		showConfirmDialog = false;
 		lightningState = 'sending';
 		lightningError = '';
@@ -362,11 +584,7 @@
 			// TASK-218: withTransactionGuard defers auto-lock while the melt
 			// is in flight so the wallet is never locked mid-transaction.
 			const res = await withTransactionGuard(async () =>
-				meltFlow(
-					mintUrl.trim(),
-					lightningInvoiceInput.trim(),
-					lightningInvoiceAmount || 1
-				)
+				meltFlow(mintUrl.trim(), invoice, amountSat)
 			);
 			lightningResult = res;
 
@@ -375,7 +593,7 @@
 				await refreshBalance();
 				lightningState = 'success';
 				displaySpentAmount = res.spentAmount;
-				paidInvoiceAmount = lightningInvoiceAmount || 1;
+				paidInvoiceAmount = amountSat;
 				paidFee = res.feeReserve ?? 0;
 				animateBalance(0, res.spentAmount);
 				showToast($_('screen.send.success_payment'), 'success');
@@ -389,7 +607,7 @@
 			if (e instanceof WalletLockedError) {
 				lightningState = 'idle';
 				showConfirmDialog = false;
-				unlockPendingOp = () => executeLightningSend();
+				unlockPendingOp = () => executeMelt(invoice, amountSat);
 				showUnlockPrompt = true;
 				return;
 			}
@@ -430,6 +648,7 @@
 		displaySpentAmount = 0;
 		paidInvoiceAmount = 0;
 		paidFee = 0;
+		resetLnurlFlow();
 	}
 
 	// ─── Cashu tab handlers ──────────────────────────────────
@@ -651,7 +870,84 @@
 					</div>
 				</Card>
 
-				{#if lightningInvoiceValid}
+				{#if lnurlFlowState !== 'idle'}
+					{#if lnurlFlowState === 'resolving'}
+						<Card variant="basic" padding="lg">
+							<div class="loading-section">
+								<div class="spinner-lg"></div>
+								<Body size="md" color="secondary">{$_('screen.send.lnaddr.resolving')}</Body>
+							</div>
+						</Card>
+					{:else if lnurlPayInfo}
+						<Card variant="basic" padding="md">
+							<div class="preview-section" data-flow="send-lnurl">
+								{#if lnurlDescription}
+									<div class="detail-row">
+										<Body size="sm" color="secondary">{$_('screen.send.description')}</Body>
+										<Body size="sm" weight="semibold" truncate>{lnurlDescription}</Body>
+									</div>
+								{/if}
+								{#if lnurlDomain}
+									<div class="detail-row">
+										<Body size="sm" color="secondary">{$_('screen.send.lnaddr.domain_label')}</Body>
+										<Body size="sm" weight="semibold" truncate>{lnurlDomain}</Body>
+									</div>
+								{/if}
+								{#if lnurlMinSat > 0 || lnurlMaxSat > 0}
+									<div class="detail-row">
+										<Body size="sm" color="secondary">{$_('screen.send.lnaddr.min_max_label')}</Body>
+										<Body size="sm" weight="semibold">{formatSat(lnurlMinSat)} – {formatSat(lnurlMaxSat)} {$_('screen.balance.sats')}</Body>
+									</div>
+								{/if}
+							</div>
+						</Card>
+
+						<Card variant="basic" padding="lg">
+							<div class="amount-section">
+								<Body size="sm" color="secondary">{$_('screen.send.amount_label')}</Body>
+								<div class="amount-display" aria-live="polite">
+									<span class="amount-value">{lnurlAmount === '0' ? '0' : lnurlAmount}</span>
+									<span class="amount-unit">{$_('screen.balance.sats')}</span>
+								</div>
+							</div>
+						</Card>
+
+						<Numpad
+							value={lnurlAmount}
+							onchange={(v) => { lnurlAmount = v; lnurlError = ''; }}
+							onconfirm={handleLnurlRequestInvoice}
+							confirmLabel={lnurlFlowState === 'requesting' ? $_('screen.send.lnaddr.requesting_invoice') : $_('screen.send.lnaddr.request_invoice')}
+							disabled={lnurlFlowState === 'requesting'}
+						/>
+
+						{#if lnurlCommentAllowed > 0}
+							<Card variant="basic" padding="md">
+								<div class="comment-section">
+									<Body size="sm" color="secondary">{$_('screen.send.lnaddr.comment_label')}</Body>
+									<input
+										type="text"
+										class="comment-input"
+										value={lnurlComment}
+										oninput={(e) => lnurlComment = (e.target as HTMLInputElement).value}
+										maxlength={lnurlCommentAllowed}
+										placeholder={$_('screen.send.lnaddr.comment_placeholder')}
+										disabled={lnurlFlowState === 'requesting'}
+										aria-label={$_('screen.send.lnaddr.comment_label')}
+									/>
+								</div>
+							</Card>
+						{/if}
+					{/if}
+
+					{#if lnurlFlowState === 'error' && lnurlError}
+						<div class="error-banner" role="alert">
+							<Body size="sm">{lnurlError}</Body>
+							<button type="button" class="error-close" onclick={() => { lnurlError = ''; lnurlFlowState = lnurlPayInfo ? 'ready' : 'idle'; }} aria-label="Dismiss">
+								<Close size={16} />
+							</button>
+						</div>
+					{/if}
+				{:else if lightningInvoiceValid}
 					<Card variant="basic" padding="md">
 						<div class="preview-section">
 							<div class="detail-row">
@@ -1103,6 +1399,37 @@
 		font-size: var(--font-size-md);
 		font-weight: var(--font-weight-medium);
 		color: var(--color-text-secondary);
+	}
+
+	/* ─── LNURL comment input (TASK-280) ── */
+	.comment-section {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+	}
+
+	.comment-input {
+		width: 100%;
+		padding: var(--space-sm) var(--space-md);
+		border: 1.5px solid var(--color-border);
+		border-radius: var(--radius-md);
+		font-family: var(--font-family);
+		font-size: var(--font-size-sm);
+		color: var(--color-text);
+		background: var(--color-surface);
+		line-height: var(--line-height-normal);
+		transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+	}
+
+	.comment-input:focus {
+		outline: none;
+		border-color: var(--color-primary);
+		box-shadow: 0 0 0 3px rgba(0, 188, 212, 0.12);
+	}
+
+	.comment-input:disabled {
+		background: var(--color-surface-variant);
+		opacity: 0.7;
 	}
 
 	/* ─── Preview / Fee ───────────────── */
