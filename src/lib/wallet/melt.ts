@@ -433,6 +433,25 @@ export async function completeMelt(
 	try {
 		getPrivateKey(); // throws if wallet is locked
 
+		// TASK-312 (NUT-08): Detect NUT-08 support before computing change.
+		// Mint returns all overpaid sats as change (min_fee_estimate = 0) if NUT-08
+		// is supported. Legacy mints reserve feeReserve upfront instead.
+		// Capability check must NEVER break melt flow — log warning on failure
+		// and fall back to legacy path.
+		let supportsNUT08 = false;
+		try {
+			supportsNUT08 = await hasNUT08(mintUrl);
+			if (!supportsNUT08) {
+				console.warn(
+					`[melt completeMelt] Mint ${mintUrl} does not advertise NUT-08 — using legacy feeReserve`
+				);
+			}
+		} catch (capErr) {
+			console.warn(
+				`[melt completeMelt] NUT-08 capability check failed for ${mintUrl}: ${capErr instanceof Error ? capErr.message : String(capErr)}`
+			);
+		}
+
 		// Step 1: Verify quote state
 		const quote = await checkMeltQuote(mintUrl, quoteId);
 		if (quote.paid) {
@@ -448,8 +467,13 @@ export async function completeMelt(
 		}));
 
 		// Step 3: Create blind outputs for change
+		// TASK-312 (NUT-08): branch changeAmount calculation.
+		// NUT-08 mint: min_fee_estimate = 0 (mint returns all overpaid as change).
+		// Legacy mint: feeReserve (reserved upfront, change = spentTotal - amount - feeReserve).
+		// Math.max(0, ...) clamps negative cases (over-paid fees) to 0 — no change output.
 		const spentTotal = inputs.reduce((sum, p) => sum + p.amount, 0);
-		const changeAmount = spentTotal - amount - feeReserve;
+		const minFeeEstimate = supportsNUT08 ? 0 : feeReserve;
+		const changeAmount = Math.max(0, spentTotal - amount - minFeeEstimate);
 
 		let outputs: Array<{ amount: number; id: string; B_: string; secret: string; blindingFactor: string }> = [];
 		let changeProofs: TokenProof[] = [];
