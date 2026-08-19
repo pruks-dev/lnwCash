@@ -56,6 +56,9 @@ export interface MeltResult {
 	/** C05-05: fee calculated from keyset input_fee_ppk × number of inputs */
 	inputFeePpk?: number;
 	calculatedFee?: number;
+	/** TASK-FIX-320: true fee paid after NUT-08 mint overpaid return.
+	 *  Propagated from completeMelt() for Send.svelte success UI display. */
+	actualFee?: number;
 	error?: string;
 }
 
@@ -92,6 +95,11 @@ export interface MeltCompleteResult {
 	calculatedFee?: number;
 	/** F-063: Transaction recording status for UI feedback */
 	txStatus?: string;
+	/** TASK-FIX-320: true fee paid after NUT-08 mint overpaid return.
+	 *  Equals feeReserve minus overpaid refund. Exposed for Send.svelte
+	 *  success UI to show "Fee: X sats (reserve: Y sats)" when actualFee < feeReserve.
+	 *  Matches TransactionDetailSheet UX (TASK-314). */
+	actualFee?: number;
 	error?: string;
 }
 
@@ -720,7 +728,8 @@ export async function completeMelt(
 			preimage: response.payment_preimage,
 			spentAmount: netSpent,
 			feeReserve,
-			txStatus
+			txStatus,
+			actualFee  // TASK-FIX-320: expose for Send.svelte success UI
 		};
 	} catch (error) {
 		const msg = humanErrorMessage(error);
@@ -823,6 +832,7 @@ export async function meltFlow(
 			feeReserve: completeResult.feeReserve,
 			inputFeePpk: reqResult.inputFeePpk,
 			calculatedFee: reqResult.calculatedFee,
+			actualFee: completeResult.actualFee,  // TASK-FIX-320: propagate for Send.svelte
 			error: completeResult.error
 		};
 	} catch (error) {
