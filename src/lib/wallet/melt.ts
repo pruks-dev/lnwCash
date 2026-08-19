@@ -528,12 +528,36 @@ export async function completeMelt(
 
 				const meltResponse = await postMelt(mintUrl, quoteId, inputBodies, outputBodies);
 
-				// TASK-244 (F-V27-005) / TASK-MELT-DECOMPOSE: the mint has now
-				// signed all change outputs (postMelt returned) — advance counter_k
-				// by the number of outputs even if local persistence (addProofs
-				// below) later throws, otherwise the next melt re-derives the same
-				// B_ and the mint rejects it as "outputs already signed".
-				incrementCounterK(changeKeysetId, changeAmounts.length);
+				// TASK-313 (CRITICAL — money-loss bug prevention): advance counter_k
+				// by the ACTUAL signed count (meltResponse.change.length), NOT the
+				// derived count (changeAmounts.length / outputs.length).
+				//
+				// Why this matters: the mint may sign FEWER change outputs than we
+				// derived. With NUT-08, the mint only signs the overpaid amount
+				// and may pick a different denomination breakdown (or no change at
+				// all if the fee consumed everything). If we advance by derived
+				// count, counter_k desyncs past what the mint actually consumed →
+				// the next melt reuses a B_ the mint already signed → mint returns
+				// 11003 "outputs already signed" → DOUBLE-SPEND / money loss.
+				const signedCount = meltResponse.change?.length ?? 0;
+
+				// Sanity guard: mint anomaly — signed MORE outputs than we derived.
+				// This should be impossible (mint cannot create outputs we didn't
+				// ask for), but if it happens we must abort BEFORE corrupting the
+				// counter — otherwise the next melt would skip even more counters
+				// and the 11003 loop would widen. Throw to abort the melt.
+				if (signedCount > outputs.length) {
+					throw new Error(
+						`Mint anomaly: signed ${signedCount} change outputs but we derived only ${outputs.length} — ` +
+						`aborting to prevent counter_k desync. Mint URL: ${mintUrl}`
+					);
+				}
+
+				// Advance by ACTUAL signed count (0 if mint signed nothing, which
+				// is fine — no B_ was consumed). The next melt will re-derive the
+				// same B_ at the same counter, which the mint will accept as a
+				// re-issuance of a previously unsigned request (no double-spend).
+				incrementCounterK(changeKeysetId, signedCount);
 
 				return meltResponse;
 			});
