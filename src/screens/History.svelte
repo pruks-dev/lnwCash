@@ -7,6 +7,8 @@
 	import { _ } from 'svelte-i18n';
 	import { getTransactions } from '$lib/storage/db';
 	import type { Transaction, TransactionType, TransactionStatus, TransactionFilter, TransactionProtocol } from '$lib/types';
+	import { computeFeeReturn } from '$lib/wallet/feeReturn';
+	import { getSettings } from '$lib/storage/local';
 
 	// TASK-050 Design System Components
 	import Card from '$lib/components/ui/Card.svelte';
@@ -219,6 +221,14 @@
 	function closeDetail() {
 		selectedTx = null;
 	}
+
+	// TASK-315: fee return badge gate + computed value per tx.
+	// Setting is read once on render; toggle persists in localStorage and is
+	// read again on the next render after the user re-enters the History screen.
+	let showFeeReturnSetting = $derived(getSettings().show_fee_return ?? false);
+	function txFeeReturn(tx: Transaction): number {
+		return computeFeeReturn(tx);
+	}
 </script>
 
 <div
@@ -335,6 +345,10 @@
 													>
 														{protocolLabel(tx.protocol)}
 													</span>
+												{/if}
+												<!-- TASK-315: NUT-08 fee return badge inline (default OFF) -->
+												{#if showFeeReturnSetting && tx.type === 'melt' && txFeeReturn(tx) > 0}
+													<span class="tx-fee-return-badge">{$_('history.fee_return', { values: { amount: txFeeReturn(tx) } })}</span>
 												{/if}
 											</div>
 											<Body size="sm" weight="semibold">
@@ -613,6 +627,24 @@
 		letter-spacing: 0.02em;
 		border-radius: var(--radius-sm);
 		white-space: nowrap;
+	}
+
+	/* TASK-315: NUT-08 fee return badge — inline next to protocol badge */
+	.tx-fee-return-badge {
+		font-size: var(--font-size-xs);
+		font-weight: var(--font-weight-semibold);
+		padding: 1px 6px;
+		letter-spacing: 0.02em;
+		border-radius: var(--radius-sm);
+		white-space: nowrap;
+		background: rgba(20, 184, 166, 0.22);
+		color: var(--color-secondary);
+	}
+	@media (prefers-color-scheme: light) {
+		.tx-fee-return-badge {
+			background: rgba(20, 184, 166, 0.14);
+			color: #0f766e;
+		}
 	}
 
 	.tx-meta {

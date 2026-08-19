@@ -1,0 +1,159 @@
+/**
+ * TASK-315 (OPTIONAL): Fee return indicator — '+X sats return' badge UI tests.
+ *
+ * Verifies the badge's display gating at the UI layer:
+ *   (a) fee_return > 0 + setting ON + melt + actual_fee < fee  → badge SHOWS
+ *   (b) fee_return === 0 (actual_fee == fee) + setting ON       → NO badge
+ *   (c) Legacy tx (no actual_fee) + setting ON                  → NO badge
+ *   (d) Setting OFF + fee_return > 0                            → NO badge
+ *
+ * The helper logic (computeFeeReturn) is unit-tested in
+ * src/lib/wallet/__tests__/fee-return.test.ts. These tests verify that the
+ * Svelte `{#if}` gate correctly suppresses the badge when any of the
+ * preconditions fail.
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, cleanup } from '@testing-library/svelte';
+import TransactionDetailSheet from '../TransactionDetailSheet.svelte';
+
+// ─── Mocks ──────────────────────────────────────────────────────
+
+vi.mock('svelte-i18n', () => {
+	const store = {
+		subscribe(fn: (val: (key: string, opts?: { values?: Record<string, unknown> }) => string) => void) {
+			fn((k: string, opts?: { values?: Record<string, unknown> }) => {
+				if (k === 'history.fee_return' && opts?.values) {
+					return `+${opts.values.amount} sats return`;
+				}
+				return k;
+			});
+			return () => {};
+		}
+	};
+	return {
+		_: store,
+		locale: { subscribe(fn: (val: string) => void) { fn('en'); return () => {}; }, set() {} },
+		init() {}, register() {},
+		getLocaleFromNavigator() { return 'en'; }
+	};
+});
+
+// Mock localStorage to control the show_fee_return setting per scenario.
+let mockShowFeeReturn = false;
+vi.mock('$lib/storage/local', () => ({
+	getSettings: vi.fn(() => ({
+		language: 'en',
+		theme: 'light',
+		default_mint: '',
+		pin_shuffle: false,
+		show_fee_return: mockShowFeeReturn
+	})),
+	setSettings: vi.fn()
+}));
+
+// Mock other deps that TransactionDetailSheet touches to keep this test focused.
+vi.mock('$lib/cashu/client', () => ({
+	checkMintQuote: vi.fn()
+}));
+
+vi.mock('$lib/storage/db', () => ({
+	updateTransaction: vi.fn().mockResolvedValue(undefined)
+}));
+
+vi.mock('$lib/stores/mint-events', () => ({
+	notifyMintConfirmed: vi.fn()
+}));
+
+vi.mock('$lib/wallet/mint', () => ({
+	completeMint: vi.fn()
+}));
+
+vi.mock('$lib/cashu/keyset', () => ({
+	fetchAndCacheKeysets: vi.fn().mockResolvedValue([])
+}));
+
+// ─── Fixtures ───────────────────────────────────────────────────
+
+function makeMeltTx(opts: {
+	actualFee?: number;
+	fee?: number;
+}): {
+	id: string;
+	type: 'melt';
+	amount: number;
+	mint_url: string;
+	timestamp: number;
+	token_hash: null;
+	invoice: string;
+	status: 'confirmed';
+	protocol: 'lightning';
+	fee?: number;
+	actual_fee?: number;
+} {
+	return {
+		id: 'melt-test-1',
+		type: 'melt' as const,
+		amount: 1000,
+		mint_url: 'https://mint.example.com',
+		timestamp: 1734567890000,
+		token_hash: null,
+		invoice: 'lnbc1000n1...',
+		status: 'confirmed' as const,
+		protocol: 'lightning' as const,
+		fee: opts.fee,
+		actual_fee: opts.actualFee
+	};
+}
+
+// ─── Test suite ─────────────────────────────────────────────────
+
+describe('TASK-315: fee return indicator badge UI', () => {
+	beforeEach(() => {
+		mockShowFeeReturn = false;
+	});
+	afterEach(() => cleanup());
+
+	it('a) melt + fee_return > 0 + setting ON → badge shows with correct text', () => {
+		mockShowFeeReturn = true;
+		const tx = makeMeltTx({ fee: 10, actualFee: 5 }); // fee_return = 5
+
+		const { container } = render(TransactionDetailSheet, { tx });
+
+		const badge = container.querySelector('.badge.badge-success');
+		expect(badge).toBeTruthy();
+		// text via mocked svelte-i18n: '+{amount} sats return' → '+5 sats return'
+		expect(badge?.textContent?.trim()).toBe('+5 sats return');
+	});
+
+	it('b) melt + fee_return === 0 (actual_fee == fee) + setting ON → no badge', () => {
+		mockShowFeeReturn = true;
+		const tx = makeMeltTx({ fee: 10, actualFee: 10 }); // fee_return = 0
+
+		const { container } = render(TransactionDetailSheet, { tx });
+
+		const badge = container.querySelector('.badge.badge-success');
+		expect(badge).toBeNull();
+	});
+
+	it('c) legacy melt tx (no actual_fee) + setting ON → no badge', () => {
+		mockShowFeeReturn = true;
+		// Legacy pre-TASK-314 tx: actual_fee field is absent (undefined).
+		// computeFeeReturn() treats undefined actual_fee as legacy → no badge.
+		const tx = makeMeltTx({ fee: 10 }); // no actualFee → undefined
+
+		const { container } = render(TransactionDetailSheet, { tx });
+
+		const badge = container.querySelector('.badge.badge-success');
+		expect(badge).toBeNull();
+	});
+
+	it('d) setting OFF + fee_return > 0 → no badge (default OFF per blueprint)', () => {
+		mockShowFeeReturn = false; // setting OFF (default)
+		const tx = makeMeltTx({ fee: 10, actualFee: 5 }); // fee_return = 5 (would otherwise show)
+
+		const { container } = render(TransactionDetailSheet, { tx });
+
+		const badge = container.querySelector('.badge.badge-success');
+		expect(badge).toBeNull();
+	});
+});

@@ -101,7 +101,9 @@ const DEFAULT_SETTINGS: WalletSettings = {
 	theme: 'system',
 	default_mint: '',
 	// TASK-220: PIN keypad shuffle — default OFF per Commander.
-	pin_shuffle: false
+	pin_shuffle: false,
+	// TASK-315: NUT-08 fee return badge in history — default OFF per blueprint.
+	show_fee_return: false
 };
 
 export function getSettings(): WalletSettings {
@@ -115,7 +117,10 @@ export function getSettings(): WalletSettings {
 		default_mint:
 			typeof data.default_mint === 'string' ? data.default_mint : DEFAULT_SETTINGS.default_mint,
 		pin_shuffle:
-			typeof data.pin_shuffle === 'boolean' ? data.pin_shuffle : DEFAULT_SETTINGS.pin_shuffle
+			typeof data.pin_shuffle === 'boolean' ? data.pin_shuffle : DEFAULT_SETTINGS.pin_shuffle,
+		// TASK-315: additive setting — preserve stored value if present, else default OFF.
+		show_fee_return:
+			typeof data.show_fee_return === 'boolean' ? data.show_fee_return : DEFAULT_SETTINGS.show_fee_return
 	};
 }
 

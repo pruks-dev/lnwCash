@@ -59,6 +59,8 @@
 	let autoLockTimeout: number = $state(5); // TASK-210: auto-lock timeout (minutes)
 	// TASK-220: PIN keypad shuffle setting (persisted, default off).
 	let pinShuffle: boolean = $state(false);
+	// TASK-315: NUT-08 fee return badge in history (persisted, default off).
+	let showFeeReturn: boolean = $state(false);
 
 	// TASK-220: Change PIN modal state
 	let showChangePin: boolean = $state(false);
@@ -98,10 +100,13 @@
 			currentLang = settings.language || 'en';
 			currentTheme = settings.theme || 'system';
 			pinShuffle = settings.pin_shuffle ?? false;
+			// TASK-315: load fee return setting (default OFF per blueprint)
+			showFeeReturn = settings.show_fee_return ?? false;
 		} catch {
 			currentLang = 'en';
 			currentTheme = 'system';
 			pinShuffle = false;
+			showFeeReturn = false;
 		}
 
 		// TASK-210: initialise auto-lock from persisted config + arm the timer
@@ -153,6 +158,12 @@
 	function handlePinShuffleToggle(e: Event) {
 		pinShuffle = (e.target as HTMLInputElement).checked;
 		setSettings({ pin_shuffle: pinShuffle });
+	}
+
+	// TASK-315: NUT-08 fee return badge toggle — persist via setSettings (default off).
+	function handleShowFeeReturnToggle(e: Event) {
+		showFeeReturn = (e.target as HTMLInputElement).checked;
+		setSettings({ show_fee_return: showFeeReturn });
 	}
 
 	// TASK-220: Change PIN modal lifecycle.
@@ -571,6 +582,27 @@
 					<div class="toggle-row-body">
 						<Body size="sm" weight="semibold">{$_('settings.pin_shuffle.title')}</Body>
 						<Body size="sm" color="secondary">{$_('settings.pin_shuffle.description')}</Body>
+					</div>
+				</div>
+			</div>
+		</Card>
+
+		<!-- ─── TASK-315: Display Section (fee return badge toggle) ──── -->
+		<Card variant="basic" padding="md">
+			<div class="section">
+				<Heading level="h4">{$_('screen.settings.display_section')}</Heading>
+				<Body size="sm" color="secondary">{$_('screen.settings.display_description')}</Body>
+				<Divider />
+				<!-- TASK-315: Show fee return indicator toggle (default off) -->
+				<div class="toggle-row">
+					<Toggle
+						checked={showFeeReturn}
+						onchange={handleShowFeeReturnToggle}
+						ariaLabel={$_('settings.fee_return.title')}
+					/>
+					<div class="toggle-row-body">
+						<Body size="sm" weight="semibold">{$_('settings.fee_return.title')}</Body>
+						<Body size="sm" color="secondary">{$_('settings.fee_return.description')}</Body>
 					</div>
 				</div>
 			</div>
