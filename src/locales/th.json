@@ -393,6 +393,7 @@
 	"detail.field_invoice": "ใบแจ้งหนี้",
 	"detail.field_preimage": "Preimage",
 	"detail.field_fee": "ค่าธรรมเนียม",
+	"detail.field_fee_reserve": "ค่าธรรมเนียมจอง",
 	"detail.field_mint_url": "Mint URL",
 	"detail.field_tx_id": "รหัสธุรกรรม",
 	"detail.field_token_hash": "Token Hash",

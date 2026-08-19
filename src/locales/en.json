@@ -394,6 +394,7 @@
 	"detail.field_invoice": "Invoice",
 	"detail.field_preimage": "Preimage",
 	"detail.field_fee": "Fee",
+	"detail.field_fee_reserve": "Fee reserve",
 	"detail.field_mint_url": "Mint URL",
 	"detail.field_tx_id": "Transaction ID",
 	"detail.field_token_hash": "Token Hash",

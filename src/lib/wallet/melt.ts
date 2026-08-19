@@ -595,6 +595,61 @@ export async function completeMelt(
 		}
 
 		// Step 7: Record transaction (F-063) — no silent swallowing
+		// TASK-314 (NUT-08): compute actual_fee from mint response.change.
+		// Formula (verbatim from blueprint):
+		//   actual_fee = feeReserve - (change.length > 0 ? sum(change.amounts) - changeAmount : 0)
+		//
+		// IMPORTANT: this formula uses the LEGACY changeAmount
+		// (spentTotal - amount - feeReserve), NOT the NUT-08 MAX changeAmount
+		// derived above for output decomposition (TASK-312).
+		//
+		// Why legacy: the NUT-08 MAX changeAmount equals `spentTotal - amount`
+		// (the wallet derives for the maximum possible refund). If we plug that
+		// into the formula, a full refund would give:
+		//   actual_fee = feeReserve - (changeAmount - changeAmount) = feeReserve
+		// which lies to the user (says they paid the full reserve when they
+		// paid zero). Using LEGACY changeAmount instead, the formula subtracts
+		// the overpaid refund (sum - legacyChangeAmount) from feeReserve:
+		//   actual_fee = feeReserve - (sum - legacy)
+		// which correctly gives 0 for full refund, feeReserve for no refund,
+		// and partial values in between.
+		//
+		// Edges:
+		//   - response.change.length === 0 → actual_fee = feeReserve (no refund)
+		//   - sum(change) < legacyChangeAmount (only checked when feeReserve > 0)
+		//     → mint anomaly → throw (means mint charged > feeReserve, impossible)
+		//   - sum(change) >= legacyChangeAmount → actual_fee reduced by overpaid
+		//   - feeReserve === 0 → no anomaly check possible (mint has no fee cap)
+		const legacyChangeAmount = Math.max(0, spentTotal - amount - feeReserve);
+		let actualFee: number;
+		if (response.change && response.change.length > 0) {
+			const sumChange = response.change.reduce(
+				(s: number, c: { amount?: number }) => s + (c.amount ?? 0),
+				0
+			);
+			// Anomaly guard only fires when feeReserve > 0. When feeReserve = 0,
+			// legacyChangeAmount = spentTotal - amount (= NUT-08 MAX), and mint
+			// signing fewer outputs is LEGITIMATE (it's just keeping sats as fee —
+			// there's no fee cap to violate). When feeReserve > 0, signing less
+			// than legacy means actual fee > feeReserve — impossible.
+			if (feeReserve > 0 && sumChange < legacyChangeAmount) {
+				// Sanity guard — consistent with TASK-313 signedCount > outputs.length guard.
+				// Mint must not return less change than the legacy changeAmount
+				// (spentTotal - amount - feeReserve). If it does, the actual fee
+				// exceeds feeReserve — impossible. Abort BEFORE recording incorrect
+				// fee accounting.
+				throw new Error(
+					`Mint anomaly: signed change sum (${sumChange}) < expected changeAmount (${legacyChangeAmount}) — ` +
+					`aborting to prevent incorrect fee accounting. Mint URL: ${mintUrl}`
+				);
+			}
+			// Clamp to >= 0 to guard against floating-point drift on overpaid sums.
+			actualFee = Math.max(0, feeReserve - (sumChange - legacyChangeAmount));
+		} else {
+			// No change returned → mint kept the entire fee reserve.
+			actualFee = feeReserve;
+		}
+
 		let txStatus = 'Recording failed ⚠️';
 		try {
 			if (pendingTxId) {
@@ -602,7 +657,8 @@ export async function completeMelt(
 				await updateTransaction(pendingTxId, {
 					status: 'confirmed',
 					preimage: response.payment_preimage ?? undefined,
-					fee: feeReserve
+					fee: feeReserve,       // legacy fallback (TASK-084 contract)
+					actual_fee: actualFee  // TASK-314: true fee paid (NUT-08 overpaid return)
 				});
 			} else {
 				// Standalone: create a new transaction record
@@ -617,7 +673,8 @@ export async function completeMelt(
 					preimage: response.payment_preimage ?? null,
 					status: 'confirmed',
 					protocol: 'lightning',
-					fee: feeReserve
+					fee: feeReserve,
+					actual_fee: actualFee
 				} as Transaction);
 			}
 			txStatus = 'Transaction recorded: ✅';

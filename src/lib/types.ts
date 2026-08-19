@@ -21,6 +21,7 @@ export interface Transaction {
 	status: TransactionStatus;
 	protocol?: TransactionProtocol;
 	fee?: number;  // sats fee paid (mint melt only; cashu = 0)
+	actual_fee?: number;  // TASK-314 (NUT-08): true fee paid after mint overpaid return — equals fee when no overpaid, less when NUT-08 mint returned fee sats
 }
 
 export interface TransactionFilter {
