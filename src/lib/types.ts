@@ -21,6 +21,7 @@ export interface Transaction {
 	status: TransactionStatus;
 	protocol?: TransactionProtocol;
 	fee?: number;  // sats fee paid (mint melt only; cashu = 0)
+	actual_fee?: number;  // TASK-314 (NUT-08): true fee paid after mint overpaid return — equals fee when no overpaid, less when NUT-08 mint returned fee sats
 }
 
 export interface TransactionFilter {
@@ -44,6 +45,8 @@ export interface WalletSettings {
 	default_mint: string;
 	/** TASK-220: shuffle PIN keypad button positions (default off per Commander). */
 	pin_shuffle: boolean;
+	/** TASK-315: display NUT-08 fee return badge '+X sats return' in history when mint returned overpaid fee (default off per blueprint). */
+	show_fee_return?: boolean;
 }
 
 export interface KeysetCacheEntry {

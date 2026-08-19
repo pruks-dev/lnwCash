@@ -33,6 +33,9 @@ export interface MintConfig {
 
 	/** Timestamp (ms) of the last successful /v1/info fetch — 0 if never fetched */
 	last_info_fetch: number;
+
+	/** TASK-311: Timestamp (ms) of the last NUT capability check — undefined if never checked */
+	capability_checked_at?: number;
 }
 
 // ─── Default Mint (lnw.cash) ──────────────────────────────────

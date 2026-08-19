@@ -13,6 +13,8 @@
 	import { notifyMintConfirmed } from '$lib/stores/mint-events';
 	import { completeMint } from '$lib/wallet/mint';
 	import { fetchAndCacheKeysets } from '$lib/cashu/keyset';
+	import { computeFeeReturn } from '$lib/wallet/feeReturn';
+	import { getSettings } from '$lib/storage/local';
 	import Iconly from '$lib/iconly/Iconly.svelte';
 	import QRDisplay from '$lib/components/QRDisplay.svelte';
 
@@ -355,6 +357,12 @@
 	let isCashu = $derived(tx?.protocol === 'cashu' || tx?.type === 'cashu_send' || tx?.type === 'cashu_receive');
 	let displayData = $derived(isLightning ? tx?.invoice : tx?.token_hash);
 
+	// TASK-315: fee return badge gate (setting read once; toggle persists in localStorage).
+	// Read inside a $derived so it reflects the current setting when the sheet re-renders
+	// after the user has navigated to Settings and back.
+	let showFeeReturnSetting = $derived(getSettings().show_fee_return ?? false);
+	let feeReturnAmount = $derived(tx ? computeFeeReturn(tx) : 0);
+
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -553,10 +561,26 @@
 				{/if}
 
 				<!-- Row 8: Fee (only shown when > 0) -->
-				{#if tx.fee != null && tx.fee > 0}
+				<!-- TASK-314: display actual_fee (true cost after NUT-08 overpaid return) when present, fall back to fee (legacy). -->
+				{#if (tx.actual_fee ?? tx.fee) != null && (tx.actual_fee ?? tx.fee) > 0}
 					<div class="detail-field">
 						<span class="field-label">{$_('detail.field_fee')}</span>
-						<span class="field-value">{tx.fee} sats</span>
+						<span class="field-value">
+							{tx.actual_fee ?? tx.fee} sats
+							{#if tx.actual_fee != null && tx.fee != null && tx.actual_fee !== tx.fee}
+								<span class="field-meta">({$_('detail.field_fee_reserve')}: {tx.fee})</span>
+							{/if}
+						</span>
+					</div>
+				{/if}
+
+				<!-- TASK-315: NUT-08 fee return badge (only when setting ON + melt + actual_fee < fee). -->
+				{#if showFeeReturnSetting && tx.type === 'melt' && feeReturnAmount > 0}
+					<div class="detail-field">
+						<span class="field-label">{$_('history.fee_return')}</span>
+						<span class="field-value">
+							<span class="badge badge-success">{$_('history.fee_return', { values: { amount: feeReturnAmount } })}</span>
+						</span>
 					</div>
 				{/if}
 
@@ -742,6 +766,13 @@
 		font-style: italic;
 	}
 
+	/* TASK-314: small inline metadata shown next to a primary value (e.g. fee reserve). */
+	.field-meta {
+		color: var(--color-text-disabled);
+		font-size: var(--font-size-xs);
+		margin-left: var(--space-xs);
+	}
+
 	/* ─── QR Code ──────────────────────────────────────── */
 	.detail-qr {
 		display: flex;
@@ -918,4 +949,25 @@
 		cursor: pointer;
 	}
 	.check-btn:active { opacity: 0.7; }
+
+	/* ─── TASK-315: Fee return badge (NUT-08) ─────────── */
+	.badge {
+		display: inline-block;
+		font-size: var(--font-size-xs);
+		font-weight: var(--font-weight-semibold);
+		padding: 2px 8px;
+		border-radius: var(--radius-sm);
+		white-space: nowrap;
+		line-height: 1.4;
+	}
+	.badge-success {
+		background: rgba(20, 184, 166, 0.18);
+		color: var(--color-secondary);
+	}
+	@media (prefers-color-scheme: light) {
+		.badge-success {
+			background: rgba(20, 184, 166, 0.12);
+			color: #14b8a6;
+		}
+	}
 </style>

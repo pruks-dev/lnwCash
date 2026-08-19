@@ -1,0 +1,1 @@
+7ebdc6d TASK-313 (CRITICAL): counter_k per-signed advance — fix money-loss bug
