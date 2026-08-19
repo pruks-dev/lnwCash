@@ -21,6 +21,10 @@
 	import { meltFlow, type MeltResult } from '$lib/wallet/melt';
 	// TASK-218: wrap melt in a transaction guard so auto-lock defers mid-melt
 	import { withTransactionGuard } from '$lib/wallet/autolock';
+	// TASK-FIX-320: pure helper for "Fee: X sats (reserve: Y sats)" string
+	// when NUT-08 mint performed overpaid return. Mirrors i18n key
+	// `send.success.fee_with_reserve`. Unit-tested in src/__tests__/.
+	import { formatFeeWithReserve } from '$lib/formatFeeWithReserve';
 	import { sendTokens, type SendResult } from '$lib/wallet/transfer';
 	import { InsufficientFundsError, WalletLockedError } from '$lib/wallet/errors';
 	import { requestMeltQuote, CashuError } from '$lib/cashu/client';
@@ -889,6 +893,24 @@
 										<Body size="sm" weight="semibold">{$_('screen.send.success_total_label')}</Body>
 										<Body size="sm" weight="bold">
 											{formatSat(paidInvoiceAmount + paidFee)} {$_('screen.balance.sats')}
+										</Body>
+									</div>
+								{/if}
+								<!-- TASK-FIX-320: True-fee row (NUT-08 overpaid return).
+								     Shown when actualFee < feeReserve — the mint returned
+								     the overpaid portion as change, so the user actually
+								     paid less than the upfront reserve. Matches
+								     TransactionDetailSheet (TASK-314) UX. -->
+								{#if lightningResult?.actualFee != null && lightningResult?.feeReserve != null && lightningResult.actualFee < lightningResult.feeReserve}
+									<div class="success-row success-row-fee-with-reserve" role="listitem">
+										<Body size="sm" color="secondary">{$_('screen.send.success_fee_label')}</Body>
+										<Body size="sm" weight="semibold">
+											{$_('send.success.fee_with_reserve', {
+												values: {
+													actual: lightningResult.actualFee,
+													reserve: lightningResult.feeReserve
+												}
+											})}
 										</Body>
 									</div>
 								{/if}
@@ -1821,6 +1843,13 @@
 	.success-row :global(svg) {
 		vertical-align: middle;
 		flex-shrink: 0;
+	}
+
+	/* TASK-FIX-320: secondary visual treatment for the NUT-08 true-fee row
+	   so it reads as additional context, not a duplicate of the fee row above. */
+	.success-row-fee-with-reserve {
+		opacity: 0.85;
+		font-size: 0.92em;
 	}
 
 	.success-icon {

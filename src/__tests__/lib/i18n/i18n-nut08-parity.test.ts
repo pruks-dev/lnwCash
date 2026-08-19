@@ -4,11 +4,12 @@
  * Verifies:
  *   (a) all 5 nut08.* keys present in en.json (truthy, non-empty)
  *   (b) all 5 nut08.* keys present in th.json (truthy, non-empty)
- *   (c) en.json keys === th.json keys (427 = 427, full parity)
+ *   (c) en.json keys === th.json keys (428 = 428, full parity)
  *   (d) t('nut08.fee_return', { values: { amount: 5 } }) returns formatted string
  *
  * Parity baseline: TASK-315 added 5 keys → 422/422. TASK-316 adds 5 nut08.* keys
- * → 427/427. If a future TASK accidentally drops a key in one locale, this test
+ * → 427/427. TASK-FIX-320 adds 1 key (`send.success.fee_with_reserve`) per file
+ * → 428/428. If a future TASK accidentally drops a key in one locale, this test
  * will fail at scenario (c).
  *
  * Note: the existing i18n-parity.test.ts covers the GLOBAL key-set parity
@@ -105,7 +106,7 @@ const REQUIRED_NUT08_KEYS = [
 	'nut08.error.derive'
 ] as const;
 
-const TOTAL_KEYS = 427; // 422 baseline (TASK-315) + 5 new (TASK-316)
+const TOTAL_KEYS = 428; // 422 (TASK-315) + 5 (TASK-316) + 1 (TASK-FIX-320 send.success.fee_with_reserve)
 
 describe('TASK-316: i18n NUT-08 namespace + parity', () => {
 	beforeAll(() => {
@@ -140,7 +141,7 @@ describe('TASK-316: i18n NUT-08 namespace + parity', () => {
 		expect(hasThaiChars, 'th.json nut08.* values must contain Thai characters').toBe(true);
 	});
 
-	it('c) parity: en.json keys === th.json keys (427 = 427, full parity)', () => {
+	it('c) parity: en.json keys === th.json keys (428 = 428, full parity)', () => {
 		const enKeys = Object.keys(en).sort();
 		const thKeys = Object.keys(th).sort();
 

@@ -362,6 +362,7 @@
 	"screen.send.success_time_label": "Completed",
 	"screen.send.success_sats_unit": "sats",
 	"screen.send.success_token_truncated": "Token string (truncated)",
+	"send.success.fee_with_reserve": "Fee: {actual} sats (reserve: {reserve} sats)",
 
 	"screen.send.lnaddr.resolving": "Resolving lightning address...",
 	"screen.send.lnaddr.enter_hint": "Press Enter to resolve a lightning address or LNURL",

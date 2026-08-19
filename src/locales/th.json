@@ -369,6 +369,7 @@
 	"screen.send.success_time_label": "เสร็จสิ้น",
 	"screen.send.success_sats_unit": "sats",
 	"screen.send.success_token_truncated": "Token (ย่อ)",
+	"send.success.fee_with_reserve": "ค่าธรรมเนียม: {actual} sats (สำรอง: {reserve} sats)",
 
 	"screen.send.lnaddr.resolving": "กำลังค้นหา lightning address...",
 	"screen.send.lnaddr.enter_hint": "กด Enter เพื่อ resolve lightning address หรือ LNURL",
