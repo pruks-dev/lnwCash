@@ -1,18 +1,21 @@
 /**
- * TASK-315 (OPTIONAL): Fee return indicator — '+X sats return' badge UI tests.
+ * TASK-FIX-321: Fee return indicator — '+X sats return' badge UI tests (always-ON).
+ *
+ * TASK-FIX-321 removed the Settings toggle. Badge is now ALWAYS shown when:
+ *   tx.type === 'melt' && fee_return > 0 (actual_fee < fee)
  *
  * Verifies the badge's display gating at the UI layer:
- *   (a) fee_return > 0 + setting ON + melt + actual_fee < fee  → badge SHOWS
- *   (b) fee_return === 0 (actual_fee == fee) + setting ON       → NO badge
- *   (c) Legacy tx (no actual_fee) + setting ON                  → NO badge
- *   (d) Setting OFF + fee_return > 0                            → NO badge
+ *   (a) fee_return > 0 + melt + actual_fee < fee         → badge SHOWS
+ *   (b) fee_return === 0 (actual_fee == fee)             → NO badge
+ *   (c) Non-melt tx (send/receive) + fee_return > 0      → NO badge
+ *   (d) No setting required — badge shown by default    → badge SHOWS
  *
  * The helper logic (computeFeeReturn) is unit-tested in
  * src/lib/wallet/__tests__/fee-return.test.ts. These tests verify that the
  * Svelte `{#if}` gate correctly suppresses the badge when any of the
  * preconditions fail.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, cleanup } from '@testing-library/svelte';
 import TransactionDetailSheet from '../TransactionDetailSheet.svelte';
 
@@ -38,18 +41,7 @@ vi.mock('svelte-i18n', () => {
 	};
 });
 
-// Mock localStorage to control the show_fee_return setting per scenario.
-let mockShowFeeReturn = false;
-vi.mock('$lib/storage/local', () => ({
-	getSettings: vi.fn(() => ({
-		language: 'en',
-		theme: 'light',
-		default_mint: '',
-		pin_shuffle: false,
-		show_fee_return: mockShowFeeReturn
-	})),
-	setSettings: vi.fn()
-}));
+// TASK-FIX-321: getSettings mock removed — badge no longer reads any setting.
 
 // Mock other deps that TransactionDetailSheet touches to keep this test focused.
 vi.mock('$lib/cashu/client', () => ({
@@ -105,16 +97,41 @@ function makeMeltTx(opts: {
 	};
 }
 
+function makeSendTx(opts: {
+	actualFee?: number;
+	fee?: number;
+}): {
+	id: string;
+	type: 'cashu_send';
+	amount: number;
+	mint_url: string;
+	timestamp: number;
+	token_hash: string;
+	status: 'confirmed';
+	protocol: 'cashu';
+	fee?: number;
+	actual_fee?: number;
+} {
+	return {
+		id: 'send-test-1',
+		type: 'cashu_send' as const,
+		amount: 500,
+		mint_url: 'https://mint.example.com',
+		timestamp: 1734567890000,
+		token_hash: 'cashuA...',
+		status: 'confirmed' as const,
+		protocol: 'cashu' as const,
+		fee: opts.fee,
+		actual_fee: opts.actualFee
+	};
+}
+
 // ─── Test suite ─────────────────────────────────────────────────
 
-describe('TASK-315: fee return indicator badge UI', () => {
-	beforeEach(() => {
-		mockShowFeeReturn = false;
-	});
+describe('TASK-FIX-321: fee return indicator badge UI (always ON)', () => {
 	afterEach(() => cleanup());
 
-	it('a) melt + fee_return > 0 + setting ON → badge shows with correct text', () => {
-		mockShowFeeReturn = true;
+	it('a) melt + fee_return > 0 (actual_fee < fee) → badge shows with correct text', () => {
 		const tx = makeMeltTx({ fee: 10, actualFee: 5 }); // fee_return = 5
 
 		const { container } = render(TransactionDetailSheet, { tx });
@@ -125,8 +142,7 @@ describe('TASK-315: fee return indicator badge UI', () => {
 		expect(badge?.textContent?.trim()).toBe('+5 sats return');
 	});
 
-	it('b) melt + fee_return === 0 (actual_fee == fee) + setting ON → no badge', () => {
-		mockShowFeeReturn = true;
+	it('b) melt + fee_return === 0 (actual_fee == fee) → no badge (legacy tx)', () => {
 		const tx = makeMeltTx({ fee: 10, actualFee: 10 }); // fee_return = 0
 
 		const { container } = render(TransactionDetailSheet, { tx });
@@ -135,11 +151,10 @@ describe('TASK-315: fee return indicator badge UI', () => {
 		expect(badge).toBeNull();
 	});
 
-	it('c) legacy melt tx (no actual_fee) + setting ON → no badge', () => {
-		mockShowFeeReturn = true;
-		// Legacy pre-TASK-314 tx: actual_fee field is absent (undefined).
-		// computeFeeReturn() treats undefined actual_fee as legacy → no badge.
-		const tx = makeMeltTx({ fee: 10 }); // no actualFee → undefined
+	it('c) non-melt tx (cashu_send) → no badge even if fee fields present', () => {
+		// Sanity: a send tx with fee fields should NOT show fee-return badge
+		// (only melt operations can have NUT-08 fee_return).
+		const tx = makeSendTx({ fee: 10, actualFee: 5 });
 
 		const { container } = render(TransactionDetailSheet, { tx });
 
@@ -147,13 +162,17 @@ describe('TASK-315: fee return indicator badge UI', () => {
 		expect(badge).toBeNull();
 	});
 
-	it('d) setting OFF + fee_return > 0 → no badge (default OFF per blueprint)', () => {
-		mockShowFeeReturn = false; // setting OFF (default)
-		const tx = makeMeltTx({ fee: 10, actualFee: 5 }); // fee_return = 5 (would otherwise show)
+	it('d) badge shown by default — no setting required (always-ON)', () => {
+		// TASK-FIX-321: setting removed. Badge always ON when fee_return > 0.
+		// This test verifies the same scenario as (a) without any prior setup —
+		// there is no "off" state to consider. If the gate regresses to require
+		// a setting, this will fail.
+		const tx = makeMeltTx({ fee: 20, actualFee: 7 }); // fee_return = 13
 
 		const { container } = render(TransactionDetailSheet, { tx });
 
 		const badge = container.querySelector('.badge.badge-success');
-		expect(badge).toBeNull();
+		expect(badge).toBeTruthy();
+		expect(badge?.textContent?.trim()).toBe('+13 sats return');
 	});
 });

@@ -106,7 +106,7 @@ const REQUIRED_NUT08_KEYS = [
 	'nut08.error.derive'
 ] as const;
 
-const TOTAL_KEYS = 428; // 422 (TASK-315) + 5 (TASK-316) + 1 (TASK-FIX-320 send.success.fee_with_reserve)
+const TOTAL_KEYS = 424; // 428 (post-fix-320 with +1 key) − 4 (fix-321-D removed 4 keys: settings.fee_return.title, .description, screen.settings.display_section, .display_description)
 
 describe('TASK-316: i18n NUT-08 namespace + parity', () => {
 	beforeAll(() => {
