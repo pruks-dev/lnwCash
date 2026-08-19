@@ -14,7 +14,6 @@
 	import { completeMint } from '$lib/wallet/mint';
 	import { fetchAndCacheKeysets } from '$lib/cashu/keyset';
 	import { computeFeeReturn } from '$lib/wallet/feeReturn';
-	import { getSettings } from '$lib/storage/local';
 	import Iconly from '$lib/iconly/Iconly.svelte';
 	import QRDisplay from '$lib/components/QRDisplay.svelte';
 
@@ -357,10 +356,7 @@
 	let isCashu = $derived(tx?.protocol === 'cashu' || tx?.type === 'cashu_send' || tx?.type === 'cashu_receive');
 	let displayData = $derived(isLightning ? tx?.invoice : tx?.token_hash);
 
-	// TASK-315: fee return badge gate (setting read once; toggle persists in localStorage).
-	// Read inside a $derived so it reflects the current setting when the sheet re-renders
-	// after the user has navigated to Settings and back.
-	let showFeeReturnSetting = $derived(getSettings().show_fee_return ?? false);
+	// TASK-FIX-321: fee return badge gate removed — always ON per Commander.
 	let feeReturnAmount = $derived(tx ? computeFeeReturn(tx) : 0);
 
 </script>
@@ -574,8 +570,8 @@
 					</div>
 				{/if}
 
-				<!-- TASK-315: NUT-08 fee return badge (only when setting ON + melt + actual_fee < fee). -->
-				{#if showFeeReturnSetting && tx.type === 'melt' && feeReturnAmount > 0}
+				<!-- TASK-FIX-321: NUT-08 fee return badge — always ON when melt + fee_return > 0. -->
+				{#if tx.type === 'melt' && feeReturnAmount > 0}
 					<div class="detail-field">
 						<span class="field-label">{$_('history.fee_return')}</span>
 						<span class="field-value">

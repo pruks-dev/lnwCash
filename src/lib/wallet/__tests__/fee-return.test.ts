@@ -1,9 +1,10 @@
 /**
  * TASK-315 (OPTIONAL): Fee return indicator — '+X sats return' badge.
+ * TASK-FIX-321: Settings toggle removed. Badge is now ALWAYS shown when
+ * fee_return > 0 (no setting check).
  *
  * Verifies `computeFeeReturn()` produces the expected fee_return value for all
  * display-relevant cases. The badge itself is gated by:
- *   - Setting `show_fee_return` ON (default OFF per blueprint)
  *   - `tx.type === 'melt'`
  *   - `tx.actual_fee != null` (legacy melt txs get NO badge — backwards compat)
  *   - `tx.actual_fee < tx.fee` (otherwise there is no overpaid refund)

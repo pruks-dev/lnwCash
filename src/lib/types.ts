@@ -45,8 +45,6 @@ export interface WalletSettings {
 	default_mint: string;
 	/** TASK-220: shuffle PIN keypad button positions (default off per Commander). */
 	pin_shuffle: boolean;
-	/** TASK-315: display NUT-08 fee return badge '+X sats return' in history when mint returned overpaid fee (default off per blueprint). */
-	show_fee_return?: boolean;
 }
 
 export interface KeysetCacheEntry {
