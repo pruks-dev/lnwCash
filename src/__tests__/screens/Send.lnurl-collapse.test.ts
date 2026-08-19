@@ -130,7 +130,7 @@ describe('Send LNURL UI collapse (TASK-287)', () => {
 		await fireEvent.paste(textarea, { clipboardData: { getData: () => 'PrukS@coinos.io' } });
 
 		// resolution completed → LNURL card visible
-		expect(await screen.findByText('Paying PrukS@coinos.io')).toBeTruthy();
+		expect(await screen.findByText('screen.send.lnaddr.pay_to PrukS@coinos.io')).toBeTruthy();
 
 		// textarea + paste/QR hidden while LNURL flow active
 		expect(document.querySelector('.invoice-textarea')).toBeNull();
@@ -143,7 +143,7 @@ describe('Send LNURL UI collapse (TASK-287)', () => {
 		// press back → reset → textarea reappears, LNURL card gone
 		await fireEvent.click(back);
 		expect(document.querySelector('.invoice-textarea')).toBeTruthy();
-		expect(screen.queryByText('Paying PrukS@coinos.io')).toBeNull();
+		expect(screen.queryByText('screen.send.lnaddr.pay_to PrukS@coinos.io')).toBeNull();
 		expect(document.querySelector('[data-flow="send-lnurl"]')).toBeNull();
 		expect(screen.queryByRole('button', { name: 'screen.send.lnaddr.back' })).toBeNull();
 	});
@@ -165,7 +165,7 @@ describe('Send LNURL UI collapse (TASK-287)', () => {
 
 		// finish resolution → back button appears
 		resolveFetch!(jsonResponse(PAY_INFO));
-		expect(await screen.findByText('Paying PrukS@coinos.io')).toBeTruthy();
+		expect(await screen.findByText('screen.send.lnaddr.pay_to PrukS@coinos.io')).toBeTruthy();
 		expect(screen.getByRole('button', { name: 'screen.send.lnaddr.back' })).toBeTruthy();
 	});
 

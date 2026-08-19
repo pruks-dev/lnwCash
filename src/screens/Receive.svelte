@@ -1012,7 +1012,9 @@
 
 	.amount-value {
 		font-family: var(--font-family);
-		font-size: var(--font-size-3xl);
+		/* TASK-307 (HOT-FIX): 3xl (32px) → 48px. No --font-size-4xl token
+		   exists in tokens.css, so use direct 48px (do NOT modify tokens.css). */
+		font-size: 48px;
 		font-weight: var(--font-weight-bold);
 		color: var(--color-primary);
 		line-height: var(--line-height-tight);
@@ -1168,7 +1170,8 @@
 
 	.received-value {
 		font-family: var(--font-family);
-		font-size: var(--font-size-2xl);
+		/* TASK-307 (HOT-FIX): 2xl (24px) → 48px (success screens). Direct 48px. */
+		font-size: 48px;
 		font-weight: var(--font-weight-bold);
 		color: var(--color-primary);
 	}

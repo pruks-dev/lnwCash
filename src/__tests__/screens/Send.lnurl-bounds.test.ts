@@ -118,7 +118,7 @@ describe('Send LNURL amount bounds + errors (TASK-280)', () => {
 	}
 
 	async function waitResolved() {
-		await screen.findByText('Paying PrukS@coinos.io');
+		await screen.findByText('screen.send.lnaddr.pay_to PrukS@coinos.io');
 	}
 
 	async function enterAmount(digits: string[]) {

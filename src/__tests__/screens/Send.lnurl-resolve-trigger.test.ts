@@ -149,7 +149,7 @@ describe('Send LNURL resolve trigger (TASK-290)', () => {
 
 		// press Enter → resolve
 		await fireEvent.keyDown(textarea, { key: 'Enter' });
-		expect(await screen.findByText('Paying PrukS@coinos.io')).toBeTruthy();
+		expect(await screen.findByText('screen.send.lnaddr.pay_to PrukS@coinos.io')).toBeTruthy();
 		expect(fetchMock).toHaveBeenCalled();
 	});
 
@@ -161,7 +161,7 @@ describe('Send LNURL resolve trigger (TASK-290)', () => {
 			clipboardData: { getData: () => 'PrukS@coinos.io' }
 		});
 
-		expect(await screen.findByText('Paying PrukS@coinos.io')).toBeTruthy();
+		expect(await screen.findByText('screen.send.lnaddr.pay_to PrukS@coinos.io')).toBeTruthy();
 		// resolve hit the .well-known/lnurlp endpoint
 		const resolveCall = fetchMock.mock.calls.find((c) => String(c[0]).includes('/.well-known/lnurlp/'));
 		expect(resolveCall).toBeTruthy();
@@ -179,7 +179,7 @@ describe('Send LNURL resolve trigger (TASK-290)', () => {
 			}
 		});
 
-		expect(await screen.findByText('Paying PrukS@coinos.io')).toBeTruthy();
+		expect(await screen.findByText('screen.send.lnaddr.pay_to coinos.io')).toBeTruthy();
 		// resolve hit the decoded lnurl URL (not the .well-known lightning-address path)
 		const resolveCall = fetchMock.mock.calls.find((c) => String(c[0]).includes('service.com'));
 		expect(resolveCall).toBeTruthy();

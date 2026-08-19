@@ -21,6 +21,8 @@
 		maxDigits?: number;
 		maxDecimals?: number;
 		disabled?: boolean;
+		/** Optional content rendered between the digit rows and the confirm button. */
+		children?: import('svelte').Snippet;
 	}
 
 	let {
@@ -30,7 +32,8 @@
 		confirmLabel = 'ตกลง',
 		maxDigits = 8,
 		maxDecimals = 2,
-		disabled = false
+		disabled = false,
+		children
 	}: Props = $props();
 
 	function emit(newValue: string) {
@@ -105,6 +108,9 @@
 			</svg>
 		</button>
 	</div>
+	{#if children}
+		{@render children()}
+	{/if}
 	{#if onconfirm}
 		<div class="numpad-row numpad-confirm-row">
 			<button type="button" class="num-confirm-btn" onclick={handleConfirm} disabled={disabled}>

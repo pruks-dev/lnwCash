@@ -166,7 +166,7 @@ describe('Send unified button (TASK-297)', () => {
 
 		// click Send → resolveLnurlInput
 		await fireEvent.click(sendButton);
-		expect(await screen.findByText('Paying PrukS@coinos.io')).toBeTruthy();
+		expect(await screen.findByText('screen.send.lnaddr.pay_to PrukS@coinos.io')).toBeTruthy();
 		const resolveCall = fetchMock.mock.calls.find((c) => String(c[0]).includes('/.well-known/lnurlp/'));
 		expect(resolveCall).toBeTruthy();
 	});
@@ -181,7 +181,7 @@ describe('Send unified button (TASK-297)', () => {
 		expect(sendButton).toBeTruthy();
 
 		await fireEvent.click(sendButton);
-		expect(await screen.findByText('Paying PrukS@coinos.io')).toBeTruthy();
+		expect(await screen.findByText('screen.send.lnaddr.pay_to coinos.io')).toBeTruthy();
 		const resolveCall = fetchMock.mock.calls.find((c) => String(c[0]).includes('service.com'));
 		expect(resolveCall).toBeTruthy();
 	});
@@ -233,7 +233,7 @@ describe('Send unified button (TASK-297)', () => {
 			clipboardData: { getData: () => 'PrukS@coinos.io' }
 		});
 
-		expect(await screen.findByText('Paying PrukS@coinos.io')).toBeTruthy();
+		expect(await screen.findByText('screen.send.lnaddr.pay_to PrukS@coinos.io')).toBeTruthy();
 		expect(fetchMock).toHaveBeenCalled();
 
 		// resolve succeeded → Send button NOT shown (LNURL card + numpad instead)
@@ -248,7 +248,7 @@ describe('Send unified button (TASK-297)', () => {
 		await fireEvent.input(textarea, { target: { value: 'PrukS@coinos.io' } });
 		await fireEvent.click(screen.getByRole('button', { name: 'screen.send.lnaddr.send_button' }));
 
-		expect(await screen.findByText('Paying PrukS@coinos.io')).toBeTruthy();
+		expect(await screen.findByText('screen.send.lnaddr.pay_to PrukS@coinos.io')).toBeTruthy();
 
 		// Send button hidden; "Request invoice" (numpad confirm) present instead
 		expect(screen.queryByRole('button', { name: 'screen.send.lnaddr.send_button' })).toBeNull();
@@ -262,7 +262,7 @@ describe('Send unified button (TASK-297)', () => {
 		await fireEvent.input(textarea, { target: { value: 'PrukS@coinos.io' } });
 		await fireEvent.keyDown(textarea, { key: 'Enter' });
 
-		expect(await screen.findByText('Paying PrukS@coinos.io')).toBeTruthy();
+		expect(await screen.findByText('screen.send.lnaddr.pay_to PrukS@coinos.io')).toBeTruthy();
 		expect(fetchMock).toHaveBeenCalled();
 	});
 

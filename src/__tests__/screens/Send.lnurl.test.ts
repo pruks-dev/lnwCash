@@ -125,9 +125,8 @@ describe('Send LNURL integration (TASK-280)', () => {
 		// TASK-290: paste is the resolve trigger (typing no longer auto-resolves)
 		await fireEvent.paste(textarea, { clipboardData: { getData: () => 'PrukS@coinos.io' } });
 
-		// resolution completed → description + domain rendered (text node, no HTML)
-		expect(await screen.findByText('Paying PrukS@coinos.io')).toBeTruthy();
-		expect(screen.getByText('coinos.io')).toBeTruthy();
+		// resolution completed → "Pay to {address}" rendered (text node, no HTML)
+		expect(await screen.findByText('screen.send.lnaddr.pay_to PrukS@coinos.io')).toBeTruthy();
 
 		// resolve hit the .well-known/lnurlp endpoint
 		const resolveCall = fetchMock.mock.calls.find((c) => String(c[0]).includes('/.well-known/lnurlp/'));

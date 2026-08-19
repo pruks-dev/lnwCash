@@ -36,7 +36,6 @@
 		resolveLightningAddress,
 		resolveLnurl,
 		requestLnurlInvoice,
-		parseMetadata,
 		msatToSat,
 		satToMsat,
 		LnurlError,
@@ -501,7 +500,13 @@
 			}
 
 			lnurlDomain = domain;
-			lnurlDescription = parseMetadata(lnurlPayInfo.metadata, domain || lnurlCallback);
+			// TASK-302 (HOT-FIX): ignore the server's metadata description — always
+			// show "Pay to {address/domain}". lightning address → the user's input;
+			// lnurl bech32 → the callback host (lnurlDomain state).
+			lnurlDescription =
+				type === 'lightning_address'
+					? `${$_('screen.send.lnaddr.pay_to')} ${input.trim()}`
+					: `${$_('screen.send.lnaddr.pay_to')} ${domain}`;
 			lnurlMinSat = msatToSat(lnurlPayInfo.minSendable);
 			lnurlMaxSat = msatToSat(lnurlPayInfo.maxSendable);
 			lnurlCommentAllowed =
@@ -930,6 +935,18 @@
 								disabled={lightningState === 'fee-calculating'}
 								aria-label={$_('screen.send.enter_invoice')}
 							></textarea>
+							<!-- TASK-305 (HOT-FIX): reorder input section top→bottom:
+							     textarea → Paste/QR → hint → Send (bottom-most). -->
+							<div class="invoice-input-actions">
+								<Button variant="ghost" size="sm" onclick={handlePasteInvoice}>
+									{#snippet children()}<span class="btn-icon-text"><span class="btn-icon-label">{$_('common.paste')}</span></span>{/snippet}
+								</Button>
+								{#if onQRScan}
+									<Button variant="ghost" size="sm" onclick={onQRScan}>
+										{#snippet children()}<span class="btn-icon-text"><Iconly name="Scan" size={14} /><span class="btn-icon-label">{$_('screen.send.scan_qr')}</span></span>{/snippet}
+									</Button>
+								{/if}
+							</div>
 							<p class="invoice-hint">{$_('screen.send.lnaddr.enter_hint')}</p>
 							{#if !lightningInvoiceValid && lnurlFlowState === 'idle'}
 								<Button
@@ -941,16 +958,6 @@
 									{#snippet children()}{$_('screen.send.lnaddr.send_button')}{/snippet}
 								</Button>
 							{/if}
-							<div class="invoice-input-actions">
-								<Button variant="ghost" size="sm" onclick={handlePasteInvoice}>
-									{#snippet children()}<span class="btn-icon-text"><span class="btn-icon-label">{$_('common.paste')}</span></span>{/snippet}
-								</Button>
-								{#if onQRScan}
-									<Button variant="ghost" size="sm" onclick={onQRScan}>
-										{#snippet children()}<span class="btn-icon-text"><Iconly name="Scan" size={14} /><span class="btn-icon-label">{$_('screen.send.scan_qr')}</span></span>{/snippet}
-									</Button>
-								{/if}
-							</div>
 						</div>
 					</Card>
 				{/if}
@@ -964,8 +971,13 @@
 							</div>
 						</Card>
 					{:else if lnurlPayInfo}
+						<!-- TASK-303 (HOT-FIX): ONE compact LNURL card — back + preview +
+						     amount + numpad + comment merged into a single Card (was 3 cards
+						     + standalone numpad). Layout (top→bottom): back → "Pay to" +
+						     min/max (1 line) → amount display → numpad → comment (above
+						     Request invoice) → Request invoice. All features kept. -->
 						<Card variant="basic" padding="md">
-							<div class="preview-section" data-flow="send-lnurl">
+							<div class="lnurl-card" data-flow="send-lnurl">
 								<!-- TASK-287: back button. This branch is only reachable when
 								     lnurlPayInfo is set, i.e. state ∈ {ready, requesting, error}
 								     (the sibling `resolving` branch renders first, and the whole
@@ -980,62 +992,53 @@
 									<ArrowLeft size={16} />
 									<span>{$_('screen.send.lnaddr.back')}</span>
 								</button>
+							<!-- TASK-304 (HOT-FIX rev23): 2-line LNURL preview — "Pay to …"
+							     (prominent semibold, center) on top + min/max (small dim,
+							     center) below. GAP between preview group and amount group. -->
+							<div class="lnaddr-preview">
 								{#if lnurlDescription}
-									<div class="detail-row">
-										<Body size="sm" color="secondary">{$_('screen.send.description')}</Body>
-										<Body size="sm" weight="semibold" truncate>{lnurlDescription}</Body>
-									</div>
-								{/if}
-								{#if lnurlDomain}
-									<div class="detail-row">
-										<Body size="sm" color="secondary">{$_('screen.send.lnaddr.domain_label')}</Body>
-										<Body size="sm" weight="semibold" truncate>{lnurlDomain}</Body>
-									</div>
+									<span class="lnaddr-desc">{lnurlDescription}</span>
 								{/if}
 								{#if lnurlMinSat > 0 || lnurlMaxSat > 0}
-									<div class="detail-row">
-										<Body size="sm" color="secondary">{$_('screen.send.lnaddr.min_max_label')}</Body>
-										<Body size="sm" weight="semibold">{formatSat(lnurlMinSat)} – {formatSat(lnurlMaxSat)} {$_('screen.balance.sats')}</Body>
-									</div>
+									<span class="lnaddr-minmax">{formatSat(lnurlMinSat)}–{formatSat(lnurlMaxSat)} {$_('screen.balance.sats')}</span>
 								{/if}
 							</div>
-						</Card>
 
-						<Card variant="basic" padding="lg">
-							<div class="amount-section">
-								<Body size="sm" color="secondary">{$_('screen.send.amount_label')}</Body>
-								<div class="amount-display" aria-live="polite">
-									<span class="amount-value">{lnurlAmount === '0' ? '0' : lnurlAmount}</span>
-									<span class="amount-unit">{$_('screen.balance.sats')}</span>
+								<div class="amount-section">
+									<Body size="sm" color="secondary">{$_('screen.send.amount_label')}</Body>
+									<div class="amount-display" aria-live="polite">
+										<span class="amount-value">{lnurlAmount === '0' ? '0' : lnurlAmount}</span>
+										<span class="amount-unit">{$_('screen.balance.sats')}</span>
+									</div>
 								</div>
+
+								<Numpad
+									value={lnurlAmount}
+									onchange={(v) => { lnurlAmount = v; lnurlError = ''; }}
+									onconfirm={handleLnurlRequestInvoice}
+									confirmLabel={lnurlFlowState === 'requesting' ? $_('screen.send.lnaddr.requesting_invoice') : $_('screen.send.lnaddr.request_invoice')}
+									disabled={lnurlFlowState === 'requesting'}
+								>
+									{#snippet children()}
+										{#if lnurlCommentAllowed > 0}
+											<div class="comment-section">
+												<Body size="sm" color="secondary">{$_('screen.send.lnaddr.comment_label')}</Body>
+												<input
+													type="text"
+													class="comment-input"
+													value={lnurlComment}
+													oninput={(e) => lnurlComment = (e.target as HTMLInputElement).value}
+													maxlength={lnurlCommentAllowed}
+													placeholder={$_('screen.send.lnaddr.comment_placeholder')}
+													disabled={lnurlFlowState === 'requesting'}
+													aria-label={$_('screen.send.lnaddr.comment_label')}
+												/>
+											</div>
+										{/if}
+									{/snippet}
+								</Numpad>
 							</div>
 						</Card>
-
-						<Numpad
-							value={lnurlAmount}
-							onchange={(v) => { lnurlAmount = v; lnurlError = ''; }}
-							onconfirm={handleLnurlRequestInvoice}
-							confirmLabel={lnurlFlowState === 'requesting' ? $_('screen.send.lnaddr.requesting_invoice') : $_('screen.send.lnaddr.request_invoice')}
-							disabled={lnurlFlowState === 'requesting'}
-						/>
-
-						{#if lnurlCommentAllowed > 0}
-							<Card variant="basic" padding="md">
-								<div class="comment-section">
-									<Body size="sm" color="secondary">{$_('screen.send.lnaddr.comment_label')}</Body>
-									<input
-										type="text"
-										class="comment-input"
-										value={lnurlComment}
-										oninput={(e) => lnurlComment = (e.target as HTMLInputElement).value}
-										maxlength={lnurlCommentAllowed}
-										placeholder={$_('screen.send.lnaddr.comment_placeholder')}
-										disabled={lnurlFlowState === 'requesting'}
-										aria-label={$_('screen.send.lnaddr.comment_label')}
-									/>
-								</div>
-							</Card>
-						{/if}
 					{/if}
 
 					{#if lnurlFlowState === 'error' && lnurlError}
@@ -1409,7 +1412,9 @@
 	.invoice-input-section {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-md);
+		/* TASK-307 (HOT-FIX): space-md (16px) → space-sm (8px) — Paste/QR + hint
+		   + Send tighter. */
+		gap: var(--space-sm);
 	}
 
 	.invoice-textarea {
@@ -1458,6 +1463,16 @@
 		gap: var(--space-sm);
 	}
 
+	/* TASK-306 (HOT-FIX): tighten Paste/QR ghost buttons — reduce vertical
+	   padding + min-height (button height) WITHOUT reducing font size.
+	   Scoped to ghost buttons inside invoice-input-actions ONLY;
+	   primary/other buttons unaffected. */
+	.invoice-input-actions :global(.btn-ghost) {
+		min-height: 32px;
+		padding-top: var(--space-xs);
+		padding-bottom: var(--space-xs);
+	}
+
 	/* Button icon alignment — icon + text in horizontal flex row */
 	.btn-icon-text {
 		display: inline-flex;
@@ -1478,6 +1493,18 @@
 		line-height: 1;
 	}
 
+	/* TASK-305 (HOT-FIX): single gap system — parent `gap` removed so spacing
+	   is per-group and never stacked (fixes TASK-303/304 gap + margin stacking).
+	   Per-group spacing (top→bottom):
+	     back → preview   ~4px   (back sits close to preview)
+	     preview → amount ~16px  (amount rises to center)
+	     amount → numpad  ~8px   (numpad adds its own internal padding) */
+	.lnurl-card {
+		display: flex;
+		flex-direction: column;
+		gap: 0;
+	}
+
 	/* ─── LNURL back button (TASK-287) ─── */
 	.lnaddr-back-btn {
 		display: inline-flex;
@@ -1485,6 +1512,8 @@
 		justify-content: flex-start;
 		gap: var(--space-xs);
 		padding: var(--space-xs) 0;
+		/* TASK-305 (HOT-FIX): back sits close to preview — small gap (~4px). */
+		margin-bottom: var(--space-xs);
 		border: none;
 		background: transparent;
 		color: var(--color-primary);
@@ -1522,7 +1551,9 @@
 
 	.amount-value {
 		font-family: var(--font-family);
-		font-size: var(--font-size-3xl);
+		/* TASK-306 (HOT-FIX): 3xl (32px) → 48px. No --font-size-4xl token
+		   exists in tokens.css, so use direct 48px (do NOT modify tokens.css). */
+		font-size: 48px;
 		font-weight: var(--font-weight-bold);
 		color: var(--color-primary);
 		line-height: var(--line-height-tight);
@@ -1574,6 +1605,43 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-sm);
+	}
+
+	/* TASK-304 (HOT-FIX rev23): 2-line LNURL preview — "Pay to …"
+	   (prominent semibold, center) on top + min/max (small dim, center) below. */
+	.lnaddr-preview {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: var(--space-xs);
+		width: 100%;
+		text-align: center;
+		/* TASK-305 (HOT-FIX): preview ↔ amount gap ~16px (replaces the stacked
+		   `margin-top: var(--space-lg)` that was on .amount-section). */
+		margin-bottom: var(--space-md);
+	}
+
+	.lnaddr-desc {
+		font-size: var(--font-size-md);
+		font-weight: var(--font-weight-semibold);
+		color: var(--color-text);
+		max-width: 100%;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.lnaddr-minmax {
+		font-size: var(--font-size-xs);
+		color: var(--color-text-secondary);
+		white-space: nowrap;
+	}
+
+	/* TASK-305 (HOT-FIX): amount group spacing — REMOVED the stacked
+	   `margin-top: var(--space-lg)` (24px). The preview↔amount gap now lives on
+	   .lnaddr-preview (single gap system). This only sets the amount→numpad gap. */
+	.lnurl-card .amount-section {
+		margin-bottom: var(--space-sm);
 	}
 
 	.preview-details {
@@ -1774,7 +1842,8 @@
 
 	.spent-value {
 		font-family: var(--font-family);
-		font-size: var(--font-size-2xl);
+		/* TASK-307 (HOT-FIX): 2xl (24px) → 48px (success screens). Direct 48px. */
+		font-size: 48px;
 		font-weight: var(--font-weight-bold);
 		color: var(--color-primary);
 	}
