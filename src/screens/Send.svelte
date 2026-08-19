@@ -866,11 +866,11 @@
 							</span>
 							<Heading level="h3" align="center">{$_('screen.send.success_title')}</Heading>
 							<div class="spent-amount">
-								<span class="spent-value">{formatSat(displaySpentAmount)}</span>
+								<span class="spent-value">{formatSat(paidInvoiceAmount)}</span>
 								<span class="spent-unit">{$_('screen.balance.sats')}</span>
 							</div>
 							<Body size="sm" color="secondary">
-								{$_('screen.send.amount_sent', { values: { amount: formatSat(displaySpentAmount) } })}
+								{$_('screen.send.amount_sent', { values: { amount: formatSat(paidInvoiceAmount) } })}
 							</Body>
 							<div class="success-rows" role="list" aria-label={$_('screen.send.success_title')}>
 								<!-- Row 1: Amount (always shown) -->
@@ -880,12 +880,23 @@
 										{formatSat(paidInvoiceAmount)} {$_('screen.balance.sats')}
 									</Body>
 								</div>
-								<!-- Row 2: Fee (conditional — only if fee > 0) -->
+								<!-- Row 2: Fee (conditional — only if fee > 0; combined: overpaid → fee_with_reserve, normal → fee) -->
 								{#if paidFee > 0}
 									<div class="success-row" role="listitem">
 										<Body size="sm" color="secondary">{$_('screen.send.success_fee_label')}</Body>
 										<Body size="sm" weight="semibold">
-											{formatSat(paidFee)} {$_('screen.balance.sats')}
+											{#if lightningResult?.actualFee != null && lightningResult?.feeReserve != null && lightningResult.actualFee < lightningResult.feeReserve}
+												<!-- Overpaid (NUT-08): mint returned change, actualFee < feeReserve -->
+												{$_('send.success.fee_with_reserve', {
+													values: {
+														actual: lightningResult.actualFee,
+														reserve: lightningResult.feeReserve
+													}
+												})}
+											{:else}
+												<!-- Normal: show paidFee as sat amount -->
+												{formatSat(paidFee)} {$_('screen.balance.sats')}
+											{/if}
 										</Body>
 									</div>
 									<!-- Row 3: Total (conditional — only if fee > 0) -->
@@ -893,24 +904,6 @@
 										<Body size="sm" weight="semibold">{$_('screen.send.success_total_label')}</Body>
 										<Body size="sm" weight="bold">
 											{formatSat(paidInvoiceAmount + paidFee)} {$_('screen.balance.sats')}
-										</Body>
-									</div>
-								{/if}
-								<!-- TASK-FIX-320: True-fee row (NUT-08 overpaid return).
-								     Shown when actualFee < feeReserve — the mint returned
-								     the overpaid portion as change, so the user actually
-								     paid less than the upfront reserve. Matches
-								     TransactionDetailSheet (TASK-314) UX. -->
-								{#if lightningResult?.actualFee != null && lightningResult?.feeReserve != null && lightningResult.actualFee < lightningResult.feeReserve}
-									<div class="success-row success-row-fee-with-reserve" role="listitem">
-										<Body size="sm" color="secondary">{$_('screen.send.success_fee_label')}</Body>
-										<Body size="sm" weight="semibold">
-											{$_('send.success.fee_with_reserve', {
-												values: {
-													actual: lightningResult.actualFee,
-													reserve: lightningResult.feeReserve
-												}
-											})}
 										</Body>
 									</div>
 								{/if}
@@ -1845,12 +1838,8 @@
 		flex-shrink: 0;
 	}
 
-	/* TASK-FIX-320: secondary visual treatment for the NUT-08 true-fee row
-	   so it reads as additional context, not a duplicate of the fee row above. */
-	.success-row-fee-with-reserve {
-		opacity: 0.85;
-		font-size: 0.92em;
-	}
+	/* TASK-FIX-320 secondary visual treatment removed in TASK-FIX-323:
+	   Row 4 was deleted and merged into Row 2 (combined Fee display). */
 
 	.success-icon {
 		color: var(--color-primary);
