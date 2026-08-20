@@ -154,7 +154,6 @@
 	"settings.change_pin.step_indicator": "ขั้นตอนที่ {step} จาก {total}",
 	"settings.pin_shuffle.title": "สลับตำแหน่งปุ่ม PIN",
 	"settings.pin_shuffle.description": "สุ่มตำแหน่งปุ่มกด PIN",
-	"history.fee_return": "คืน {amount} sats",
 	"settings.backup.title": "สำรอง",
 	"settings.backup.description": "ดูวลีกู้คืนของคุณ",
 	"settings.backup.show_seed": "ดูวลีกู้คืน",
