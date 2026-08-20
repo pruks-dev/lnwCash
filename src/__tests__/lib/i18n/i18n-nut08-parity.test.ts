@@ -4,7 +4,7 @@
  * Verifies:
  *   (a) all 5 nut08.* keys present in en.json (truthy, non-empty)
  *   (b) all 5 nut08.* keys present in th.json (truthy, non-empty)
- *   (c) en.json keys === th.json keys (428 = 428, full parity)
+ *   (c) en.json keys === th.json keys (423 = 423, full parity)
  *   (d) t('nut08.fee_return', { values: { amount: 5 } }) returns formatted string
  *
  * Parity baseline: TASK-315 added 5 keys → 422/422. TASK-316 adds 5 nut08.* keys
@@ -106,7 +106,7 @@ const REQUIRED_NUT08_KEYS = [
 	'nut08.error.derive'
 ] as const;
 
-const TOTAL_KEYS = 424; // 428 (post-fix-320 with +1 key) − 4 (fix-321-D removed 4 keys: settings.fee_return.title, .description, screen.settings.display_section, .display_description)
+const TOTAL_KEYS = 423; // TASK-FIX-325: 424 (post-fix-321-D) − 1 (history.fee_return removed — badge gone)
 
 describe('TASK-316: i18n NUT-08 namespace + parity', () => {
 	beforeAll(() => {
@@ -141,7 +141,7 @@ describe('TASK-316: i18n NUT-08 namespace + parity', () => {
 		expect(hasThaiChars, 'th.json nut08.* values must contain Thai characters').toBe(true);
 	});
 
-	it('c) parity: en.json keys === th.json keys (428 = 428, full parity)', () => {
+	it('c) parity: en.json keys === th.json keys (423 = 423, full parity)', () => {
 		const enKeys = Object.keys(en).sort();
 		const thKeys = Object.keys(th).sort();
 

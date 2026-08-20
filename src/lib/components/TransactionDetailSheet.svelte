@@ -13,7 +13,6 @@
 	import { notifyMintConfirmed } from '$lib/stores/mint-events';
 	import { completeMint } from '$lib/wallet/mint';
 	import { fetchAndCacheKeysets } from '$lib/cashu/keyset';
-	import { computeFeeReturn } from '$lib/wallet/feeReturn';
 	import Iconly from '$lib/iconly/Iconly.svelte';
 	import QRDisplay from '$lib/components/QRDisplay.svelte';
 
@@ -356,9 +355,6 @@
 	let isCashu = $derived(tx?.protocol === 'cashu' || tx?.type === 'cashu_send' || tx?.type === 'cashu_receive');
 	let displayData = $derived(isLightning ? tx?.invoice : tx?.token_hash);
 
-	// TASK-FIX-321: fee return badge gate removed — always ON per Commander.
-	let feeReturnAmount = $derived(tx ? computeFeeReturn(tx) : 0);
-
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -570,15 +566,7 @@
 					</div>
 				{/if}
 
-				<!-- TASK-FIX-321: NUT-08 fee return badge — always ON when melt + fee_return > 0. -->
-				{#if tx.type === 'melt' && feeReturnAmount > 0}
-					<div class="detail-field">
-						<span class="field-label">{$_('history.fee_return')}</span>
-						<span class="field-value">
-							<span class="badge badge-success">{$_('history.fee_return', { values: { amount: feeReturnAmount } })}</span>
-						</span>
-					</div>
-				{/if}
+				<!-- TASK-FIX-325: fee return badge removed — Fee detail row (Fee: X sats (reserve: Y)) is the only fee display. -->
 
 				<!-- Row 9: Mint URL -->
 				<div class="detail-field">
