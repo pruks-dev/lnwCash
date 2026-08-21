@@ -20,6 +20,12 @@ importers:
       '@vitest/coverage-v8':
         specifier: ^4.1.10
         version: 4.1.10(vitest@4.1.10)
+      bc-bech32:
+        specifier: ^1.0.2
+        version: 1.0.2
+      bc-ur:
+        specifier: 0.1.6
+        version: 0.1.6
       capacitor-barcode-scanner:
         specifier: ^8.0.0
         version: 8.0.0(@capacitor/core@8.5.0)
@@ -1574,6 +1580,12 @@ packages:
     resolution: {integrity: sha512-k9HNuUVMlqVjQ9UHzfPjIqiDbWw7WqT1AoT7GL8VwvF3r0ZfArtgiSPAlmupyNquNgOJHTuH4CKYf8ttMTWBTQ==}
     engines: {node: '>=6.0.0'}
     hasBin: true
+
+  bc-bech32@1.0.2:
+    resolution: {integrity: sha512-lwAn5R4LUhcnyrZgNx3YdDPr5+nseM4kARANcv8i0YOMtnPJRTF7B7TZzS3DYgC6tff/aR2W/3jGoY/SJMs6MA==}
+
+  bc-ur@0.1.6:
+    resolution: {integrity: sha512-k5jZLNgiCMQH5d/4lwsa6DJjH12vzdTEr9qVH1y9UPzJW32Ga1u8iC0KDAqtYnkvh8NR4DW8Fco6D2hphHZLzg==}
 
   bidi-js@1.0.3:
     resolution: {integrity: sha512-RKshQI1R3YQ+n9YJz2QQ147P66ELpa1FQEg20Dk8oW9t2KgLbpDLLp9aGZ7y8WHSshDknG0bknqGw5/tyCs5tw==}
@@ -4997,6 +5009,12 @@ snapshots:
   base64-js@1.5.1: {}
 
   baseline-browser-mapping@2.11.13: {}
+
+  bc-bech32@1.0.2: {}
+
+  bc-ur@0.1.6:
+    dependencies:
+      bc-bech32: 1.0.2
 
   bidi-js@1.0.3:
     dependencies:
