@@ -54,10 +54,10 @@
 	import Toast from '$lib/components/ui/Toast.svelte';
 	import Numpad from '$lib/components/Numpad.svelte';
 	import QRDisplay from '$lib/components/QRDisplay.svelte';
+	import AnimatedQR from '$lib/components/AnimatedQR.svelte';
 	import UnlockPrompt from '../components/UnlockPrompt.svelte';
 
 	import SendIcon from '$lib/components/icons/Send.svelte';
-	import Copy from '$lib/components/icons/Copy.svelte';
 	import Check from '$lib/components/icons/Check.svelte';
 	import Time from '$lib/components/icons/Time.svelte';
 	import ArrowLeft from '$lib/components/icons/ArrowLeft.svelte';
@@ -781,15 +781,6 @@
 		}
 	}
 
-	async function handleCopyToken() {
-		try {
-			await navigator.clipboard.writeText(cashuToken);
-			showToast($_('common.copied'), 'success');
-		} catch {
-			showToast($_('common.error_clipboard'), 'error');
-		}
-	}
-
 	function resetCashu() {
 		cashuState = 'idle';
 		cashuAmount = '0';
@@ -1201,9 +1192,12 @@
 						</span>
 						<Heading level="h3" align="center">{$_('screen.send.success_title')}</Heading>
 
-						<!-- TASK-169 / MOD-013: Token QR at TOP for Send Cashu (prominent placement) -->
+						<!-- TASK-402 / NUT-16: Animated QR (UR fragments) for Cashu token at TOP.
+						     Full cashuToken passed verbatim (NOT truncated) so UR encoder
+						     receives the entire payload. Lightning invoice below still uses
+						     the static QRDisplay. -->
 						<div class="token-qr-top" aria-label={$_('screen.send.success_token_qr_caption')}>
-							<QRDisplay data={cashuToken} size={300} label={$_('screen.send.success_token_qr_caption')} />
+							<AnimatedQR data={cashuToken} size={300} frameIntervalMs={200} />
 						</div>
 
 						<div class="token-display">
@@ -1214,9 +1208,6 @@
 								rows={3}
 								aria-label={$_('screen.send.success_token_label')}
 							></textarea>
-							<button type="button" class="success-copy-btn" onclick={handleCopyToken}>
-								<Copy size={14} /> {$_('screen.send.success_token_copy')}
-							</button>
 						</div>
 
 						<div class="success-rows" role="list" aria-label={$_('screen.send.success_title')}>
@@ -1891,44 +1882,6 @@
 		justify-content: center;
 		padding: var(--space-md) 0;
 		width: 100%;
-	}
-
-	/* ─── Copy Button (Token) ─────────────── */
-	.success-copy-btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		gap: var(--space-xs);
-		padding: var(--space-sm) var(--space-md);
-		border: 1.5px solid var(--color-primary);
-		border-radius: var(--radius-md);
-		background: transparent;
-		color: var(--color-primary);
-		font-family: var(--font-family);
-		font-size: var(--font-size-sm);
-		font-weight: var(--font-weight-semibold);
-		cursor: pointer;
-		transition: all var(--transition-fast);
-		min-height: 44px;
-		-webkit-tap-highlight-color: transparent;
-	}
-
-	.success-copy-btn:hover:not(:disabled) {
-		background: var(--color-primary);
-		color: var(--color-primary-contrast);
-	}
-
-	.success-copy-btn:active:not(:disabled) {
-		transform: scale(0.97);
-	}
-
-	.success-copy-btn:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-	}
-
-	.success-copy-btn :global(svg) {
-		flex-shrink: 0;
 	}
 
 	/* ─── Success CTA (Brand Cyan — F-V18-004) ─ */

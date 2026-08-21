@@ -203,7 +203,12 @@ describe('Success Screens (TASK-169 / MOD-013) — Source Audits', () => {
 		expect(qrIdx).toBeLessThan(rowsIdx);
 	});
 
-	it('Send.svelte: Cashu success has Copy button', async () => {
+	it('Send.svelte: Cashu success uses AnimatedQR for token (TASK-402 / NUT-16)', async () => {
+		// TASK-402 replaces static QRDisplay + redundant success-copy-btn with
+		// AnimatedQR (NUT-16 UR-fragment animated QR). Verify:
+		//   1. AnimatedQR component is rendered on Cashu success
+		//   2. Full cashuToken is passed (not a truncated substring)
+		//   3. success-copy-btn and handleCopyToken are REMOVED
 		const { default: fs } = await import('fs');
 		const src = fs.readFileSync(
 			'/home/debian/arx-projects/lnw-cash/src/screens/Send.svelte',
@@ -211,8 +216,13 @@ describe('Success Screens (TASK-169 / MOD-013) — Source Audits', () => {
 		);
 		const idx = src.indexOf('class="success-section" data-flow="send-cashu"');
 		const section = src.substring(idx, src.indexOf('success-cta', idx));
-		expect(section.includes('success-copy-btn')).toBe(true);
-		expect(section.includes('handleCopyToken')).toBe(true);
+		// 1) AnimatedQR is used (was: QRDisplay + success-copy-btn)
+		expect(section.includes('AnimatedQR')).toBe(true);
+		// 2) Full token passed — never a truncated substring inside the QR markup
+		expect(section).toMatch(/<AnimatedQR[^>]*data=\{cashuToken\}/);
+		// 3) Old redundant UI removed
+		expect(section.includes('success-copy-btn')).toBe(false);
+		expect(section.includes('handleCopyToken')).toBe(false);
 	});
 
 	it('Receive.svelte: Lightning success has NO preimage (MOD-013 correction)', async () => {
