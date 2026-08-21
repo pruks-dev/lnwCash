@@ -1,9 +1,14 @@
 <script lang="ts">
 	/**
-	 * TransactionDetailSheet — TASK-150 (CV17-002)
+	 * TransactionDetailSheet — TASK-150 (CV17-002), TASK-403 (Iter 4 / NUT-16)
 	 * Bottom sheet displaying full transaction details when a tx card is tapped in History.
 	 * 10 fields: type icon, amount, protocol+color, direction, timestamp, status,
 	 *            invoice (Lightning) / token_hash (Cashu), fee, mint URL, tx ID/hash.
+	 * QR code (TASK-403 / NUT-16): Cashu send transactions show the full token as an
+	 *   animated QR via AnimatedQR (UR fragments, 200 ms cadence). Lightning / cashu
+	 *   receive / fallback types continue to use the static QRDisplay. The full token
+	 *   data is passed verbatim to AnimatedQR — never truncated — so the UR encoder
+	 *   receives the entire payload (NUT-16 compliance).
 	 * Accessibility: role='dialog', aria-label, focus trap.
 	 */
 	import { _ } from 'svelte-i18n';
@@ -15,6 +20,7 @@
 	import { fetchAndCacheKeysets } from '$lib/cashu/keyset';
 	import Iconly from '$lib/iconly/Iconly.svelte';
 	import QRDisplay from '$lib/components/QRDisplay.svelte';
+	import AnimatedQR from '$lib/components/AnimatedQR.svelte';
 
 	interface Props {
 		/** Transaction data to display */
@@ -354,6 +360,17 @@
 	let isLightning = $derived(tx?.protocol === 'lightning' || tx?.type === 'melt' || tx?.type === 'mint');
 	let isCashu = $derived(tx?.protocol === 'cashu' || tx?.type === 'cashu_send' || tx?.type === 'cashu_receive');
 	let displayData = $derived(isLightning ? tx?.invoice : tx?.token_hash);
+	// TASK-403 (NUT-16): for cashu_send transactions, pass the full encoded token
+	// verbatim to AnimatedQR — never truncated — so the UR encoder can split the
+	// complete payload into fragments. For other types (Lightning mint/melt, cashu
+	// receive, deprecated transfer), fall back to the static QRDisplay path.
+	let isCashuSend = $derived(tx?.type === 'cashu_send');
+	// tokenData holds the full cashu token (the same string the sender encoded
+	// via encodeToken() in tokenStore.ts / transfer.ts). The legacy field name
+	// `token_hash` is misleading — cashu_send tx rows store the complete V4
+	// token string there. We surface it under the name `tokenData` to make the
+	// NUT-16 contract explicit at the call site.
+	let tokenData = $derived(isCashuSend ? (tx?.token_hash ?? null) : null);
 
 </script>
 
@@ -404,10 +421,16 @@
 			<!-- ─── Body: 10 fields ─────────────────────── -->
 			<div class="sheet-body">
 
-				<!-- QR Code -->
+				<!-- QR Code — TASK-403 (NUT-16): Cashu sends use AnimatedQR (UR fragments),
+				     other types keep the static QRDisplay. Full token passed to AnimatedQR
+				     without truncation. -->
 				{#if displayData}
 					<div class="detail-qr">
-						<QRDisplay data={displayData} size={200} />
+						{#if isCashuSend && tokenData}
+							<AnimatedQR data={tokenData} size={200} frameIntervalMs={200} />
+						{:else}
+							<QRDisplay data={displayData} size={200} />
+						{/if}
 					</div>
 				{/if}
 
