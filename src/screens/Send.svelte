@@ -881,7 +881,7 @@
 									</Body>
 								</div>
 								<!-- Row 2: Fee (conditional — only if fee > 0; combined: overpaid → fee_with_reserve, normal → fee) -->
-								{#if paidFee > 0}
+								{#if paidFee > 0 && !(lightningResult?.actualFee != null && lightningResult?.feeReserve != null && lightningResult.actualFee < lightningResult.feeReserve)}
 									<div class="success-row" role="listitem">
 										<Body size="sm" color="secondary">{$_('screen.send.success_fee_label')}</Body>
 										<Body size="sm" weight="semibold">
