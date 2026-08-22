@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { VitePWA } from 'vite-plugin-pwa';
+import { nodePolyfills } from 'vite-plugin-node-polyfills';
 import { resolve } from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -13,6 +14,18 @@ export default defineConfig({
 		'import.meta.env.APP_VERSION': JSON.stringify(pkg.version)
 	},
 	plugins: [
+		// TASK-FIX-403: Polyfill Node core modules for browser.
+		// Required because @gandlaf21/bc-ur (transitive via ur-encoder.ts) imports
+		// `import { Buffer } from 'buffer'` — Vite externalizes Node built-ins by
+		// default which throws "__vite-browser-external:buffer" at runtime.
+		// We scope `include` to ONLY `buffer` because the default plugin
+		// polyfills ALL Node core modules (including `node:module`/`createRequire`),
+		// which collides with rolldown's own internal use of `createRequire`
+		// — rolldown needs the real Node `module`, not a mock stub.
+		nodePolyfills({
+			include: ['buffer'],
+			protocolImports: true
+		}),
 		svelte(),
 		VitePWA({
 			registerType: 'autoUpdate',
