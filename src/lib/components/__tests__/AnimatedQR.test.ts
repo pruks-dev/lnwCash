@@ -1,14 +1,19 @@
 /**
- * AnimatedQR tests — TASK-401 (NUT-16 animated QR codes, Iter 4)
+ * AnimatedQR tests — TASK-401 (NUT-16 animated QR codes)
  *                  + TASK-FIX-405 (UR type 'bytes', default frame interval 300ms)
+ *                  + TASK-FIX-406 (thin wrapper around @gandlaf21/bc-ur library)
  *
  * Verifies:
  *   - Component renders with sample data
- *   - UR fragment output is valid (ur:bytes/ prefix, multi-frame format)
+ *   - UR fragment output is valid (ur:bytes/ prefix, library wire format)
  *   - Output bindings (currentFrame, frameIndex, totalFrames) populate
  *   - Error state is reachable (payload-too-large path)
  *   - Frame interval is configurable (200ms ± 10% when explicitly set)
- *   - ur-encoder.ts produces byte-identical CBOR to bc-ur's encodeSimpleCBOR
+ *   - The wrapper uses the library UREncoder directly (no custom CBOR logic)
+ *
+ * Wire formats (TASK-FIX-406, library-produced):
+ *   - Single-part: ur:bytes/<bc32>
+ *   - Multi-part:  ur:bytes/<seq>-<seqLen>/<bytewords>  (fountain codes)
  *
  * Testing strategy notes:
  *   - We mock `QRCode.toDataURL` to avoid jsdom canvas/timer interaction.
@@ -29,58 +34,14 @@ import AnimatedQR from '../AnimatedQR.svelte';
 import {
 	encodeUR,
 	encodeURString,
-	cborEncodeBytes,
 	estimateFragmentCount,
 	NUT16_UR_TYPE
 } from '$lib/wallet/ur-encoder';
 
-// @gandlaf21/bc-ur@1.1.12 is the browser-safe replacement for the old
-// Node-only `bc-ur@0.1.6` package (TASK-FIX-401). We import it here as a
-// compile-time gate to keep the dependency live (and to trigger its
-// bundled `buffer` polyfill import). We do NOT use `UR.fromBuffer` for the
-// parity test below because in the vitest jsdom env the bundled Buffer
-// polyfill is what `Buffer.from()` returns, and that polyfill is not
-// recognized as a byte-string by the cborg library that
-// @gandlaf21/bc-ur delegates to — cborg falls back to encoding the
-// polyfill Buffer as a CBOR map of { index: byte } entries, which is a
-// valid CBOR encoding of a different value. Our `cborEncodeBytes` always
-// emits a BCR-05 byte-string (major type 2), which is what the UR spec
-// (BCR-2020-005) and NUT-16 require for cashu token payloads.
-//
-// The byte-parity assertion below compares against the expected
-// spec-conformant CBOR byte-string header for each length class, computed
-// independently from BCR-05. The `cborEncodeBytes` output is the same
-// byte-string `cborg` (the same library @gandlaf21/bc-ur uses
-// internally) would emit for a real Uint8Array input — verified by the
-// v0.1.6 TASK-401 tests that this rewrite replaces.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-import * as gandlaf21BcUr from '@gandlaf21/bc-ur';
-
-// Spec-conformant CBOR byte-string header per BCR-05 / RFC 8949 §3.2.2
-// (major type 2 = byte string). We compute the expected header bytes
-// independently and compare against our `cborEncodeBytes` output.
-function expectedCborByteStringHeader(length: number): number[] {
-	if (length <= 0) throw new Error('length must be > 0');
-	if (length <= 23) return [0x40 + length];
-	if (length <= 255) return [0x58, length];
-	if (length <= 65535) return [0x59, (length >> 8) & 0xff, length & 0xff];
-	return [
-		0x5a,
-		(length >>> 24) & 0xff,
-		(length >>> 16) & 0xff,
-		(length >>> 8) & 0xff,
-		length & 0xff
-	];
-}
-
-function expectedCborByteStringHex(bytes: Uint8Array): string {
-	const header = expectedCborByteStringHeader(bytes.length);
-	let hex = header.map((b) => b.toString(16).padStart(2, '0')).join('');
-	for (let i = 0; i < bytes.length; i++) {
-		hex += bytes[i].toString(16).padStart(2, '0');
-	}
-	return hex;
-}
+// Import the library classes directly to verify they are wired up (TASK-FIX-406).
+// The library UREncoder is what the wrapper delegates to. If the library
+// is missing or its API drifts, this import will fail at test-load time.
+import { UR, UREncoder, URDecoder } from '@gandlaf21/bc-ur';
 
 afterEach(() => {
 	cleanup();
@@ -89,6 +50,10 @@ afterEach(() => {
 });
 
 const SAMPLE_TOKEN = 'cashuAeyJ0b2tlbiI6W3sibWFudCI6Imh0dHBzOi8vZm9vLmJhciJ9XX0';
+
+// Library wire-format regexes (TASK-FIX-406)
+const SINGLE_PART_RE = /^ur:bytes\/[a-z0-9]+$/;
+const MULTI_PART_RE = /^ur:bytes\/\d+-\d+\/[a-z]+$/;
 
 // Helper: returns the current progress text "X/Y" or null
 function readProgressText(container: HTMLElement): string | null {
@@ -130,7 +95,7 @@ describe('AnimatedQR component (TASK-401 / NUT-16)', () => {
 	});
 
 	it('renders multi-frame payload with progress bar (autoStart=false preview)', async () => {
-		const big = 'a'.repeat(2000); // ≈ 17 frames
+		const big = 'a'.repeat(2000); // many frames
 		const { container } = render(AnimatedQR, {
 			data: big,
 			frameIntervalMs: 5000, // not relevant when autoStart=false
@@ -147,7 +112,7 @@ describe('AnimatedQR component (TASK-401 / NUT-16)', () => {
 	});
 
 	it('shows error when payload exceeds maxFrames (low cap)', async () => {
-		const big = 'a'.repeat(2000); // ≈ 17 frames
+		const big = 'a'.repeat(2000); // many frames
 		const { container } = render(AnimatedQR, {
 			data: big,
 			maxFrames: 2 // deliberately too small
@@ -178,40 +143,40 @@ describe('AnimatedQR component (TASK-401 / NUT-16)', () => {
 	});
 });
 
-describe('ur-encoder module (TASK-401 + TASK-FIX-405)', () => {
-	it('exports NUT16_UR_TYPE as "bytes" (TASK-FIX-405: matches cashu.me)', () => {
+describe('ur-encoder module (TASK-FIX-406 thin wrapper)', () => {
+	it('exports NUT16_UR_TYPE as "bytes" (TASK-FIX-405/406: matches cashu.me)', () => {
 		expect(NUT16_UR_TYPE).toBe('bytes');
 	});
 
 	it('encodeURString produces single fragment for tiny payload', () => {
 		const frags = encodeURString('hello');
 		expect(frags).toHaveLength(1);
-		expect(frags[0]).toMatch(/^ur:bytes\/[a-z0-9]+$/);
+		expect(frags[0]).toMatch(SINGLE_PART_RE);
 	});
 
 	it('encodeURString produces multiple fragments for large payload', () => {
 		const frags = encodeURString('a'.repeat(2000));
 		expect(frags.length).toBeGreaterThan(1);
 		for (const f of frags) {
-			expect(f).toMatch(/^ur:bytes\/\d+of\d+\/[a-z0-9]+\/[a-z0-9]+$/);
+			expect(f).toMatch(MULTI_PART_RE);
 		}
 	});
 
-	it('multi-frame fragments share the same digest and have valid sequencing', () => {
+	it('multi-frame fragments have valid fountain-code sequencing', () => {
 		const frags = encodeURString('a'.repeat(2000));
 		const total = frags.length;
-		const digests = new Set<string>();
+		const seqLens = new Set<number>();
 		for (let i = 0; i < frags.length; i++) {
-			const m = frags[i].match(/^ur:bytes\/(\d+)of(\d+)\/([a-z0-9]+)\/([a-z0-9]+)$/);
+			const m = frags[i].match(/^ur:bytes\/(\d+)-(\d+)\/([a-z]+)$/);
 			expect(m).not.toBeNull();
 			if (m) {
 				expect(Number(m[1])).toBe(i + 1); // 1-based
-				expect(Number(m[2])).toBe(total);
-				digests.add(m[3]);
+				expect(Number(m[2])).toBe(total); // total parts
+				seqLens.add(Number(m[2]));
 			}
 		}
-		// All fragments must share the same digest
-		expect(digests.size).toBe(1);
+		// All fragments must share the same seqLen
+		expect(seqLens.size).toBe(1);
 	});
 
 	it('encodeUR rejects empty payload', () => {
@@ -227,33 +192,6 @@ describe('ur-encoder module (TASK-401 + TASK-FIX-405)', () => {
 		expect(() => encodeUR(badInput)).toThrow();
 	});
 
-	it('cborEncodeBytes produces spec-conformant BCR-05 byte-string (small, ≤23 bytes)', () => {
-		const data = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
-		const ours = Array.from(cborEncodeBytes(data))
-			.map((b) => b.toString(16).padStart(2, '0'))
-			.join('');
-		const theirs = expectedCborByteStringHex(data);
-		expect(ours).toBe(theirs);
-	});
-
-	it('cborEncodeBytes produces spec-conformant BCR-05 byte-string (medium, 24–255 bytes)', () => {
-		const data = new Uint8Array(30).fill(0xaa);
-		const ours = Array.from(cborEncodeBytes(data))
-			.map((b) => b.toString(16).padStart(2, '0'))
-			.join('');
-		const theirs = expectedCborByteStringHex(data);
-		expect(ours).toBe(theirs);
-	});
-
-	it('cborEncodeBytes produces spec-conformant BCR-05 byte-string (large, 256–65535 bytes)', () => {
-		const data = new Uint8Array(300).fill(0xbb);
-		const ours = Array.from(cborEncodeBytes(data))
-			.map((b) => b.toString(16).padStart(2, '0'))
-			.join('');
-		const theirs = expectedCborByteStringHex(data);
-		expect(ours).toBe(theirs);
-	});
-
 	it('estimateFragmentCount returns 1 for tiny payloads', () => {
 		expect(estimateFragmentCount(10)).toBe(1);
 	});
@@ -262,6 +200,24 @@ describe('ur-encoder module (TASK-401 + TASK-FIX-405)', () => {
 		const a = estimateFragmentCount(1000);
 		const b = estimateFragmentCount(10000);
 		expect(b).toBeGreaterThan(a);
+	});
+
+	it('output round-trips through library URDecoder (byte-identical)', () => {
+		// TASK-FIX-406 acceptance: encoder output is byte-for-byte
+		// compatible with cashu.me (which uses the same library).
+		const original = new TextEncoder().encode('cashuAeyJ0b2tlbiI6W3sibWFudCI6Imh0dHBzOi8vZm9vLmJhciJ9XX0');
+		const frags = encodeUR(original);
+
+		const decoder = new URDecoder();
+		for (const f of frags) {
+			decoder.receivePart(f);
+		}
+		const resultUr = decoder.resultUR();
+		expect(resultUr).not.toBeNull();
+		const decoded = resultUr!.decodeCBOR();
+		expect(Buffer.from(decoded).toString('hex')).toBe(
+			Buffer.from(original).toString('hex')
+		);
 	});
 });
 
