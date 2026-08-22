@@ -1,5 +1,0 @@
-Loading svelte-check in workspace: /home/debian/arx-projects/lnw-cash
-Getting Svelte diagnostics...
-
-svelte-check found 0 errors and 0 warnings
-EXIT=0

@@ -1,3 +1,0 @@
-$ npx tsx -e "import './vite.config.ts'"
-Exit code: 0
-No parse/runtime errors.

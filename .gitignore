@@ -25,3 +25,6 @@ dist-ssr
 
 # Auto-generated certificates (development only)
 cert/
+
+# ARX pipeline — canonical at /home/debian/ARX/.arx (Saber must NOT write here)
+.arx/

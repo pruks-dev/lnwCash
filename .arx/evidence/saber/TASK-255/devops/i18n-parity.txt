@@ -1,6 +1,0 @@
-i18n parity check: th.json vs en.json
-th.json key count: 381
-en.json key count: 381
-keys only in th.json: 0 []
-keys only in en.json: 0 []
-PARITY: MATCH (0 diff)

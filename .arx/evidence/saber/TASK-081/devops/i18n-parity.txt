@@ -1,8 +1,0 @@
-=== Gate L: i18n PARITY ===
---- th.json key count ---
-th.json keys: 251
---- en.json key count ---
-en.json keys: 251
---- Key diff (keys in th but not in en) ---
-ALL KEYS MATCH - PARITY
-Total unique keys: th=251, en=251

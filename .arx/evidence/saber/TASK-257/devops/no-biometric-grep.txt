@@ -1,5 +1,0 @@
---- no-biometric grep (D5) ---
-command: grep -rniE 'biometric|webauthn' src/
-matches: 0
-grep_exit_code: 1 (grep returns 1 when no lines match)
-result: PASS (0 matches)

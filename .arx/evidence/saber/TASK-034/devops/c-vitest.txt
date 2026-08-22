@@ -1,9 +1,0 @@
-Test Files  1 failed | 37 passed (38)
-      Tests  1 failed | 345 passed (346)
-   Start at  05:37:23
-   Duration  35.28s (transform 3.19s, setup 1.82s, import 9.62s, tests 34.58s, environment 48.78s)
-
-Pre-existing failure:
-FAIL  src/__tests__/components/ErrorBoundary.test.ts > ErrorBoundary > should display retry button in error state
-TestingLibraryElementError: Unable to find an element with the text: common.retry.
-Component renders Thai 'ลองใหม่' instead. Pre-existing, not related to TASK-033.

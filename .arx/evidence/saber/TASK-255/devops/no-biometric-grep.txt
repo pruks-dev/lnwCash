@@ -1,4 +1,0 @@
-no-biometric grep (D5) — pattern: biometric|webauthn across src/
-Command: grep -rniE 'biometric|webauthn' src/
-Matches:
-grep exit code: 1 (1 = no matches, MANDATORY requirement met)

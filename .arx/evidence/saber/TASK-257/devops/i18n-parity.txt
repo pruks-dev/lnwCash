@@ -1,8 +1,0 @@
-i18n parity check: src/locales/th.json vs src/locales/en.json
-method: flatten nested keys, compare key set + value type
-th keys: 381
-en keys: 381
-only in th: []
-only in en: []
-type mismatches: []
-RESULT: PASS (0 diff)

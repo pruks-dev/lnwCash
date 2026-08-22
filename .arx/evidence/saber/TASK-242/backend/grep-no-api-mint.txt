@@ -1,2 +1,0 @@
-=== grep -rn '/api/mint' src/ vite.config.ts ===
-exit code: 1 (1 = no matches = PASS)

@@ -1,8 +1,0 @@
-TASK-213 no-biometric / no-WebAuthn grep (D5 removal verification)
-Scope: src/ + public/ (case-insensitive)
-
-  grep -rni 'biometric'  -> 0 matches
-  grep -rni 'webauthn'   -> 0 matches
-
-RESULT: PASS — 0 matches for biometric AND 0 matches for WebAuthn.
-D5 (biometric/WebAuthn) removal is VERIFIED.

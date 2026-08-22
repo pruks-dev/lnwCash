@@ -1,7 +1,0 @@
-TASK-223 no-biometric verification (D5 — biometric removed)
-Command: grep -rniE "biometric|webauthn" src/
-Exit code: 1 (grep: no matches)
-
-Result: 0 matches (PASS)
-
-(No output above = no occurrences of "biometric" or "webauthn" anywhere under src/)

@@ -1,1 +1,0 @@
-d597bf4 TASK-311: NUT-09 capability check — getMintCapability + hasNUT08 + pre-melt hook

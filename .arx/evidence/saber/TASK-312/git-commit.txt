@@ -1,1 +1,0 @@
-5eac7f3 TASK-312: MAX change pre-derive (NUT-08) — changeAmount = MAX(0, spentTotal - amount - min_fee_estimate)

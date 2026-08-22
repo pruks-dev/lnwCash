@@ -1,8 +1,0 @@
-=== Gate K: BUTTON ORDER (F-053) ===
---- Button order in Home.svelte ---
-4:	 * Home-centric: Balance display + Send/Receive + Recent transactions
-25:	import Receive from '$lib/components/icons/Receive.svelte';
-26:	import Send from '$lib/components/icons/Send.svelte';
-191:				<!-- F-053/D-013: Receive ซ้าย, Send ขวา -->
-196:						<Receive size={28} />
-205:						<Send size={28} />

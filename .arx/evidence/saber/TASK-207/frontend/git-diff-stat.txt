@@ -1,5 +1,0 @@
- src/__tests__/screens/Setup.test.ts | 261 ++++++++--
- src/locales/en.json                 |  27 +
- src/locales/th.json                 |  27 +
- src/screens/Setup.svelte            | 995 ++++++++++++++++++++++++++++--------
- 4 files changed, 1047 insertions(+), 263 deletions(-)
