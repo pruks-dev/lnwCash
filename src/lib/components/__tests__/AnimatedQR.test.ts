@@ -1,12 +1,13 @@
 /**
  * AnimatedQR tests — TASK-401 (NUT-16 animated QR codes, Iter 4)
+ *                  + TASK-FIX-405 (UR type 'bytes', default frame interval 300ms)
  *
  * Verifies:
  *   - Component renders with sample data
- *   - UR fragment output is valid (ur:crypto-token/ prefix, multi-frame format)
+ *   - UR fragment output is valid (ur:bytes/ prefix, multi-frame format)
  *   - Output bindings (currentFrame, frameIndex, totalFrames) populate
  *   - Error state is reachable (payload-too-large path)
- *   - Frame interval is configurable (200ms ± 10%)
+ *   - Frame interval is configurable (200ms ± 10% when explicitly set)
  *   - ur-encoder.ts produces byte-identical CBOR to bc-ur's encodeSimpleCBOR
  *
  * Testing strategy notes:
@@ -177,22 +178,22 @@ describe('AnimatedQR component (TASK-401 / NUT-16)', () => {
 	});
 });
 
-describe('ur-encoder module (TASK-401)', () => {
-	it('exports NUT16_UR_TYPE as "crypto-token"', () => {
-		expect(NUT16_UR_TYPE).toBe('crypto-token');
+describe('ur-encoder module (TASK-401 + TASK-FIX-405)', () => {
+	it('exports NUT16_UR_TYPE as "bytes" (TASK-FIX-405: matches cashu.me)', () => {
+		expect(NUT16_UR_TYPE).toBe('bytes');
 	});
 
 	it('encodeURString produces single fragment for tiny payload', () => {
 		const frags = encodeURString('hello');
 		expect(frags).toHaveLength(1);
-		expect(frags[0]).toMatch(/^ur:crypto-token\/[a-z0-9]+$/);
+		expect(frags[0]).toMatch(/^ur:bytes\/[a-z0-9]+$/);
 	});
 
 	it('encodeURString produces multiple fragments for large payload', () => {
 		const frags = encodeURString('a'.repeat(2000));
 		expect(frags.length).toBeGreaterThan(1);
 		for (const f of frags) {
-			expect(f).toMatch(/^ur:crypto-token\/\d+of\d+\/[a-z0-9]+\/[a-z0-9]+$/);
+			expect(f).toMatch(/^ur:bytes\/\d+of\d+\/[a-z0-9]+\/[a-z0-9]+$/);
 		}
 	});
 
@@ -201,7 +202,7 @@ describe('ur-encoder module (TASK-401)', () => {
 		const total = frags.length;
 		const digests = new Set<string>();
 		for (let i = 0; i < frags.length; i++) {
-			const m = frags[i].match(/^ur:crypto-token\/(\d+)of(\d+)\/([a-z0-9]+)\/([a-z0-9]+)$/);
+			const m = frags[i].match(/^ur:bytes\/(\d+)of(\d+)\/([a-z0-9]+)\/([a-z0-9]+)$/);
 			expect(m).not.toBeNull();
 			if (m) {
 				expect(Number(m[1])).toBe(i + 1); // 1-based

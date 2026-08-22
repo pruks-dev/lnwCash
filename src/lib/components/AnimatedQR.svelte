@@ -1,15 +1,28 @@
 <script lang="ts">
 	/**
 	 * AnimatedQR — NUT-16 animated QR code renderer (TASK-401, Iter 4)
+	 * (TASK-FIX-405: match cashu.me reference impl for scanner compatibility)
 	 *
 	 * Splits a payload (typically a cashu token) into NUT-16 UR fragments
 	 * and renders them sequentially as a single QR canvas that swaps the
-	 * current frame on a fixed interval (default 200 ms).
+	 * current frame on a fixed interval (default 300 ms — matches cashu.me).
 	 *
 	 * UR encoding pipeline:
 	 *   payload bytes → CBOR byte-string → BC32 encode → SHA-256 digest
-	 *   → split into fragments → wrap as `ur:crypto-token/<seq>of<total>/<digest>/<data>`
+	 *   → split into fragments → wrap as `ur:bytes/<seq>of<total>/<digest>/<data>`
 	 * See ./ur-encoder.ts for the full algorithm (BCR-2020-005 / NUT-16).
+	 *
+	 * TASK-FIX-405 differences from the previous version (matches cashu.me):
+	 *   - UR type tag: `crypto-token` → `bytes` (NUT-16 does not specify a
+	 *     type; cashu.me uses `bytes` so phone cameras + cashu.me can scan).
+	 *   - QR margin: 2 → 4 (default quiet zone; cashu.me uses 4).
+	 *   - QR width: 256 → 600 (cashu.me uses 600; bigger is easier to scan
+	 *     on phone cameras at typical viewing distance).
+	 *   - QR error-correction level: already 'L' (Low — best for scans).
+	 *   - Frame interval: 200ms → 300ms default (cashu.me default).
+	 *   - Fragment length: 200 → 150 default (cashu.me default).
+	 *   - Fragment length is now adjustable via the `fragmentLength` prop
+	 *     (50 / 100 / 150 — cashu.me exposes the same choice).
 	 *
 	 * Out of scope for this iteration:
 	 *   - Lightning invoice animated QR (NUT-15 / bolt11) — not requested
@@ -23,13 +36,21 @@
 	 *   maxFrames — hard cap on frame count (default 300, see NUT16_MAX_FRAMES).
 	 *               When exceeded, encoding is rejected with `error` populated
 	 *               and nothing is rendered. Caller may downsample the input.
-	 *   frameIntervalMs — milliseconds per frame (default 200, range 50–2000).
-	 *                     Per NUT-16 reference implementations 150–300 ms is
-	 *                     typical; 200 ms gives ~5 fps for a smooth loop.
-	 *   size — rendered QR canvas size in pixels (default 256, range 128–512)
+	 *   frameIntervalMs — milliseconds per frame (default 300, range 50–2000).
+	 *                     Per NUT-16 reference implementations 150–500 ms is
+	 *                     typical; 300 ms gives ~3.3 fps for a smooth loop.
+	 *   size — rendered QR canvas size in pixels (default 600, range 256–1024).
+	 *          600 matches cashu.me; smaller sizes are available for tight UIs.
+	 *   fragmentLength — BC32 chars per fragment (default 150, options 50/100/150).
+	 *                    Smaller → more frames, easier to scan; larger → fewer
+	 *                    frames, harder to scan. 150 is cashu.me's default.
 	 *   autoStart — begin animation on mount (default true). When false,
 	 *               the component starts paused and exposes `start()` / `stop()`
 	 *               via the `controller` bind.
+	 *   showControls — show speed (Fast/Medium/Slow) + size (S/M/L) buttons
+	 *                  (default false). When true, the user can adjust the
+	 *                  frame interval and QR size without leaving the screen.
+	 *                  This matches cashu.me's behaviour.
 	 *
 	 * Output bindings (via $bindable):
 	 *   currentFrame — data URL of the currently displayed QR frame
@@ -45,12 +66,32 @@
 		NUT16_MAX_FRAMES
 	} from '$lib/wallet/ur-encoder';
 
+	/** Preset speeds for the user-facing controls. Matches cashu.me's three
+	 *  buttons: Fast / Medium / Slow. */
+	export type SpeedPreset = 'fast' | 'medium' | 'slow';
+	/** Preset sizes for the user-facing controls. S/M/L mirrors cashu.me. */
+	export type SizePreset = 'S' | 'M' | 'L';
+
+	const SPEED_PRESETS: Record<SpeedPreset, number> = {
+		fast: 150,    // ~6.7 fps — best for slow cameras / poor lighting
+		medium: 300,  // ~3.3 fps — cashu.me default, balanced
+		slow: 500     // 2 fps — easier on the human eye
+	};
+
+	const SIZE_PRESETS: Record<SizePreset, number> = {
+		S: 300,   // compact, mobile-first
+		M: 600,   // cashu.me default
+		L: 900    // large, e.g. desktop / projector
+	};
+
 	interface Props {
 		data: string;
 		maxFrames?: number;
 		frameIntervalMs?: number;
 		size?: number;
+		fragmentLength?: number;
 		autoStart?: boolean;
+		showControls?: boolean;
 		currentFrame?: string;
 		frameIndex?: number;
 		totalFrames?: number;
@@ -68,9 +109,11 @@
 	let {
 		data,
 		maxFrames = NUT16_MAX_FRAMES,
-		frameIntervalMs = 200,
-		size = 256,
+		frameIntervalMs = 300,
+		size = 600,
+		fragmentLength = 150,
 		autoStart = true,
+		showControls = false,
 		currentFrame = $bindable(''),
 		frameIndex = $bindable(0),
 		totalFrames = $bindable(0),
@@ -83,11 +126,42 @@
 	let intervalHandle: ReturnType<typeof setInterval> | undefined;
 	let playing: boolean = $state(false);
 
+	// --- UI-control local state (only used when showControls === true) ----
+	// The actual effective speed/size are read from the parent's props
+	// (`frameIntervalMs`, `size`). These local presets are pushed up via
+	// a $effect that rewrites the parent-bound props when the user clicks
+	// a button. We keep a derived "selected" view to highlight the active
+	// button (so the UI reflects the current prop value even when the
+	// parent drives the props externally).
+	let speedPreset: SpeedPreset = $state('medium');
+	let sizePreset: SizePreset = $state('M');
+
+	// Map current prop values → preset label for the "selected" highlight
+	let activeSpeedPreset = $derived.by((): SpeedPreset => {
+		if (frameIntervalMs <= 200) return 'fast';
+		if (frameIntervalMs <= 400) return 'medium';
+		return 'slow';
+	});
+	let activeSizePreset = $derived.by((): SizePreset => {
+		if (size <= 400) return 'S';
+		if (size <= 700) return 'M';
+		return 'L';
+	});
+
+	function setSpeed(preset: SpeedPreset) {
+		speedPreset = preset;
+		frameIntervalMs = SPEED_PRESETS[preset];
+	}
+	function setSize(preset: SizePreset) {
+		sizePreset = preset;
+		size = SIZE_PRESETS[preset];
+	}
+
 	// --- QR rendering helpers ---------------------------------------------
 	async function renderFrameToDataURL(text: string): Promise<string> {
 		return QRCode.toDataURL(text, {
-			width: size,
-			margin: 2,
+			width: 600,
+			margin: 4,
 			color: { dark: '#000000', light: '#ffffff' },
 			errorCorrectionLevel: 'L'
 		});
@@ -178,9 +252,13 @@
 			return;
 		}
 
-		// Pre-flight: refuse payloads that would exceed maxFrames
+		// Pre-flight: refuse payloads that would exceed maxFrames.
+		// Use the current fragmentLength so the pre-flight count matches
+		// the actual encoding (TASK-FIX-405: fragmentLength is configurable,
+		// so the cap must follow it).
 		const cap = maxFrames;
-		const est = estimateFragmentCount(new TextEncoder().encode(d).length, 200);
+		const fragLen = untrack(() => fragmentLength);
+		const est = estimateFragmentCount(new TextEncoder().encode(d).length, fragLen);
 		if (est > cap) {
 			untrack(() => {
 				stop();
@@ -196,7 +274,7 @@
 		// Encode
 		let encoded: string[];
 		try {
-			encoded = encodeURString(d, { fragmentCapacity: 200 });
+			encoded = encodeURString(d, { fragmentCapacity: fragLen });
 		} catch (e) {
 			untrack(() => {
 				stop();
@@ -229,6 +307,46 @@
 				showFrame(0);
 			}
 		});
+	});
+
+	// Re-encode when fragmentLength changes (user picked a new size preset
+	// → smaller fragments → more frames; we must split the payload again).
+	// IMPORTANT: this effect must NOT run on first mount if the data effect
+	// already determined that the payload exceeds maxFrames — re-encoding
+	// would override the error state and start an animation that the caller
+	// has explicitly rejected via the maxFrames cap.
+	$effect(() => {
+		const fl = fragmentLength;
+		untrack(() => {
+			if (!data) return;
+			// Respect the maxFrames cap that the caller configured.
+			const cap = maxFrames;
+			const est = estimateFragmentCount(new TextEncoder().encode(data).length, fl);
+			if (est > cap) {
+				stop();
+				fragments = [];
+				totalFrames = 0;
+				frameIndex = 0;
+				currentFrame = '';
+				error = `Payload too large: would produce ~${est} frames (maxFrames=${cap}). Reduce payload or increase maxFrames.`;
+				return;
+			}
+			try {
+				const reEncoded = encodeURString(data, { fragmentCapacity: fl });
+				stop();
+				fragments = reEncoded;
+				totalFrames = reEncoded.length;
+				frameIndex = 0;
+				currentFrame = '';
+				error = '';
+				if (autoStart && reEncoded.length > 1) start();
+				else if (reEncoded.length >= 1) showFrame(0);
+			} catch (e) {
+				error = e instanceof Error ? e.message : 'Failed to re-encode';
+			}
+		});
+		// Mark `fl` as used so Svelte keeps the dependency.
+		void fl;
 	});
 
 	// Restart the timer when frameIntervalMs changes while playing
@@ -281,6 +399,69 @@
 			No data
 		</div>
 	{/if}
+
+	{#if showControls && !error}
+		<div class="animated-qr-controls" data-testid="animated-qr-controls">
+			<div class="animated-qr-control-group" data-testid="animated-qr-speed-group">
+				<span class="animated-qr-control-label">Speed</span>
+				<div class="animated-qr-control-buttons" role="group" aria-label="Animation speed">
+					<button
+						type="button"
+						class="animated-qr-control-button"
+						class:active={activeSpeedPreset === 'fast'}
+						aria-pressed={activeSpeedPreset === 'fast'}
+						data-testid="animated-qr-speed-fast"
+						onclick={() => setSpeed('fast')}
+					>Fast</button>
+					<button
+						type="button"
+						class="animated-qr-control-button"
+						class:active={activeSpeedPreset === 'medium'}
+						aria-pressed={activeSpeedPreset === 'medium'}
+						data-testid="animated-qr-speed-medium"
+						onclick={() => setSpeed('medium')}
+					>Medium</button>
+					<button
+						type="button"
+						class="animated-qr-control-button"
+						class:active={activeSpeedPreset === 'slow'}
+						aria-pressed={activeSpeedPreset === 'slow'}
+						data-testid="animated-qr-speed-slow"
+						onclick={() => setSpeed('slow')}
+					>Slow</button>
+				</div>
+			</div>
+			<div class="animated-qr-control-group" data-testid="animated-qr-size-group">
+				<span class="animated-qr-control-label">Size</span>
+				<div class="animated-qr-control-buttons" role="group" aria-label="QR code size">
+					<button
+						type="button"
+						class="animated-qr-control-button"
+						class:active={activeSizePreset === 'S'}
+						aria-pressed={activeSizePreset === 'S'}
+						data-testid="animated-qr-size-S"
+						onclick={() => setSize('S')}
+					>S</button>
+					<button
+						type="button"
+						class="animated-qr-control-button"
+						class:active={activeSizePreset === 'M'}
+						aria-pressed={activeSizePreset === 'M'}
+						data-testid="animated-qr-size-M"
+						onclick={() => setSize('M')}
+					>M</button>
+					<button
+						type="button"
+						class="animated-qr-control-button"
+						class:active={activeSizePreset === 'L'}
+						aria-pressed={activeSizePreset === 'L'}
+						data-testid="animated-qr-size-L"
+						onclick={() => setSize('L')}
+					>L</button>
+				</div>
+			</div>
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -312,8 +493,7 @@
 		image-rendering: pixelated;
 		min-width: 128px;
 		min-height: 128px;
-		max-width: min(320px, 100%);
-		max-height: min(320px, 100%);
+		max-width: 100%;
 		width: 100%;
 		height: auto;
 		aspect-ratio: 1;
@@ -358,7 +538,7 @@
 		background: var(--color-surface-variant);
 		min-width: 128px;
 		min-height: 128px;
-		max-width: min(320px, 100%);
+		max-width: 100%;
 		width: 100%;
 		aspect-ratio: 1;
 		font-family: var(--font-family);
@@ -375,7 +555,7 @@
 		background: rgba(211, 47, 47, 0.08);
 		min-width: 128px;
 		min-height: 128px;
-		max-width: min(320px, 100%);
+		max-width: 100%;
 		width: 100%;
 		aspect-ratio: 1;
 		padding: var(--space-md);
@@ -384,5 +564,71 @@
 		font-size: var(--font-size-sm);
 		color: var(--color-error, #d32f2f);
 		text-align: center;
+	}
+
+	/* --- UI controls (TASK-FIX-405) ------------------------------------- */
+	.animated-qr-controls {
+		display: flex;
+		flex-direction: row;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: var(--space-md, 12px);
+		padding: var(--space-sm, 8px);
+		width: 100%;
+		box-sizing: border-box;
+	}
+
+	.animated-qr-control-group {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: var(--space-xs, 4px);
+	}
+
+	.animated-qr-control-label {
+		font-family: var(--font-family);
+		font-size: var(--font-size-xs, 11px);
+		font-weight: 600;
+		color: var(--color-text-secondary);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	.animated-qr-control-buttons {
+		display: inline-flex;
+		gap: 4px;
+		background: var(--color-surface-variant, #f0f0f0);
+		border-radius: var(--radius-full, 999px);
+		padding: 3px;
+	}
+
+	.animated-qr-control-button {
+		font-family: var(--font-family);
+		font-size: var(--font-size-sm, 13px);
+		font-weight: 500;
+		padding: 6px 14px;
+		border: none;
+		border-radius: var(--radius-full, 999px);
+		background: transparent;
+		color: var(--color-text-secondary, #555);
+		cursor: pointer;
+		transition: background 120ms ease, color 120ms ease;
+		min-width: 44px;
+		text-align: center;
+	}
+
+	.animated-qr-control-button:hover {
+		color: var(--color-text-primary, #111);
+	}
+
+	.animated-qr-control-button.active {
+		background: var(--color-primary, #1976d2);
+		color: var(--color-on-primary, #fff);
+		box-shadow: var(--shadow-sm);
+	}
+
+	.animated-qr-control-button:focus-visible {
+		outline: 2px solid var(--color-primary, #1976d2);
+		outline-offset: 2px;
 	}
 </style>

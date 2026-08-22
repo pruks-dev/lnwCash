@@ -1,15 +1,18 @@
 /**
  * ur-encoder.ts — UR (Uniform Resources) encoder for NUT-16 animated QR codes
  * (TASK-FIX-401: browser-safe rewrite of TASK-401 module;
- *  TASK-FIX-404: pad fragments to identical length for scan-able animated QR)
+ *  TASK-FIX-404: pad fragments to identical length for scan-able animated QR;
+ *  TASK-FIX-405: switch UR type to 'bytes' to match cashu.me reference impl)
  *
  * NUT-16 defines an animated-QR transport for cashu tokens. Each frame is a
  * Uniform Resource fragment in the form:
  *
- *     ur:crypto-token/<index>of<total>/<bc32-digest>/<bc32-fragment>
+ *     ur:bytes/<index>of<total>/<bc32-digest>/<bc32-fragment>
  *
  * Where:
- *   - `crypto-token` is the UR type tag for the NUT-16 payload
+ *   - `bytes` is the UR type tag (BCR-2020-005 standard for arbitrary CBOR
+ *     byte-string payloads; matches cashu.me — NUT-16 does not specify a
+ *     custom type tag)
  *   - `<index>of<total>` is the 1-based fragment sequencing
  *   - `<bc32-digest>` is a BC32-encoded SHA-256 digest of the full CBOR payload
  *   - `<bc32-fragment>` is a BC32-encoded slice of the full CBOR payload
@@ -38,9 +41,9 @@
  *         is implemented in ~15 lines below — this matches `bc-bech32`'s
  *         `encodeBc32Data` byte-for-byte.
  *   - We still don't use `UREncoder.nextPart()` because that produces
- *     fountain-encoded bytewords fragments (`ur:crypto-token/1-3/...`), which
+ *     fountain-encoded bytewords fragments (`ur:bytes/1-3/...`), which
  *     is a different wire format than NUT-16's simpler multi-frame form
- *     (`ur:crypto-token/1of3/...`). We do construct a UREncoder instance as a
+ *     (`ur:bytes/1of3/...`). We do construct a UREncoder instance as a
  *     compile-time gate to keep the dependency live and to surface any
  *     upstream API break early.
  */
@@ -52,9 +55,18 @@ import { bytesToHex } from '@noble/hashes/utils.js';
 
 /**
  * NUT-16 UR type tag for cashu token payloads.
+ *
+ * TASK-FIX-405: NUT-16 does NOT specify a custom UR type tag for cashu
+ * tokens. The reference implementation at cashu.me uses the generic
+ * `bytes` UR type (BCR-2020-005: "UR types registry" lists `bytes` as
+ * the standard type for arbitrary CBOR byte-string payloads). Using
+ * `bytes` is what other apps (cashu.me, phone camera scanners) expect
+ * when scanning NUT-16 animated QRs.
+ *
  * Reference: https://github.com/cashubtc/nuts/blob/main/16.md
+ * Reference impl: https://github.com/cashubtc/cashu.me
  */
-export const NUT16_UR_TYPE = 'crypto-token';
+export const NUT16_UR_TYPE = 'bytes';
 
 // --- BC32 (BCR-2020-006) constants ---------------------------------------
 // BC32 is a bech32 variant defined in BCR-2020-006. It is byte-compatible
@@ -184,14 +196,18 @@ export function cborEncodeBytes(data: Uint8Array): Uint8Array {
  */
 export interface EncodeUROptions {
 	/**
-	 * UR type tag. Defaults to `crypto-token` (NUT-16). Use a different value
-	 * only for non-cashu UR transports.
+	 * UR type tag. Defaults to `bytes` (TASK-FIX-405 — matches cashu.me,
+	 * the reference NUT-16 implementation). NUT-16 does not specify a
+	 * custom UR type; cashu.me uses `bytes` and other apps scan for that.
+	 * Use a different value only for non-cashu UR transports.
 	 */
 	type?: string;
 	/**
-	 * Max characters per fragment's BC32 portion. Default 200 matches bc-ur
-	 * and keeps each QR fragment safely within the 29-byte QR alphanumeric
-	 * limit (200 chars ≈ 100 bytes QR capacity at version 10 / L).
+	 * Max characters per fragment's BC32 portion. Default 150 matches
+	 * the cashu.me reference implementation (TASK-FIX-405). Callers can
+	 * pass 50 / 100 / 150 — smaller fragments are more scan-resilient on
+	 * poor cameras but require more frames. 150 is the sweet spot that
+	 * the cashu.me team uses in production.
 	 */
 	fragmentCapacity?: number;
 }
@@ -203,11 +219,11 @@ export interface EncodeUROptions {
  *                 converted via `new TextEncoder().encode(...)`)
  * @param options  optional `{ type, fragmentCapacity }`
  * @returns        array of UR fragment strings, e.g.
- *                 `["ur:crypto-token/1of3/abc...def/xyz...uvw", ...]`
+ *                 `["ur:bytes/1of3/abc...def/xyz...uvw", ...]`
  *
  * For a single-fragment payload (length <= fragmentCapacity after BC32
  * encoding), the result is a length-1 array with the bare
- * `ur:crypto-token/<bc32-data>` form (no sequencing or digest — matches
+ * `ur:bytes/<bc32-data>` form (no sequencing or digest — matches
  * BCR-2020-005 § "Single-fragment UR"). The single-fragment form is NOT
  * padded — there's only one frame, so no module-count consistency is needed,
  * and padding would corrupt the payload since there's no digest to verify.
@@ -224,7 +240,7 @@ export function encodeUR(
 	options: EncodeUROptions = {}
 ): string[] {
 	const type = options.type ?? NUT16_UR_TYPE;
-	const fragmentCapacity = options.fragmentCapacity ?? 200;
+	const fragmentCapacity = options.fragmentCapacity ?? 150;
 
 	// Duck-type check (instead of `instanceof Uint8Array`) — `instanceof`
 	// can fail across module realms (e.g. vitest jsdom env, multiple copies
@@ -341,7 +357,7 @@ export function encodeURString(
  * length, given a {@link fragmentCapacity}. Useful for pre-flight checks
  * (e.g. refuse to encode a payload that would need > 300 frames).
  */
-export function estimateFragmentCount(byteLength: number, fragmentCapacity = 200): number {
+export function estimateFragmentCount(byteLength: number, fragmentCapacity = 150): number {
 	// Conservative upper bound — BC32 expands 1 byte → 1.3 chars worst-case
 	// (8/5 expansion for 8-bit → 5-bit groups + checksum). We use a 1.4× slack.
 	const approxBc32Chars = Math.ceil(byteLength * 1.4) + 16;
