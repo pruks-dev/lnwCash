@@ -55,7 +55,8 @@
 		if (data) {
 			QRCode.toDataURL(data, {
 				width: size,
-				margin: 2,
+				margin: 4,
+				errorCorrectionLevel: 'L',
 				color: { dark: '#000000', light: '#ffffff' }
 			}).then((uri: string) => {
 				dataUri = uri;
@@ -72,9 +73,19 @@
 	<div class="qr-container">
 		<div class="qr-image-wrapper">
 			{#if dataUri}
-				<img src={dataUri} alt="QR Code" class="qr-image" />
+				<img
+					src={dataUri}
+					alt="QR Code"
+					class="qr-image"
+					style:width="{size}px"
+					style:height="{size}px"
+				/>
 			{:else}
-				<div class="qr-placeholder">
+				<div
+					class="qr-placeholder"
+					style:width="{size}px"
+					style:height="{size}px"
+				>
 					<span class="qr-placeholder-text">QR</span>
 				</div>
 			{/if}
@@ -132,12 +143,6 @@
 	.qr-image {
 		display: block;
 		image-rendering: pixelated;
-		min-width: 256px;
-		min-height: 256px;
-		max-width: min(320px, 100%);
-		max-height: min(320px, 100%);
-		width: 100%;
-		height: auto;
 		aspect-ratio: 1;
 		object-fit: contain;
 	}
@@ -149,10 +154,6 @@
 		border: 2px dashed var(--color-border);
 		border-radius: var(--radius-md);
 		background: var(--color-surface-variant);
-		min-width: 256px;
-		min-height: 256px;
-		max-width: min(320px, 100%);
-		width: 100%;
 		aspect-ratio: 1;
 	}
 

@@ -31,6 +31,11 @@
 
 	let { tx = null, onclose }: Props = $props();
 
+	// TASK-FIX-407: Standardized QR size for both AnimatedQR (cashu_send) and
+	// QRDisplay (Lightning / fallback). 240px is large enough for phone cameras
+	// to scan comfortably while keeping the bottom sheet visually compact.
+	const QR_SIZE = 240;
+
 	// ─── Derived state ─────────────────────────────────
 	let open = $derived(tx != null);
 
@@ -423,13 +428,15 @@
 
 				<!-- QR Code — TASK-403 (NUT-16): Cashu sends use AnimatedQR (UR fragments),
 				     other types keep the static QRDisplay. Full token passed to AnimatedQR
-				     without truncation. -->
+				     without truncation.
+				     TASK-FIX-407: Both QR instances use the same QR_SIZE constant (240px)
+				     for visual consistency. -->
 				{#if displayData}
 					<div class="detail-qr">
 						{#if isCashuSend && tokenData}
-							<AnimatedQR data={tokenData} size={200} frameIntervalMs={200} />
+							<AnimatedQR data={tokenData} size={QR_SIZE} frameIntervalMs={200} />
 						{:else}
-							<QRDisplay data={displayData} size={200} />
+							<QRDisplay data={displayData} size={QR_SIZE} />
 						{/if}
 					</div>
 				{/if}
