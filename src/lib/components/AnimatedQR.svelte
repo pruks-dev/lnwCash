@@ -51,6 +51,10 @@
 	 *                  (default false). When true, the user can adjust the
 	 *                  frame interval and QR size without leaving the screen.
 	 *                  This matches cashu.me's behaviour.
+	 *   showActions — show Copy / Share buttons below the QR (default true).
+	 *                 Mirrors QRDisplay.svelte's action buttons so the user
+	 *                 can recover the full token string even if scanning
+	 *                 failed (TASK-FIX-409 P2 — parity with QRDisplay).
 	 *
 	 * Output bindings (via $bindable):
 	 *   currentFrame — data URL of the currently displayed QR frame
@@ -60,6 +64,8 @@
 	 */
 	import QRCode from 'qrcode';
 	import { untrack } from 'svelte';
+	import { _ } from 'svelte-i18n';
+	import Copy from '$lib/components/icons/Copy.svelte';
 	import {
 		encodeURString,
 		estimateFragmentCount,
@@ -92,6 +98,7 @@
 		fragmentLength?: number;
 		autoStart?: boolean;
 		showControls?: boolean;
+		showActions?: boolean;
 		currentFrame?: string;
 		frameIndex?: number;
 		totalFrames?: number;
@@ -114,6 +121,7 @@
 		fragmentLength = 150,
 		autoStart = true,
 		showControls = false,
+		showActions = true,
 		currentFrame = $bindable(''),
 		frameIndex = $bindable(0),
 		totalFrames = $bindable(0),
@@ -125,6 +133,36 @@
 	let error: string = $state('');
 	let intervalHandle: ReturnType<typeof setInterval> | undefined;
 	let playing: boolean = $state(false);
+	// TASK-FIX-409 (P2): Copy/Share button state (parity with QRDisplay)
+	let copied: boolean = $state(false);
+	let toastTimer: ReturnType<typeof setTimeout> | undefined;
+
+	function handleCopy() {
+		if (!data) return;
+		navigator.clipboard.writeText(data).then(() => {
+			copied = true;
+			clearTimeout(toastTimer);
+			toastTimer = setTimeout(() => {
+				copied = false;
+			}, 2000);
+		}).catch(() => {
+			// Clipboard API not available — silent fallback
+		});
+	}
+
+	async function handleShare() {
+		if (!data) return;
+		if (navigator.share) {
+			try {
+				await navigator.share({ text: data });
+			} catch {
+				// User cancelled or share failed — fallback to copy
+				handleCopy();
+			}
+		} else {
+			handleCopy();
+		}
+	}
 
 	// --- UI-control local state (only used when showControls === true) ----
 	// The actual effective speed/size are read from the parent's props
@@ -389,7 +427,42 @@
 					</div>
 				</div>
 			{/if}
+			{#if copied}
+				<div class="animated-qr-copied-toast" role="status">{$_('screen.qrdisplay.copied')}</div>
+			{/if}
 		</div>
+		{#if showActions && !error}
+			<div class="qr-actions" data-testid="animated-qr-actions">
+				<button
+					type="button"
+					class="qr-action-btn"
+					onclick={handleCopy}
+					title={$_('common.copy')}
+					data-testid="animated-qr-copy-btn"
+				>
+					<Copy size={18} />
+					<span>{$_('common.copy')}</span>
+				</button>
+				{#if typeof navigator !== 'undefined' && 'share' in navigator}
+					<button
+						type="button"
+						class="qr-action-btn"
+						onclick={handleShare}
+						title={$_('common.share')}
+						data-testid="animated-qr-share-btn"
+					>
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+							<circle cx="18" cy="5" r="3" />
+							<circle cx="6" cy="12" r="3" />
+							<circle cx="18" cy="19" r="3" />
+							<line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+							<line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+						</svg>
+						<span>{$_('common.share')}</span>
+					</button>
+				{/if}
+			</div>
+		{/if}
 	{:else if fragments.length === 0 && data}
 		<div class="animated-qr-placeholder" data-testid="animated-qr-placeholder">
 			Encoding…
@@ -566,6 +639,29 @@
 		text-align: center;
 	}
 
+	/* TASK-FIX-409 (P2): Copy/Share action buttons — mirror QRDisplay styles
+	   so the user can recover the full token string even if scanning failed. */
+	.animated-qr-copied-toast {
+		position: absolute;
+		bottom: var(--space-sm);
+		left: 50%;
+		transform: translateX(-50%);
+		padding: var(--space-xs) var(--space-md);
+		background: rgba(0, 0, 0, 0.75);
+		color: #fff;
+		font-size: var(--font-size-xs);
+		font-family: var(--font-family);
+		border-radius: var(--radius-full);
+		white-space: nowrap;
+		z-index: 2;
+		animation: animated-qr-toast-fade 0.25s ease;
+	}
+
+	@keyframes animated-qr-toast-fade {
+		from { opacity: 0; transform: translateX(-50%) translateY(4px); }
+		to { opacity: 1; transform: translateX(-50%) translateY(0); }
+	}
+
 	/* --- UI controls (TASK-FIX-405) ------------------------------------- */
 	.animated-qr-controls {
 		display: flex;
@@ -629,6 +725,43 @@
 
 	.animated-qr-control-button:focus-visible {
 		outline: 2px solid var(--color-primary, #1976d2);
+		outline-offset: 2px;
+	}
+
+	/* TASK-FIX-409 (P2): Copy/Share actions (mirrors QRDisplay.svelte
+	   .qr-actions / .qr-action-btn — kept local because Svelte styles are
+	   scoped per-component; this is intentional duplication, not dead code). */
+	.qr-actions {
+		display: flex;
+		gap: var(--space-sm);
+		justify-content: center;
+		width: 100%;
+	}
+
+	.qr-action-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-xs);
+		padding: var(--space-sm) var(--space-md);
+		font-size: var(--font-size-sm);
+		font-weight: var(--font-weight-medium);
+		color: var(--color-text);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		cursor: pointer;
+		min-height: 40px;
+		transition: background var(--transition-fast), border-color var(--transition-fast);
+	}
+
+	.qr-action-btn:hover,
+	.qr-action-btn:focus-visible {
+		background: var(--color-surface-variant);
+		border-color: var(--color-primary);
+	}
+
+	.qr-action-btn:focus-visible {
+		outline: 2px solid var(--color-border-focus);
 		outline-offset: 2px;
 	}
 </style>

@@ -397,8 +397,10 @@ describe('F007-QRScan (TASK-122)', () => {
 		startBtn.click();
 
 		await vi.waitFor(() => {
-			// TASK-133 (F-V13-010): Now routes via hash with query params
-			expect(window.location.hash).toContain('/receive?token=');
+			// TASK-FIX-409 (P3): routes via navigateTo('receive') + scannedQRValue
+			// store (no URL hash — cashuB tokens can be 100KB+ and the browser
+			// URL hash gets truncated at ~32-65KB).
+			expect(mockNavigateTo).toHaveBeenCalledWith('receive');
 		}, { timeout: 3000 });
 	}, 10000);
 
@@ -411,8 +413,10 @@ describe('F007-QRScan (TASK-122)', () => {
 		startBtn.click();
 
 		await vi.waitFor(() => {
-			// TASK-133 (F-V13-010): Now routes via hash with query params
-			expect(window.location.hash).toContain('/receive?token=');
+			// TASK-FIX-409 (P3): routes via navigateTo('receive') + scannedQRValue
+			// store (no URL hash — cashuB tokens can be 100KB+ and the browser
+			// URL hash gets truncated at ~32-65KB).
+			expect(mockNavigateTo).toHaveBeenCalledWith('receive');
 		}, { timeout: 3000 });
 	}, 10000);
 
@@ -543,13 +547,13 @@ describe('F007-QRScan (TASK-122)', () => {
 		startBtn.click();
 
 		await vi.waitFor(() => {
-			// TASK-133 (F-V13-010): Routes via hash with query params
-			expect(window.location.hash).toContain('/receive?token=');
+			// TASK-FIX-409 (P3): navigates to 'receive' via navigateTo (no URL hash)
+			expect(mockNavigateTo).toHaveBeenCalledWith('receive');
 		}, { timeout: 3000 });
 
-		// Verify hash was set exactly once (no double-detect)
-		const hash = window.location.hash;
-		expect(hash).toContain('/receive?token=cashuA...');
+		// Verify navigateTo was called exactly once (no double-detect)
+		const cashuCalls = mockNavigateTo.mock.calls.filter((c) => c[0] === 'receive');
+		expect(cashuCalls.length).toBe(1);
 	}, 10000);
 
 	it('handles jsQR returning null gracefully', async () => {

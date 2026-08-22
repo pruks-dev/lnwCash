@@ -27,7 +27,7 @@
 	import { WalletLockedError } from '$lib/wallet/errors';
 	import { withTransactionGuard } from '$lib/wallet/autolock';
 	import { getMintConfig } from '$lib/wallet/store';
-	import { navigateTo, getHashParam, clearHashParams } from '$lib/router';
+	import { navigateTo } from '$lib/router';
 	import { notifyMintConfirmed } from '$lib/stores/mint-events';
 
 	import Card from '$lib/components/ui/Card.svelte';
@@ -142,7 +142,11 @@
 	});
 
 	// TASK-122: Read scanned QR value from shared store (QRScan → Receive)
-	// TASK-133 (F-V13-010): Also read token from URL hash params
+	// TASK-FIX-409 (P3): Removed the URL hash-param fallback for `token` —
+	// cashuB tokens can exceed the browser's ~32-65KB URL hash limit and get
+	// silently truncated. The shared `scannedQRValue` store now carries the
+	// full token from F007-QRScan (and clipboard/manual paste paths still
+	// write to `cashuTokenInput` directly).
 	onMount(() => {
 		const unsub = scannedQRValue.subscribe((value) => {
 			if (value && (value.startsWith('cashuA') || value.startsWith('cashuB') || value.startsWith('cashu'))) {
@@ -152,15 +156,6 @@
 				validateToken();
 			}
 		});
-
-		// TASK-133: Read token from URL hash params (#/receive?token=...)
-		const tokenParam = getHashParam('token');
-		if (tokenParam) {
-			cashuTokenInput = decodeURIComponent(tokenParam);
-			activeTab = 'cashu';
-			clearHashParams();
-			validateToken();
-		}
 
 		return unsub;
 	});

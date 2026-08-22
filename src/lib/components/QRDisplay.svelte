@@ -77,14 +77,12 @@
 					src={dataUri}
 					alt="QR Code"
 					class="qr-image"
-					style:width="{size}px"
-					style:height="{size}px"
+					style:max-width="{size}px"
 				/>
 			{:else}
 				<div
 					class="qr-placeholder"
-					style:width="{size}px"
-					style:height="{size}px"
+					style:max-width="{size}px"
 				>
 					<span class="qr-placeholder-text">QR</span>
 				</div>
@@ -143,6 +141,7 @@
 	.qr-image {
 		display: block;
 		image-rendering: pixelated;
+		width: 100%;
 		aspect-ratio: 1;
 		object-fit: contain;
 	}

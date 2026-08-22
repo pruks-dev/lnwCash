@@ -15,6 +15,7 @@
 	import jsQR from 'jsqr';
 	import Copy from '$lib/components/icons/Copy.svelte';
 	import { scannedQRValue } from '$lib/stores/scannedQR';
+	import { navigateTo } from '$lib/router';
 
 	interface Props {
 		onResult?: (result: string) => void;
@@ -179,9 +180,13 @@
 		} else if (type === 'cashuA' || type === 'cashuB') {
 			scanState = 'found';
 			stopCamera();
+			// TASK-FIX-409 (P3): Publish the full token via the shared store instead
+			// of stuffing it in the URL hash. cashuB tokens can be 100KB+ and
+			// browsers silently truncate URLs at ~32-65KB. Receive.svelte
+			// subscribes to `scannedQRValue` so the token reaches the screen
+			// intact. No URL hash mutation, no truncation.
 			scannedQRValue.set(value);
-			// TASK-133 (F-V13-010): Pass token via URL hash params
-			window.location.hash = '/receive?token=' + encodeURIComponent(value);
+			navigateTo('receive');
 		} else {
 			// Unknown format — toast + keep scanning
 			lastResult = value;
