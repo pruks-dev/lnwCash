@@ -32,9 +32,10 @@
 	let { tx = null, onclose }: Props = $props();
 
 	// TASK-FIX-407: Standardized QR size for both AnimatedQR (cashu_send) and
-	// QRDisplay (Lightning / fallback). 240px is large enough for phone cameras
-	// to scan comfortably while keeping the bottom sheet visually compact.
-	const QR_SIZE = 240;
+	// QRDisplay (Lightning / fallback). TASK-FIX-408 corrected from 240px to
+	// 200px to match cashu send AnimatedQR size, keeping both QR instances
+	// visually identical and compact enough for the bottom sheet.
+	const QR_SIZE = 200;
 
 	// ─── Derived state ─────────────────────────────────
 	let open = $derived(tx != null);
