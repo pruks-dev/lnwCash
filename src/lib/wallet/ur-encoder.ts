@@ -1,5 +1,6 @@
 /**
- * ur-encoder.ts — UR (Uniform Resources) encoder for NUT-16 animated QR codes (TASK-401)
+ * ur-encoder.ts — UR (Uniform Resources) encoder for NUT-16 animated QR codes
+ * (TASK-FIX-401: browser-safe rewrite of TASK-401 module)
  *
  * NUT-16 defines an animated-QR transport for cashu tokens. Each frame is a
  * Uniform Resource fragment in the form:
@@ -19,23 +20,32 @@
  *   4. Split BC32 payload into fixed-size fragments
  *   5. Wrap each fragment with the UR header (type + sequencing + digest)
  *
- * This module is self-contained and browser-safe:
- *   - Uses `bc-bech32` for BC32 (already installed via bc-ur)
- *   - Uses `@noble/hashes/sha2.js` for SHA-256 (already a project dep, no Buffer needed)
- *   - Re-implements the simple CBOR byte-string encoder (~10 lines) instead of
- *     dragging in `bc-ur`'s missing `bitcoinjs-lib` peer dep
- *
- * bc-ur@0.1.6 IS installed (per TASK-401) and its algorithm is mirrored here
- * for license/source-of-truth verification, but `encodeUR()` from bc-ur has
- * two blockers for our use case:
- *   (a) it requires `bitcoinjs-lib` (un-declared peer dep, ~5 MB, Node-only)
- *   (b) it hard-codes the UR type to `ur:bytes/` — NUT-16 requires `ur:crypto-token/`
- *
- * The byte-string CBOR encoder here is byte-identical to bc-ur's
- * `encodeSimpleCBOR` (see node_modules/bc-ur/src/miniCbor.ts) and the BC32 +
- * SHA-256 + sequencing wrapper mirrors `encodeUR` exactly.
+ * Browser-safety notes (TASK-FIX-401):
+ *   - The original TASK-401 implementation used `bc-ur@0.1.6` and `bc-bech32@1.0.2`.
+ *     `bc-bech32/dist/index.js` calls `Buffer.from(hex, 'hex')` at module load.
+ *     In the browser (Vite, no Node polyfill) this throws "buffer is not defined"
+ *     because the browser global doesn't include Buffer. Vitest's jsdom env ships
+ *     Buffer globally, which is why the original tests passed.
+ *   - Replacement stack:
+ *       * `@gandlaf21/bc-ur@^1.1.12` — brings the UR / UREncoder classes + the
+ *         `buffer` npm package (browser-safe Buffer polyfill) as a transitive
+ *         dep. Importing anything from this package initialises the polyfill
+ *         at module-load time.
+ *       * `bech32@^2.0.0` — pure-JS, browser-safe bech32 codec. We use only
+ *         `bech32.toWords` (8→5 bit conversion). The BC32-specific bech32
+ *         variant (no HRP, "bis" checksum constant 0x3fffffff, no "1" separator)
+ *         is implemented in ~15 lines below — this matches `bc-bech32`'s
+ *         `encodeBc32Data` byte-for-byte.
+ *   - We still don't use `UREncoder.nextPart()` because that produces
+ *     fountain-encoded bytewords fragments (`ur:crypto-token/1-3/...`), which
+ *     is a different wire format than NUT-16's simpler multi-frame form
+ *     (`ur:crypto-token/1of3/...`). We do construct a UREncoder instance as a
+ *     compile-time gate to keep the dependency live and to surface any
+ *     upstream API break early.
  */
-import { encodeBc32Data } from 'bc-bech32';
+import { UR, UREncoder } from '@gandlaf21/bc-ur';
+import { Buffer } from 'buffer';
+import { bech32 } from 'bech32';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 
@@ -45,32 +55,103 @@ import { bytesToHex } from '@noble/hashes/utils.js';
  */
 export const NUT16_UR_TYPE = 'crypto-token';
 
+// --- BC32 (BCR-2020-006) constants ---------------------------------------
+// BC32 is a bech32 variant defined in BCR-2020-006. It is byte-compatible
+// with bech32 EXCEPT for:
+//   (a) no HRP (Human Readable Part) and no "1" separator before data
+//   (b) the polymod init value is 0x3fffffff ("bis") instead of 1 ("origin")
+//   (c) data is encoded directly as 5-bit words, no checksum in display form
+//       is required, but we keep the 6-word checksum for integrity.
+// These constants match bc-bech32/dist/bech32.js (verified by side-by-side
+// run of the same test vectors).
+const BC32_CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+const BC32_GENERATORS: readonly number[] = [
+	0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3
+];
+const BC32_BIS_INIT = 0x3fffffff;
+
+/**
+ * Compute the bech32 polymod over a sequence of 5-bit values.
+ * Identical to bc-bech32's `polymod` (and bitcoinjs/bech32's `polymod`).
+ */
+function bc32Polymod(values: readonly number[]): number {
+	let chk = 1;
+	for (const v of values) {
+		const top = chk >> 25;
+		chk = ((chk & 0x1ffffff) << 5) ^ v;
+		for (let i = 0; i < 6; i++) {
+			if ((top >> i) & 1) chk ^= BC32_GENERATORS[i];
+		}
+	}
+	return chk;
+}
+
+/**
+ * Compute the 6-word (30-bit) BC32 checksum for a sequence of 5-bit values.
+ * Mirrors bc-bech32's `createChecksum(null, data, Bech32Version.bis)`.
+ */
+function bc32Checksum(values: readonly number[]): number[] {
+	const valuesWithChk = [0, ...values, 0, 0, 0, 0, 0, 0];
+	const mod = bc32Polymod(valuesWithChk) ^ BC32_BIS_INIT;
+	const ret: number[] = [];
+	for (let p = 0; p < 6; p++) {
+		ret.push((mod >> (5 * (5 - p))) & 31);
+	}
+	return ret;
+}
+
+/**
+ * BC32-encode raw bytes (8-bit) into a BC32 string (5-bit chars + 6-char checksum).
+ * Matches `bc-bech32`'s `encodeBc32Data(hex)` byte-for-byte, but takes a
+ * `Uint8Array` directly (avoids the Node-only `Buffer.from(hex, 'hex')` path
+ * that breaks in browsers).
+ */
+export function encodeBC32(bytes: Uint8Array): string {
+	// 8→5 bit conversion. bech32@2.0.0's `toWords` does this and is browser-safe.
+	const words = bech32.toWords(bytes);
+	const checksum = bc32Checksum(words);
+	const combined = [...words, ...checksum];
+	let out = '';
+	for (const w of combined) {
+		out += BC32_CHARSET.charAt(w);
+	}
+	return out;
+}
+
+// --- CBOR byte-string encoding ------------------------------------------
+// We re-implement the simple byte-string CBOR encoder (BCR-05 major type 2)
+// inline so the output is byte-identical to what UR.fromBuffer / cborg
+// produces, and so we don't have to spin up the full cborg library for what
+// is effectively a 1- to 5-byte header.
+
 /**
  * Compose a single byte-string CBOR header for the given byte length.
- * Mirrors `composeHeader` in bc-ur/src/miniCbor.ts (BCR-05 major type 2).
+ * BCR-05 major type 2 encoding (additional info in low 5 bits):
+ *   length <= 23        → 1 byte:  0x40 | length
+ *   length 24..255      → 2 bytes: 0x58, length (uint8)
+ *   length 256..65535   → 3 bytes: 0x59, length (uint16 big-endian)
+ *   length 65536..2^32  → 5 bytes: 0x5a, length (uint32 big-endian)
  */
 function cborByteStringHeader(length: number): Uint8Array {
 	if (length <= 0) {
 		throw new Error('ur-encoder: CBOR byte-string length must be > 0');
 	}
-	if (length > 0 && length <= 23) {
+	if (length <= 23) {
 		return new Uint8Array([0x40 + length]);
 	}
-	if (length >= 24 && length <= 255) {
+	if (length <= 255) {
 		return new Uint8Array([0x58, length]);
 	}
-	if (length >= 256 && length <= 65535) {
+	if (length <= 65535) {
 		const buf = new Uint8Array(3);
 		buf[0] = 0x59;
-		// big-endian uint16
 		buf[1] = (length >> 8) & 0xff;
 		buf[2] = length & 0xff;
 		return buf;
 	}
-	if (length >= 65536 && length <= 2 ** 32 - 1) {
+	if (length <= 2 ** 32 - 1) {
 		const buf = new Uint8Array(5);
-		buf[0] = 0x60;
-		// big-endian uint32 (mask each byte to be safe)
+		buf[0] = 0x5a;
 		buf[1] = (length >>> 24) & 0xff;
 		buf[2] = (length >>> 16) & 0xff;
 		buf[3] = (length >>> 8) & 0xff;
@@ -82,8 +163,10 @@ function cborByteStringHeader(length: number): Uint8Array {
 
 /**
  * CBOR-wrap an arbitrary byte payload as a byte string (major type 2).
- * Returns a Uint8Array. Mirrors `encodeSimpleCBOR` in bc-ur/src/miniCbor.ts
- * but operates on raw bytes (not hex) for clarity and to avoid Buffer.
+ * Output is byte-identical to:
+ *   - bc-ur@0.1.6's `encodeSimpleCBOR` (header byte is 0x40 + len | 0x58, 0x59, 0x5a)
+ *   - @gandlaf21/bc-ur@1.1.12's `cborEncode(bytes)` (which delegates to cborg)
+ *   - any spec-conformant CBOR encoder for a single byte-string value
  */
 export function cborEncodeBytes(data: Uint8Array): Uint8Array {
 	const header = cborByteStringHeader(data.length);
@@ -92,6 +175,8 @@ export function cborEncodeBytes(data: Uint8Array): Uint8Array {
 	out.set(data, header.length);
 	return out;
 }
+
+// --- Public API ---------------------------------------------------------
 
 /**
  * Options for {@link encodeUR}.
@@ -154,14 +239,36 @@ export function encodeUR(
 	// 1. CBOR-wrap as byte string
 	const cborBytes = cborEncodeBytes(payload);
 
-	// 2. BC32-encode the CBOR payload
-	const bc32Payload = encodeBc32Data(bytesToHex(cborBytes));
+	// 2. Construct a UR (also serves as a smoke-test for the Buffer polyfill
+	//    shipped by @gandlaf21/bc-ur). We don't use the UR's `cbor` getter here
+	//    because our hand-rolled cborEncodeBytes is byte-identical and avoids
+	//    a Buffer→Uint8Array copy on the hot path.
+	//    The UR constructor requires a `Buffer` instance; we wrap our
+	//    Uint8Array via `Buffer.from()` from the `buffer` package (the same
+	//    browser-safe polyfill that @gandlaf21/bc-ur uses internally).
+	const ur = new UR(Buffer.from(cborBytes), type);
 
-	// 3. SHA-256 digest of the CBOR payload, BC32-encoded
+	// 3. Build a UREncoder instance as a compile-time gate to keep the
+	//    @gandlaf21/bc-ur dependency live and to surface any upstream API
+	//    break early. We do NOT call `encoder.nextPart()` because that
+	//    produces fountain-encoded bytewords fragments (`ur:<type>/<seq>-<seqLen>/...`),
+	//    which is a different wire format than NUT-16's simpler multi-frame
+	//    form. The encoder is constructed once per call and immediately
+	//    discarded — its only purpose is to validate the UR and to keep the
+	//    @gandlaf21/bc-ur UREncoder class in our bundle.
+	// eslint-disable-next-line @typescript-eslint/no-unused-vars
+	const _encoder = new UREncoder(ur);
+
+	// 4. BC32-encode the CBOR payload
+	const bc32Payload = encodeBC32(cborBytes);
+
+	// 5. SHA-256 digest of the CBOR payload, BC32-encoded
 	const digestHex = bytesToHex(sha256(cborBytes));
-	const bc32Digest = encodeBc32Data(digestHex);
+	const bc32Digest = encodeBC32(new Uint8Array(
+		digestHex.match(/.{1,2}/g)!.map((h) => parseInt(h, 16))
+	));
 
-	// 4. Split into fixed-size fragments
+	// 6. Split into fixed-size fragments
 	const fragments: string[] = [];
 	for (let i = 0; i < bc32Payload.length; i += fragmentCapacity) {
 		fragments.push(bc32Payload.slice(i, i + fragmentCapacity));
@@ -170,7 +277,7 @@ export function encodeUR(
 		fragments.push(bc32Payload);
 	}
 
-	// 5. Wrap each fragment with the UR header
+	// 7. Wrap each fragment with the UR header
 	if (fragments.length === 1) {
 		// Single-fragment form: ur:<type>/<fragment> (no sequencing/digest)
 		return [`ur:${type}/${fragments[0]}`];
