@@ -366,17 +366,16 @@
 	let isLightning = $derived(tx?.protocol === 'lightning' || tx?.type === 'melt' || tx?.type === 'mint');
 	let isCashu = $derived(tx?.protocol === 'cashu' || tx?.type === 'cashu_send' || tx?.type === 'cashu_receive');
 	let displayData = $derived(isLightning ? tx?.invoice : tx?.token_hash);
-	// TASK-403 (NUT-16): for cashu_send transactions, pass the full encoded token
-	// verbatim to AnimatedQR — never truncated — so the UR encoder can split the
-	// complete payload into fragments. For other types (Lightning mint/melt, cashu
-	// receive, deprecated transfer), fall back to the static QRDisplay path.
-	let isCashuSend = $derived(tx?.type === 'cashu_send');
+	// TASK-403 (NUT-16) / TASK-FIX-410: for all cashu transactions (cashu_send AND
+	// cashu_receive), pass the full encoded token verbatim to AnimatedQR — never
+	// truncated — so the UR encoder can split the complete payload into fragments.
+	// For Lightning (mint/melt) and deprecated transfer, fall back to static QRDisplay.
 	// tokenData holds the full cashu token (the same string the sender encoded
 	// via encodeToken() in tokenStore.ts / transfer.ts). The legacy field name
-	// `token_hash` is misleading — cashu_send tx rows store the complete V4
+	// `token_hash` is misleading — cashu tx rows store the complete V4
 	// token string there. We surface it under the name `tokenData` to make the
 	// NUT-16 contract explicit at the call site.
-	let tokenData = $derived(isCashuSend ? (tx?.token_hash ?? null) : null);
+	let tokenData = $derived(isCashu ? (tx?.token_hash ?? null) : null);
 
 </script>
 
@@ -427,14 +426,15 @@
 			<!-- ─── Body: 10 fields ─────────────────────── -->
 			<div class="sheet-body">
 
-				<!-- QR Code — TASK-403 (NUT-16): Cashu sends use AnimatedQR (UR fragments),
-				     other types keep the static QRDisplay. Full token passed to AnimatedQR
-				     without truncation.
+				<!-- QR Code — TASK-403 (NUT-16) / TASK-FIX-410: Cashu transactions
+				     (cashu_send AND cashu_receive) use AnimatedQR (UR fragments).
+				     Other types (Lightning mint/melt, deprecated transfer) keep the
+				     static QRDisplay. Full token passed to AnimatedQR without truncation.
 				     TASK-FIX-407: Both QR instances use the same QR_SIZE constant (240px)
 				     for visual consistency. -->
 				{#if displayData}
 					<div class="detail-qr">
-						{#if isCashuSend && tokenData}
+						{#if isCashu && tokenData}
 							<AnimatedQR data={tokenData} size={QR_SIZE} frameIntervalMs={200} />
 						{:else}
 							<QRDisplay data={displayData} size={QR_SIZE} />
