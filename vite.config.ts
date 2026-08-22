@@ -89,6 +89,12 @@ export default defineConfig({
 	],
 	resolve: {
 		conditions: ['browser'],
+		// TASK-FIX-401: @gandlaf21/bc-ur@1.1.12 ships only a `module` field
+		// (no `exports`). Listing `module` first ensures Vite picks the es6
+		// build (ESM, uses `import 'cborg'`) instead of falling back to the
+		// es5 CommonJS `main` which `require('cborg')`s and trips over
+		// cborg@4.x's exports field (no `default`/`require` condition).
+		mainFields: ['module', 'browser', 'main'],
 		alias: {
 			$lib: resolve(__dirname, 'src/lib')
 		}
