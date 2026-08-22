@@ -127,6 +127,7 @@
 
 	.qr-image-wrapper {
 		position: relative;
+		width: 100%;
 		padding: var(--space-sm);
 		background: #ffffff;
 		border-radius: var(--radius-md);
