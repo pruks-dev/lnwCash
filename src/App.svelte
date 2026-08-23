@@ -59,8 +59,8 @@
 	import TopAppBar from './components/TopAppBar.svelte';
 	import ArrowLeft from '$lib/components/icons/ArrowLeft.svelte';
 
-	// Legacy screens kept for backward compatibility (QRScan)
-	import F007QRScan from './screens/F007-QRScan.svelte';
+	// QRScanner overlay (D-6 γ — was F007QRScan, see TASK-505)
+	import QRScanner from '$lib/components/QRScanner.svelte';
 
 	// Integration components
 	import SplashScreen from './components/SplashScreen.svelte';
@@ -303,7 +303,7 @@
 	<main class="app-shell">
 		{#if showQRScan}
 			<div class="qrscan-overlay">
-				<F007QRScan onResult={handleQRResult} onClose={handleQRClose} />
+				<QRScanner onDecode={handleQRResult} onClose={handleQRClose} />
 			</div>
 		{/if}
 
