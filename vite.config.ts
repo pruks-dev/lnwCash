@@ -13,6 +13,15 @@ export default defineConfig({
 	define: {
 		'import.meta.env.APP_VERSION': JSON.stringify(pkg.version)
 	},
+	// TASK-501 (Wave 1, Step 1): exclude @agicash/qr-scanner from Vite's
+	// pre-bundling pipeline. The library ships a WebAssembly worker
+	// (`dist/worker.js`) that imports `zxing-wasm`, which Vite's dep-optimizer
+	// cannot safely pre-bundle. cashu.me uses the same pattern (see
+	// cashu.me/quasar.config.js). The WASM binary is loaded via `?url`
+	// import in QrcodeReader.vue — a Vite built-in, no plugin needed.
+	optimizeDeps: {
+		exclude: ['@agicash/qr-scanner']
+	},
 	plugins: [
 		// TASK-FIX-403: Polyfill Node core modules for browser.
 		// Required because @gandlaf21/bc-ur (transitive via ur-encoder.ts) imports

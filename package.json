@@ -23,6 +23,7 @@
 		"env:check": "bash scripts/check-env.sh"
 	},
 	"dependencies": {
+		"@agicash/qr-scanner": "^0.1.2",
 		"@gandlaf21/bc-ur": "^1.1.12",
 		"@noble/curves": "^2.2.0",
 		"@noble/hashes": "^2.2.0",
@@ -35,7 +36,8 @@
 		"idb": "^8.0.3",
 		"jsqr": "^1.4.0",
 		"qrcode": "^1.5.4",
-		"svelte-i18n": "^4.0.1"
+		"svelte-i18n": "^4.0.1",
+		"zxing-wasm": "^2.2.4"
 	},
 	"devDependencies": {
 		"@capacitor/android": "^8.4.2",
