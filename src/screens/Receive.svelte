@@ -35,10 +35,8 @@
 	import Heading from '$lib/components/ui/Heading.svelte';
 	import Body from '$lib/components/ui/Body.svelte';
 	import Toast from '$lib/components/ui/Toast.svelte';
-	import Modal from '$lib/components/ui/Modal.svelte';
 	import Numpad from '$lib/components/Numpad.svelte';
 	import QRDisplay from '$lib/components/QRDisplay.svelte';
-	import QRScanner from '$lib/components/QRScanner.svelte';
 	import UnlockPrompt from '../components/UnlockPrompt.svelte';
 
 	import Copy from '$lib/components/icons/Copy.svelte';
@@ -93,13 +91,6 @@
 	let cashuError: string = $state('');
 	let cashuReceiveResult: ReceiveResult | null = $state(null);
 	let mintUrl: string = $state('');
-
-	// ─── QR Scanner modal (TASK-504, Iter 5 NUT-16) ─────────────
-	// `scannerOpen` toggles the QRScanner modal. onDecode feeds the same
-	// `scannedQRValue` store that the line-152 subscription listens for, so
-	// the existing validateToken() flow runs unchanged. This is ADDITIVE to
-	// the manual paste textarea + paste-from-clipboard button.
-	let scannerOpen: boolean = $state(false);
 
 	// ─── Toast ───────────────────────────────────────────────
 	let toastMessage: string = $state('');
@@ -770,16 +761,22 @@
 							<Button variant="ghost" size="sm" onclick={handlePasteToken} disabled={cashuState === 'validating'}>
 								{#snippet children()}{$_('common.paste')}{/snippet}
 							</Button>
-							<!-- TASK-504: Scan QR Code button — opens QRScanner modal.
-							     Wire via scannedQRValue store (same path F007-QRScan uses). -->
-							<Button
-								variant="secondary"
-								size="sm"
-								onclick={() => (scannerOpen = true)}
-								disabled={cashuState === 'validating'}
-							>
-								{#snippet children()}{$_('screen.receive.scan_qr_button')}{/snippet}
-							</Button>
+							<!-- ITER-5 follow-up: scan button now opens the GLOBAL
+							     FullScreenScanOverlay via the `onQRScan` prop wired
+							     by App.svelte — same path Home + Send use. The local
+							     Modal + scannerOpen state were removed in the
+							     3-phase fast-lane fix to make scanner UI standard
+							     across all 3 callers. -->
+							{#if onQRScan}
+								<Button
+									variant="secondary"
+									size="sm"
+									onclick={onQRScan}
+									disabled={cashuState === 'validating'}
+								>
+									{#snippet children()}{$_('screen.receive.scan_qr_button')}{/snippet}
+								</Button>
+							{/if}
 							<Button variant="primary" size="sm" onclick={validateToken} disabled={cashuState === 'validating' || !cashuTokenInput.trim()}>
 								{#snippet children()}
 									{cashuState === 'validating' ? '...' : $_('screen.receive.validate_token')}
@@ -898,28 +895,6 @@
 		onunlock={handleUnlockSuccess}
 		oncancel={handleUnlockCancel}
 	/>
-
-	<!-- TASK-504: QR Scanner modal — opens via scan button, feeds scannedQRValue store.
-	     The existing onMount subscription (line ~151) listens for that store and runs
-	     validateToken(), so the decode → validate → preview flow stays unchanged. -->
-	<Modal
-		open={scannerOpen}
-		variant="bottomsheet"
-		title={$_('screen.receive.scanner_modal_title')}
-		ariaLabel={$_('screen.receive.scanner_modal_title')}
-		onclose={() => (scannerOpen = false)}
-	>
-		{#snippet children()}
-			<QRScanner
-				onDecode={(decoded) => {
-					// Push into the shared store — the line-151 subscription picks it up.
-					scannedQRValue.set(decoded);
-					scannerOpen = false;
-				}}
-				onClose={() => (scannerOpen = false)}
-			/>
-		{/snippet}
-	</Modal>
 
 	<!-- Toast -->
 	<div class="toast-container">

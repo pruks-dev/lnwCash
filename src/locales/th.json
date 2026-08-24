@@ -32,6 +32,7 @@
 	"common.error_clipboard": "ไม่สามารถคัดลอกได้",
 	"common.error_invalid_url": "URL ต้องขึ้นต้นด้วย http:// หรือ https://",
 	"common.placeholder_mint_url": "https://mint.example.com",
+	"screen.common.scanner_overlay_title": "สแกนคิวอาร์โค้ด",
 	"screen.register.title": "สร้างรหัสผ่าน",
 	"screen.register.pin_placeholder": "ตั้งรหัส PIN 4 หลัก",
 	"screen.register.confirm_pin": "ยืนยัน PIN",

@@ -49,6 +49,13 @@
 		type ScanResult,
 		type ScannerOptions
 	} from '@agicash/qr-scanner';
+	// Pattern source: cashu.me/QrcodeReader.vue line 4 — explicit WASM ?url import
+	// then `QrScanner.configureWasm({ locateFile: ... })` below. Without this,
+	// zxing-wasm fetches the WASM binary from a path the bundler doesn't know
+	// about → silent worker init failure → no decoded frames (the
+	// "scanner-dies-silently" symptom in the bug report). The ?url suffix
+	// makes Vite emit a static URL string that locateFile() returns.
+	import zxingWasmUrl from 'zxing-wasm/reader/zxing_reader.wasm?url';
 	import { createURDecoder } from '$lib/wallet/ur-decoder';
 
 	interface Props {
@@ -132,6 +139,14 @@
 			errorMessage = 'Video element not mounted';
 			return;
 		}
+
+		// Pattern source: cashu.me/QrcodeReader.vue lines 9-11. MUST run
+		// before `new QrScanner(...)` — QrScanner's static init reads
+		// the configured locateFile once during construction. Calling it
+		// later has no effect on already-instantiated scanners.
+		QrScanner.configureWasm({
+			locateFile: () => zxingWasmUrl
+		});
 
 		// Pattern: cashu.me/QrcodeReader.vue lines 17-26 — uses
 		// `preferredCamera: 'environment'` so phone cameras pick the back

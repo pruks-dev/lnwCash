@@ -32,6 +32,7 @@
 	"common.error_clipboard": "Cannot copy to clipboard",
 	"common.error_invalid_url": "URL must start with http:// or https://",
 	"common.placeholder_mint_url": "https://mint.example.com",
+	"screen.common.scanner_overlay_title": "Scan QR Code",
 	"screen.register.title": "Set Up PIN",
 	"screen.register.pin_placeholder": "Set 4-digit PIN",
 	"screen.register.confirm_pin": "Confirm PIN",

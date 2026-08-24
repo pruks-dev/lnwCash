@@ -303,7 +303,21 @@
 	<main class="app-shell">
 		{#if showQRScan}
 			<div class="qrscan-overlay">
-				<QRScanner onDecode={handleQRResult} onClose={handleQRClose} />
+				<div class="qrscan-header">
+					<button
+						type="button"
+						class="qrscan-header-close"
+						aria-label={$_('common.close')}
+						onclick={handleQRClose}
+					>
+						×
+					</button>
+					<h2 class="qrscan-header-title">{$_('screen.common.scanner_overlay_title')}</h2>
+					<div class="qrscan-header-spacer"></div>
+				</div>
+				<div class="qrscan-body">
+					<QRScanner onDecode={handleQRResult} onClose={handleQRClose} />
+				</div>
 			</div>
 		{/if}
 
@@ -390,8 +404,96 @@
 		position: fixed;
 		inset: 0;
 		z-index: 200;
-		background: var(--color-surface);
-		overflow-y: auto;
+		background: #000;
+		display: flex;
+		flex-direction: column;
+		/* Safe area for iOS notch + Android gesture bar */
+		padding-top: env(safe-area-inset-top, 0);
+		padding-bottom: env(safe-area-inset-bottom, 0);
+		padding-left: env(safe-area-inset-left, 0);
+		padding-right: env(safe-area-inset-right, 0);
+		overflow: hidden;
+	}
+
+	.qrscan-header {
+		flex: 0 0 auto;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		height: 56px;
+		padding: 0 var(--space-md);
+		background: #000;
+		color: #fff;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+	}
+
+	.qrscan-header-close {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 40px;
+		height: 40px;
+		margin-left: calc(-1 * var(--space-sm));
+		border: none;
+		border-radius: 50%;
+		background: transparent;
+		color: #fff;
+		font-size: 28px;
+		line-height: 1;
+		cursor: pointer;
+		transition: background var(--transition-fast, 120ms ease);
+		-webkit-tap-highlight-color: transparent;
+	}
+
+	.qrscan-header-close:hover,
+	.qrscan-header-close:focus-visible {
+		background: rgba(255, 255, 255, 0.1);
+		outline: none;
+	}
+
+	.qrscan-header-close:focus-visible {
+		outline: 2px solid var(--color-primary, #1976d2);
+		outline-offset: 2px;
+	}
+
+	.qrscan-header-title {
+		flex: 1;
+		margin: 0;
+		text-align: center;
+		font-family: var(--font-family, sans-serif);
+		font-size: var(--font-size-md, 16px);
+		font-weight: var(--font-weight-semibold, 600);
+		color: #fff;
+	}
+
+	.qrscan-header-spacer {
+		width: 40px;
+		flex-shrink: 0;
+	}
+
+	.qrscan-body {
+		flex: 1 1 auto;
+		display: flex;
+		align-items: stretch;
+		justify-content: center;
+		min-height: 0;
+		overflow: hidden;
+	}
+
+	/* Override QRScanner.svelte's .qr-scanner { max-width: 480px } when
+	   mounted inside the global full-screen overlay so the camera preview
+	   fills the available height/width. The :global() is required because
+	   Svelte scopes component-internal classes by default. */
+	.qrscan-body :global(.qr-scanner) {
+		max-width: none;
+		width: 100%;
+		height: 100%;
+		aspect-ratio: auto;
+		border-radius: 0;
+	}
+
+	.qrscan-body :global(.qr-scanner-video) {
+		object-fit: cover;
 	}
 
 	/* TASK-079 (F-051): Back header for secondary screens (Send/Receive/Settings) */
