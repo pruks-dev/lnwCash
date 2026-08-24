@@ -260,8 +260,7 @@
 		showQRScan = true;
 	}
 
-	function handleQRResult(result: string) {
-		showQRScan = false;
+	async function handleQRResult(result: string) {
 		scannedQRValue.set(result);
 		// Detect type from lowercased result (handles lightning: prefix)
 		const lowered = result.replace(/^(lightning:|bitcoin:)/i, '').toLowerCase();
@@ -272,6 +271,11 @@
 		} else {
 			navigateTo('receive');
 		}
+		// TASK-509 (iter5): delay closing the overlay by 500ms so the user
+		// sees the "Frame 100%" completion state on animated (NUT-16) QR
+		// scans before the scanner unmounts. Pattern source: cashu.me.
+		await new Promise((resolve) => setTimeout(resolve, 500));
+		showQRScan = false;
 	}
 
 	function handleQRClose() {

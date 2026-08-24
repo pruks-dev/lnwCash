@@ -104,6 +104,7 @@
 				if (decoded !== null) {
 					onDecode(decoded);
 					stopScanner();
+					progress = 0; // Pattern source: cashu.me/QrcodeReader.vue line 69 — reset after emit so re-mount starts clean
 				}
 			}
 		} else {
@@ -253,7 +254,7 @@
 			playsinline
 			data-testid="qr-scanner-video"
 		></video>
-		{#if progress > 0 && progress < 100}
+		{#if progress > 0 && progress <= 100}
 			<div class="qr-scanner-progress" aria-live="polite" data-testid="qr-scanner-progress">
 				<span class="qr-scanner-progress-text">Frame {progress}%</span>
 				<div class="qr-scanner-progress-bar">
