@@ -777,12 +777,23 @@
 									{#snippet children()}<Iconly name="Scan" size={14} /> {$_('common.scan_qr')}{/snippet}
 								</Button>
 							{/if}
-							<Button variant="primary" size="sm" onclick={validateToken} disabled={cashuState === 'validating' || !cashuTokenInput.trim()}>
+						</div>
+						<!-- ITER-5: Validate moved to its own row below .paste-input-actions
+						     to align with Send.svelte primary-CTA layout (separate row,
+						     size md). Hidden during validating to avoid a standalone "..."
+						     button row — caller shows progress via cashuState banner instead. -->
+						{#if cashuState !== 'validating'}
+							<Button
+								variant="primary"
+								size="md"
+								onclick={validateToken}
+								disabled={!cashuTokenInput.trim()}
+							>
 								{#snippet children()}
-									{cashuState === 'validating' ? '...' : $_('screen.receive.validate_token')}
+									{$_('screen.receive.validate_token')}
 								{/snippet}
 							</Button>
-						</div>
+						{/if}
 					</div>
 				</Card>
 
