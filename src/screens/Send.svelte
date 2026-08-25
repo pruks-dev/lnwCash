@@ -1442,7 +1442,7 @@
 		display: flex;
 		flex-direction: column;
 		/* ITER-5: align with Receive — 16px gap (was 8px from TASK-307). */
-		gap: var(--space-md);
+		gap: var(--space-sm);
 	}
 
 	.paste-textarea {
