@@ -265,7 +265,13 @@
 		// any downstream handling so the store, Send.svelte, and Receive.svelte
 		// all see the canonical form. Routing uses the same canonical string.
 		const stripped = result.replace(/^(lightning:|bitcoin:)/i, '');
-		scannedQRValue.set(stripped);
+		// Lightning Address (user@domain) is case-sensitive (email-style).
+		// bolt11/lnurl bech32 is case-insensitive — lowercase for store
+		// consistency so downstream detectInputType / decodeBolt11 / isLnurlBech32
+		// all see canonical lowercase. Detection: if stripped contains '@'
+		// it's likely LA; preserve case for resolution.
+		const looksLikeLightningAddress = stripped.includes('@');
+		scannedQRValue.set(looksLikeLightningAddress ? stripped : stripped.toLowerCase());
 		// Detect type from lowercased result (handles lightning: prefix)
 		const lowered = stripped.toLowerCase();
 		if (lowered.startsWith('lnbc') || lowered.startsWith('lntb') || lowered.startsWith('lnurl')) {

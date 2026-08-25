@@ -337,6 +337,82 @@ describe('Send — prefix strip (TASK-FIX-iter5)', () => {
 		// resolve rendered (proves strip happened)
 		expect(await screen.findByText('screen.send.lnaddr.pay_to PrukS@coinos.io')).toBeTruthy();
 	});
+
+	// ─── TASK-FIX-iter5 (uppercase): bech32 is case-insensitive per BIP-173.
+	// detectInputType must accept LNBC1..., LNURL1... (uppercase) the same as
+	// the lowercase canonical form. The store path is exercised by the
+	// App.svelte describe block below; these tests cover the paste / type path
+	// that also feeds detectInputType.
+	const UPPERCASE_BOLT11 =
+		'LNBC1U1P4G6HPFPP5V8JL97YSTV2KZQMXU4FPV2NWP4E5TNVJXXVDR9HEAVJ35LTQEFNSDQDF3S5X6RFWDCXZCQZZSXQYZ5VQSP58JPDUPFEWKKP6JFVFE9WF5LAJXSR3Z8Z2XT0MU5MQ9NGA6Z8GT8Q9QXPQYSGQ56LL9S4N58Z39468FDGLFF75G0RCW5N73E5CSSRNSDL60EFA8Y5NAEQHHCNGE0G229X2V5EJHLLLMEZ794QLUV9RY3LDHZAUZ0MK3LSPD2CXXT';
+	const UPPERCASE_LNURL =
+		'LNURL1DP68GURN8GHJ7UM9WFMXJCM99E3K7MF0V9CXJ0M385EKVCENXC6R2C35XVUKXEFCV5MKVV34X5EKZD3EV56NYD3HXQURZEPEXEJXXEPNXSCRVWFNV9NXZCN9XQ6XYEFHVGCXXCMYXYMNSERXFQ5FNS';
+
+	it('bare uppercase bolt11 (LNBC1...) → detects as bolt11 + auto-validates', async () => {
+		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
+		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+
+		await fireEvent.paste(textarea, {
+			clipboardData: { getData: () => UPPERCASE_BOLT11 }
+		});
+
+		// detectInputType matches uppercase bolt11 via /^ln(bc|tb|bcrt|sb)/i
+		// → mock decodeBolt11 returns valid → check_fee rendered
+		expect(await screen.findByText('screen.send.check_fee')).toBeTruthy();
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('prefixed uppercase bolt11 (lightning:LNBC1...) → strips prefix + detects as bolt11', async () => {
+		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
+		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+
+		await fireEvent.paste(textarea, {
+			clipboardData: { getData: () => `lightning:${UPPERCASE_BOLT11}` }
+		});
+
+		// stripInputPrefix removes lightning: (case-insensitive) → uppercase
+		// bolt11 passed to detectInputType → matches → auto-validates
+		expect(await screen.findByText('screen.send.check_fee')).toBeTruthy();
+	});
+
+	it('all-uppercase prefixed bolt11 (LIGHTNING:LNBC1...) → case-insensitive strip + detects as bolt11', async () => {
+		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
+		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+
+		await fireEvent.paste(textarea, {
+			clipboardData: { getData: () => `LIGHTNING:${UPPERCASE_BOLT11}` }
+		});
+
+		// strip regex is /^(lightning:|bitcoin:)/i so LIGHTNING: is also stripped
+		// → detectInputType matches uppercase bolt11 → auto-validates
+		expect(await screen.findByText('screen.send.check_fee')).toBeTruthy();
+	});
+
+	it('bare uppercase lnurl (LNURL1...) → detects as lnurl + resolves', async () => {
+		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
+		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+
+		await fireEvent.paste(textarea, {
+			clipboardData: { getData: () => UPPERCASE_LNURL }
+		});
+
+		// detectInputType matches uppercase lnurl via /^lnurl/i → resolve hits
+		// /.well-known/lnurlp/ coinos.io → pay_to coinos.io rendered
+		expect(await screen.findByText('screen.send.lnaddr.pay_to coinos.io')).toBeTruthy();
+	});
+
+	it('prefixed uppercase lnurl (lightning:LNURL1...) → strips prefix + detects as lnurl + resolves', async () => {
+		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
+		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+
+		await fireEvent.paste(textarea, {
+			clipboardData: { getData: () => `lightning:${UPPERCASE_LNURL}` }
+		});
+
+		// strip prefix → uppercase lnurl passed to detectInputType → matches
+		// → resolve fires → pay_to coinos.io rendered
+		expect(await screen.findByText('screen.send.lnaddr.pay_to coinos.io')).toBeTruthy();
+	});
 });
 
 // ────────────────────────────────────────────────────────────────────
@@ -404,5 +480,94 @@ describe('App.svelte — handleQRResult LA routing (TASK-FIX-iter5)', () => {
 	it('routes lightning:alice@domain.tld to send screen', async () => {
 		await mountAndScan('lightning:alice@lnwallet.example.com');
 		expect(mockNavigateTo).toHaveBeenCalledWith('send');
+	});
+});
+
+// ────────────────────────────────────────────────────────────────────
+// App.svelte — case-preserving QR storage (TASK-FIX-iter5 uppercase)
+//
+// Verify the storage-side decision in handleQRResult:
+//   bolt11 / lnurl bech32 → lowercased before scannedQRValue.set
+//   lightning address     → case preserved (email-style is case-sensitive
+//                           on the LHS, and the domain is forced lowercase
+//                           inside parseLightningAddress — so storing the
+//                           original case is safe + correct).
+// We pull the mocked scannedQRValue out of the vi.mock cache so we can
+// inspect the exact set() argument App.svelte wrote.
+// ────────────────────────────────────────────────────────────────────
+
+async function mountAndScanCheckStore(
+	scan: string
+): Promise<{ setMock: ReturnType<typeof vi.fn> }> {
+	renderApp(App, {});
+	await waitFor(() => expect(h.capturedProps['home-stub']).toBeTruthy());
+	const homeProps = h.capturedProps['home-stub'] as
+		| { onQRScan?: () => void }
+		| undefined;
+	homeProps!.onQRScan!();
+	await waitFor(() => expect(h.capturedProps['qrscanner-stub']).toBeTruthy());
+	const qrProps = h.capturedProps['qrscanner-stub'] as
+		| { onDecode?: (s: string) => void; onClose?: () => void }
+		| undefined;
+	await qrProps!.onDecode!(scan);
+	await new Promise((r) => setTimeout(r, 10));
+	// Pull the mocked store AFTER App has imported + used it (factory
+	// returns a stable object across the file).
+	const { scannedQRValue } = await import('$lib/stores/scannedQR');
+	return { setMock: scannedQRValue.set as ReturnType<typeof vi.fn> };
+}
+
+describe('App.svelte — case-preserving QR storage (TASK-FIX-iter5 uppercase)', () => {
+	beforeEach(() => {
+		history.replaceState(null, '', '/');
+		vi.clearAllMocks();
+		setWalletByState('UNLOCKED');
+		h.mockTryAutoUnlock.mockResolvedValue(true);
+		for (const k of Object.keys(h.capturedProps)) delete h.capturedProps[k];
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('lowercases uppercase bolt11 in store (lightning:LNBC1... → lnbc1...)', async () => {
+		const UPPERCASE_BOLT11 =
+			'LNBC1U1P4G6HPFPP5V8JL97YSTV2KZQMXU4FPV2NWP4E5TNVJXXVDR9HEAVJ35LTQEFNSDQDF3S5X6RFWDCXZCQZZSXQYZ5VQSP58JPDUPFEWKKP6JFVFE9WF5LAJXSR3Z8Z2XT0MU5MQ9NGA6Z8GT8Q9QXPQYSGQ56LL9S4N58Z39468FDGLFF75G0RCW5N73E5CSSRNSDL60EFA8Y5NAEQHHCNGE0G229X2V5EJHLLLMEZ794QLUV9RY3LDHZAUZ0MK3LSPD2CXXT';
+
+		const { setMock } = await mountAndScanCheckStore(`lightning:${UPPERCASE_BOLT11}`);
+
+		expect(mockNavigateTo).toHaveBeenCalledWith('send');
+		// looksLikeLightningAddress = false (no '@') → lowercased
+		expect(setMock).toHaveBeenCalledWith(UPPERCASE_BOLT11.toLowerCase());
+	});
+
+	it('lowercases uppercase lnurl in store (lightning:LNURL1... → lnurl1...)', async () => {
+		const UPPERCASE_LNURL =
+			'LNURL1DP68GURN8GHJ7UM9WFMXJCM99E3K7MF0V9CXJ0M385EKVCENXC6R2C35XVUKXEFCV5MKVV34X5EKZD3EV56NYD3HXQURZEPEXEJXXEPNXSCRVWFNV9NXZCN9XQ6XYEFHVGCXXCMYXYMNSERXFQ5FNS';
+
+		const { setMock } = await mountAndScanCheckStore(`lightning:${UPPERCASE_LNURL}`);
+
+		expect(mockNavigateTo).toHaveBeenCalledWith('send');
+		expect(setMock).toHaveBeenCalledWith(UPPERCASE_LNURL.toLowerCase());
+	});
+
+	it('preserves mixed-case LA in store (lightning:Alice@lnwallet.example.com → Alice@lnwallet.example.com)', async () => {
+		const { setMock } = await mountAndScanCheckStore(
+			'lightning:Alice@lnwallet.example.com'
+		);
+
+		expect(mockNavigateTo).toHaveBeenCalledWith('send');
+		// looksLikeLightningAddress = true (has '@') → original case preserved
+		expect(setMock).toHaveBeenCalledWith('Alice@lnwallet.example.com');
+	});
+
+	it('preserves mixed-case bare LA in store (Alice@LNWALLET.EXAMPLE.COM → Alice@LNWALLET.EXAMPLE.COM)', async () => {
+		// Domain is uppercased intentionally — store must NOT lowercase it,
+		// because parseLightningAddress lowercases the domain internally on
+		// resolve. The store is the raw input; case-preserving is the policy.
+		const { setMock } = await mountAndScanCheckStore('Alice@LNWALLET.EXAMPLE.COM');
+
+		expect(mockNavigateTo).toHaveBeenCalledWith('send');
+		expect(setMock).toHaveBeenCalledWith('Alice@LNWALLET.EXAMPLE.COM');
 	});
 });

@@ -35,7 +35,6 @@
 	// TASK-280: LNURL-pay + lightning address resolver (TASK-279)
 	import {
 		isLightningAddress,
-		isLnurlBech32,
 		parseLightningAddress,
 		resolveLightningAddress,
 		resolveLnurl,
@@ -444,10 +443,15 @@
 	function detectInputType(text: string): InputType {
 		const trimmed = text.trim();
 		if (!trimmed) return 'unknown';
-		if (trimmed.startsWith('lnbc') || trimmed.startsWith('lntb') || trimmed.startsWith('lnbcrt')) {
+		// bolt11/lnurl bech32 are case-insensitive (BIP-173 / BOLT-11 spec).
+		// Use regex /i so uppercase LNBC1..., LnBc1..., etc. all match.
+		// Lightning Address is case-sensitive (email-like) — pass original.
+		if (/^ln(bc|tb|bcrt|sb)/i.test(trimmed)) {
 			return 'bolt11';
 		}
-		if (isLnurlBech32(trimmed)) return 'lnurl';
+		if (/^lnurl/i.test(trimmed)) {
+			return 'lnurl';
+		}
 		if (isLightningAddress(trimmed)) return 'lightning_address';
 		return 'unknown';
 	}
