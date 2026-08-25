@@ -323,16 +323,17 @@
 		bottom: var(--space-md, 12px);
 		left: var(--space-md, 12px);
 		right: var(--space-md, 12px);
-		padding: var(--space-sm, 8px) var(--space-md, 12px);
+		padding: var(--space-md, 12px) var(--space-lg, 16px);
 		background: rgba(0, 0, 0, 0.7);
 		border-radius: var(--radius-md, 8px);
 		color: #fff;
 		font-family: var(--font-family-mono, monospace);
-		font-size: var(--font-size-xs, 11px);
+		font-size: var(--font-size-sm, 14px);
+		font-weight: 600;
 		z-index: 1;
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-xs, 4px);
+		gap: var(--space-sm, 8px);
 	}
 
 	.qr-scanner-progress-text {
@@ -341,7 +342,7 @@
 
 	.qr-scanner-progress-bar {
 		width: 100%;
-		height: 4px;
+		height: 12px;
 		background: rgba(255, 255, 255, 0.2);
 		border-radius: var(--radius-full, 999px);
 		overflow: hidden;
@@ -350,7 +351,8 @@
 	.qr-scanner-progress-fill {
 		height: 100%;
 		background: var(--color-primary, #1976d2);
-		transition: width 100ms linear;
+		transition: width 200ms ease-out;
+		border-radius: var(--radius-full, 999px);
 	}
 
 	.qr-scanner-fallback,
