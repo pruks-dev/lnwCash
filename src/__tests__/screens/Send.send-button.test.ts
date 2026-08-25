@@ -171,6 +171,25 @@ describe('Send unified button (TASK-297)', () => {
 		expect(resolveCall).toBeTruthy();
 	});
 
+	// TASK-FIX-iter5: lightning: prefix must be stripped before classify — same
+	// outcome as the bare form. Regression for the prefix-strip fix.
+	it('typing a lightning: prefixed lightning address → Send button shown; click resolves (prefix stripped)', async () => {
+		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
+		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+
+		await fireEvent.input(textarea, { target: { value: 'lightning:alice@lnwallet.example.com' } });
+
+		const sendButton = screen.getByRole('button', { name: 'screen.send.lnaddr.send_button' });
+		expect(sendButton).toBeTruthy();
+		expect(fetchMock).not.toHaveBeenCalled();
+
+		// click Send → resolveLnurlInput handles the LA after strip
+		await fireEvent.click(sendButton);
+		expect(await screen.findByText('screen.send.lnaddr.pay_to alice@lnwallet.example.com')).toBeTruthy();
+		const resolveCall = fetchMock.mock.calls.find((c) => String(c[0]).includes('lnwallet.example.com'));
+		expect(resolveCall).toBeTruthy();
+	});
+
 	it('typing a lnurl bech32 → Send button shown; click resolves', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
 		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;

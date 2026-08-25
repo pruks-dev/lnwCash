@@ -261,10 +261,17 @@
 	}
 
 	async function handleQRResult(result: string) {
-		scannedQRValue.set(result);
+		// TASK-FIX-iter5: strip URI scheme prefix (lightning:/bitcoin:) before
+		// any downstream handling so the store, Send.svelte, and Receive.svelte
+		// all see the canonical form. Routing uses the same canonical string.
+		const stripped = result.replace(/^(lightning:|bitcoin:)/i, '');
+		scannedQRValue.set(stripped);
 		// Detect type from lowercased result (handles lightning: prefix)
-		const lowered = result.replace(/^(lightning:|bitcoin:)/i, '').toLowerCase();
+		const lowered = stripped.toLowerCase();
 		if (lowered.startsWith('lnbc') || lowered.startsWith('lntb') || lowered.startsWith('lnurl')) {
+			navigateTo('send');
+		} else if (lowered.includes('@')) {
+			// TASK-FIX-iter5: bare lightning address (alice@domain.tld) → Send
 			navigateTo('send');
 		} else if (lowered.startsWith('cashua') || lowered.startsWith('cashub') || lowered.startsWith('cashu')) {
 			navigateTo('receive');

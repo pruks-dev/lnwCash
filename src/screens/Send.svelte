@@ -84,6 +84,15 @@
 		const s: LightningState = lightningState;
 		return s === 'sending' || s === 'fee-calculating';
 	}
+	/**
+	 * TASK-FIX-iter5: strip URI scheme prefix (lightning:/bitcoin:) from raw
+	 * input so the textarea reflects the canonical form and `detectInputType`
+	 * matches the underlying bolt11 / lnurl / lightning-address. Applied at
+	 * every entry point that receives user-supplied raw text.
+	 */
+	function stripInputPrefix(s: string): string {
+		return s.replace(/^(lightning:|bitcoin:)/i, '');
+	}
 	let lightningInvoiceInput: string = $state('');
 	let lightningInvoiceAmount: number = $state(0);
 	let lightningInvoiceDesc: string = $state('');
@@ -326,7 +335,10 @@
 	function handleInvoiceKeydown(e: KeyboardEvent) {
 		if (e.key !== 'Enter') return;
 		e.preventDefault();
-		const text = lightningInvoiceInput.trim();
+		// TASK-FIX-iter5: strip scheme prefix before classify/resolve
+		const raw = stripInputPrefix(lightningInvoiceInput);
+		lightningInvoiceInput = raw;
+		const text = raw.trim();
 		const type = detectInputType(text);
 		if (type === 'lnurl' || type === 'lightning_address') {
 			resolveLnurlInput(text);
@@ -344,9 +356,11 @@
 		const pasted = e.clipboardData?.getData('text/plain') ?? '';
 		if (!pasted) return;
 		e.preventDefault();
-		lightningInvoiceInput = pasted;
+		// TASK-FIX-iter5: strip scheme prefix before writing back
+		const stripped = stripInputPrefix(pasted);
+		lightningInvoiceInput = stripped;
 		resetLightningInputState();
-		const text = pasted.trim();
+		const text = stripped.trim();
 		const type = detectInputType(text);
 		if (type === 'bolt11') {
 			validateInvoiceSimple(text);
@@ -365,7 +379,10 @@
 	 *   unknown / empty    → no-op (focus the textarea so the user can type/paste)
 	 */
 	function handleSendClick() {
-		const text = lightningInvoiceInput.trim();
+		// TASK-FIX-iter5: strip scheme prefix before classify/resolve
+		const raw = stripInputPrefix(lightningInvoiceInput);
+		lightningInvoiceInput = raw;
+		const text = raw.trim();
 		const type = detectInputType(text);
 		if (type === 'bolt11') {
 			validateInvoiceSimple(text);
@@ -589,12 +606,14 @@
 		try {
 			const text = await navigator.clipboard.readText();
 			if (text) {
-				lightningInvoiceInput = text;
-				const type = detectInputType(text);
+				// TASK-FIX-iter5: strip scheme prefix before writing back
+				const stripped = stripInputPrefix(text);
+				lightningInvoiceInput = stripped;
+				const type = detectInputType(stripped);
 				if (type === 'bolt11') {
-					validateInvoiceSimple(text);
+					validateInvoiceSimple(stripped);
 				} else if (type === 'lnurl' || type === 'lightning_address') {
-					resolveLnurlInput(text);
+					resolveLnurlInput(stripped);
 				}
 			}
 		} catch {
