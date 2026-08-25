@@ -1251,6 +1251,7 @@
 
 	.paste-textarea {
 		width: 100%;
+		margin-top: var(--space-sm);
 		padding: var(--space-md);
 		border: 1.5px solid var(--color-border);
 		border-radius: var(--radius-md);
