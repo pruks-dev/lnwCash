@@ -950,10 +950,10 @@
 			{:else}
 				{#if lnurlFlowState === 'idle' || lnurlFlowState === 'error'}
 					<Card variant="basic" padding="lg">
-						<div class="invoice-input-section">
+						<div class="paste-input-section">
 							<Heading level="h3">{$_('screen.send.enter_invoice')}</Heading>
 							<textarea
-								class="invoice-textarea"
+								class="paste-textarea"
 								value={lightningInvoiceInput}
 								bind:this={invoiceTextarea}
 								oninput={handleInvoiceInput}
@@ -964,19 +964,19 @@
 								disabled={lightningState === 'fee-calculating'}
 								aria-label={$_('screen.send.enter_invoice')}
 							></textarea>
-							<!-- TASK-305 (HOT-FIX): reorder input section top→bottom:
+							<!-- ITER-5: reorder input section top→bottom:
 							     textarea → Paste/QR → hint → Send (bottom-most). -->
-							<div class="invoice-input-actions">
+							<div class="paste-input-actions">
 								<Button variant="ghost" size="sm" onclick={handlePasteInvoice}>
-									{#snippet children()}<span class="btn-icon-text"><span class="btn-icon-label">{$_('common.paste')}</span></span>{/snippet}
+									{#snippet children()}{$_('common.paste')}{/snippet}
 								</Button>
 								{#if onQRScan}
 									<Button variant="ghost" size="sm" onclick={onQRScan}>
-										{#snippet children()}<span class="btn-icon-text"><Iconly name="Scan" size={14} /><span class="btn-icon-label">{$_('screen.send.scan_qr')}</span></span>{/snippet}
+										{#snippet children()}<Iconly name="Scan" size={14} /> {$_('common.scan_qr')}{/snippet}
 									</Button>
 								{/if}
 							</div>
-							<p class="invoice-hint">{$_('screen.send.lnaddr.enter_hint')}</p>
+							<p class="paste-hint">{$_('screen.send.lnaddr.enter_hint')}</p>
 							{#if !lightningInvoiceValid && lnurlFlowState === 'idle'}
 								<Button
 									variant="primary"
@@ -1437,16 +1437,15 @@
 		gap: var(--space-md);
 	}
 
-	/* ─── Invoice Input ───────────────── */
-	.invoice-input-section {
+	/* ─── Paste Input (ITER-5: unified with Receive.cashu-input-section) ─── */
+	.paste-input-section {
 		display: flex;
 		flex-direction: column;
-		/* TASK-307 (HOT-FIX): space-md (16px) → space-sm (8px) — Paste/QR + hint
-		   + Send tighter. */
-		gap: var(--space-sm);
+		/* ITER-5: align with Receive — 16px gap (was 8px from TASK-307). */
+		gap: var(--space-md);
 	}
 
-	.invoice-textarea {
+	.paste-textarea {
 		width: 100%;
 		padding: var(--space-md);
 		border: 1.5px solid var(--color-border);
@@ -1460,7 +1459,7 @@
 		transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 	}
 
-	.invoice-textarea:focus {
+	.paste-textarea:focus {
 		outline: none;
 		border-color: var(--color-primary);
 		box-shadow: 0 0 0 3px rgba(0, 188, 212, 0.12);
@@ -1468,18 +1467,18 @@
 
 	/* TASK-F-NEW-008: Dark-theme focus halo — uses brighter cyan 400 (#26c6da) + slightly stronger alpha
 	   Required :global() wrapper so vite-plugin-svelte does not tree-shake the dark variant. */
-	:global([data-theme='dark']) .invoice-textarea:focus {
+	:global([data-theme='dark']) .paste-textarea:focus {
 		border-color: var(--color-primary);
 		box-shadow: 0 0 0 3px rgba(38, 198, 218, 0.18);
 	}
 
-	.invoice-textarea:disabled {
+	.paste-textarea:disabled {
 		background: var(--color-surface-variant);
 		opacity: 0.7;
 	}
 
-	/* TASK-290: helper hint under the invoice textarea (Enter to resolve) */
-	.invoice-hint {
+	/* ITER-5: helper hint under the paste textarea (Enter to resolve) */
+	.paste-hint {
 		margin: 0;
 		font-family: var(--font-family);
 		font-size: var(--font-size-xs);
@@ -1487,39 +1486,10 @@
 		line-height: var(--line-height-normal);
 	}
 
-	.invoice-input-actions {
+	.paste-input-actions {
 		display: flex;
 		gap: var(--space-sm);
-	}
-
-	/* TASK-306 (HOT-FIX): tighten Paste/QR ghost buttons — reduce vertical
-	   padding + min-height (button height) WITHOUT reducing font size.
-	   Scoped to ghost buttons inside invoice-input-actions ONLY;
-	   primary/other buttons unaffected. */
-	.invoice-input-actions :global(.btn-ghost) {
-		min-height: 32px;
-		padding-top: var(--space-xs);
-		padding-bottom: var(--space-xs);
-	}
-
-	/* Button icon alignment — icon + text in horizontal flex row */
-	.btn-icon-text {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		line-height: 1;
-	}
-
-	.btn-icon-text :global(svg) {
-		display: inline-block;
-		flex-shrink: 0;
-		/* SVG path draws from y=2 to y=22 (top half heavier) — shift down to align with text x-height */
-		transform: translateY(1.5px);
-	}
-
-	.btn-icon-label {
-		display: inline-block;
-		line-height: 1;
+		justify-content: flex-end;
 	}
 
 	/* TASK-305 (HOT-FIX): single gap system — parent `gap` removed so spacing
@@ -2013,35 +1983,7 @@
 		outline-offset: 2px;
 	}
 
-	/* ─── Error ───────────────────────── */
-	.error-banner {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-sm) var(--space-md);
-		background: var(--color-error-light);
-		border-radius: var(--radius-md);
-		border: 1px solid var(--color-error);
-	}
-
-	.error-close {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 32px;
-		height: 32px;
-		border: none;
-		border-radius: var(--radius-full);
-		background: transparent;
-		color: var(--color-error);
-		cursor: pointer;
-		margin-left: auto;
-		flex-shrink: 0;
-	}
-
-	.error-close:hover {
-		background: rgba(211, 47, 47, 0.1);
-	}
+	/* ─── Error banner moved to src/app.css (global) per ITER-5 ─── */
 
 	/* ─── Toast ───────────────────────── */
 	.toast-container {

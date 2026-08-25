@@ -746,18 +746,18 @@
 		<div class="tab-content" role="tabpanel">
 			{#if cashuState === 'idle' || cashuState === 'error' || cashuState === 'validating'}
 				<Card variant="basic" padding="lg">
-					<div class="cashu-input-section">
+					<div class="paste-input-section">
 						<Heading level="h3">{$_('screen.receive.paste_token')}</Heading>
 						<textarea
-							class="token-textarea"
+							class="paste-textarea"
 							value={cashuTokenInput}
 							oninput={handleCashuInput}
 							placeholder={$_('screen.receive.token_placeholder')}
-							rows={4}
+							rows={3}
 							disabled={cashuState === 'validating'}
 							aria-label={$_('screen.receive.paste_token')}
 						></textarea>
-						<div class="cashu-actions">
+						<div class="paste-input-actions">
 							<Button variant="ghost" size="sm" onclick={handlePasteToken} disabled={cashuState === 'validating'}>
 								{#snippet children()}{$_('common.paste')}{/snippet}
 							</Button>
@@ -769,12 +769,12 @@
 							     across all 3 callers. -->
 							{#if onQRScan}
 								<Button
-									variant="secondary"
+									variant="ghost"
 									size="sm"
 									onclick={onQRScan}
 									disabled={cashuState === 'validating'}
 								>
-									{#snippet children()}{$_('screen.receive.scan_qr_button')}{/snippet}
+									{#snippet children()}<Iconly name="Scan" size={14} /> {$_('common.scan_qr')}{/snippet}
 								</Button>
 							{/if}
 							<Button variant="primary" size="sm" onclick={validateToken} disabled={cashuState === 'validating' || !cashuTokenInput.trim()}>
@@ -1230,14 +1230,14 @@
 		outline-offset: 2px;
 	}
 
-	/* ─── Cashu Input ─────────────────── */
-	.cashu-input-section {
+	/* ─── Paste Input (ITER-5: unified with Send.invoice-input-section) ─── */
+	.paste-input-section {
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-md);
 	}
 
-	.token-textarea {
+	.paste-textarea {
 		width: 100%;
 		padding: var(--space-md);
 		border: 1.5px solid var(--color-border);
@@ -1251,9 +1251,9 @@
 		transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 	}
 
-	/* TASK-F-NEW-009: Cashu token textarea focus — Cyan border + cyan halo (light theme).
-	   Matches Send.svelte .invoice-textarea:focus pattern from F-NEW-008. */
-	.token-textarea:focus {
+	/* TASK-F-NEW-009: paste textarea focus — Cyan border + cyan halo (light theme).
+	   Matches Send.svelte .paste-textarea:focus pattern from F-NEW-008. */
+	.paste-textarea:focus {
 		outline: none;
 		border-color: var(--color-primary);
 		box-shadow: 0 0 0 3px rgba(0, 188, 212, 0.12);
@@ -1261,17 +1261,17 @@
 
 	/* TASK-F-NEW-009: Dark-theme focus halo — uses brighter cyan 400 (#26c6da) + slightly stronger alpha
 	   Required :global() wrapper so vite-plugin-svelte does not tree-shake the dark variant. */
-	:global([data-theme='dark']) .token-textarea:focus {
+	:global([data-theme='dark']) .paste-textarea:focus {
 		border-color: var(--color-primary);
 		box-shadow: 0 0 0 3px rgba(38, 198, 218, 0.18);
 	}
 
-	.token-textarea:disabled {
+	.paste-textarea:disabled {
 		background: var(--color-surface-variant);
 		opacity: 0.7;
 	}
 
-	.cashu-actions {
+	.paste-input-actions {
 		display: flex;
 		gap: var(--space-sm);
 		justify-content: flex-end;
@@ -1312,35 +1312,7 @@
 		justify-content: flex-end;
 	}
 
-	/* ─── Error ───────────────────────── */
-	.error-banner {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-sm) var(--space-md);
-		background: var(--color-error-light);
-		border-radius: var(--radius-md);
-		border: 1px solid var(--color-error);
-	}
-
-	.error-close {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 32px;
-		height: 32px;
-		border: none;
-		border-radius: var(--radius-full);
-		background: transparent;
-		color: var(--color-error);
-		cursor: pointer;
-		margin-left: auto;
-		flex-shrink: 0;
-	}
-
-	.error-close:hover {
-		background: rgba(211, 47, 47, 0.1);
-	}
+	/* ─── Error banner moved to src/app.css (global) per ITER-5 ─── */
 
 	/* ─── Toast ───────────────────────── */
 	.toast-container {

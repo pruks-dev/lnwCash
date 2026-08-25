@@ -84,7 +84,7 @@ describe('Send (TASK-066 + TASK-091)', () => {
 
 	it('should have a textarea for invoice input', () => {
 		render(Send, {});
-		const textarea = document.querySelector('.invoice-textarea');
+		const textarea = document.querySelector('.paste-textarea');
 		expect(textarea).toBeTruthy();
 	});
 
@@ -96,7 +96,7 @@ describe('Send (TASK-066 + TASK-091)', () => {
 	it('should show scan QR button when onQRScan provided', () => {
 		const onQRScan = vi.fn();
 		render(Send, { onQRScan });
-		expect(screen.getByText(/screen.send.scan_qr/)).toBeTruthy();
+		expect(screen.getByText(/common.scan_qr/)).toBeTruthy();
 	});
 
 	// ════════════════════════════════════════════════════

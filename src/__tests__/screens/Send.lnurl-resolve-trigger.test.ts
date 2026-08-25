@@ -122,7 +122,7 @@ describe('Send LNURL resolve trigger (TASK-290)', () => {
 
 	it('typing user@domain char-by-char does NOT resolve (no fetch, no premature error)', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		// simulate typing the address one character at a time
 		const chars = ['u', 'us', 'use', 'user', 'user@', 'user@c', 'user@co', 'user@coinos.io'];
@@ -135,12 +135,12 @@ describe('Send LNURL resolve trigger (TASK-290)', () => {
 		expect(screen.queryByText('screen.send.lnaddr.resolving')).toBeNull();
 		expect(screen.queryByText('screen.send.lnaddr.error_resolve')).toBeNull();
 		// textarea still present for continued typing
-		expect(document.querySelector('.invoice-textarea')).toBeTruthy();
+		expect(document.querySelector('.paste-textarea')).toBeTruthy();
 	});
 
 	it('typing a complete address does NOT resolve; Enter resolves', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.input(textarea, { target: { value: 'PrukS@coinos.io' } });
 		// typing only → no resolve yet
@@ -155,7 +155,7 @@ describe('Send LNURL resolve trigger (TASK-290)', () => {
 
 	it('paste user@domain.com auto-resolves immediately', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.paste(textarea, {
 			clipboardData: { getData: () => 'PrukS@coinos.io' }
@@ -169,7 +169,7 @@ describe('Send LNURL resolve trigger (TASK-290)', () => {
 
 	it('paste a lnurl bech32 auto-resolves immediately', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		// valid lnurl bech32 (lnurl1...) — resolveLnurl path
 		await fireEvent.paste(textarea, {
@@ -188,7 +188,7 @@ describe('Send LNURL resolve trigger (TASK-290)', () => {
 	it('resolve error → textarea returns for editing + error message shown + back/reset works', async () => {
 		fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.input(textarea, { target: { value: 'user@bad.invalid' } });
 		await fireEvent.keyDown(textarea, { key: 'Enter' });
@@ -196,19 +196,19 @@ describe('Send LNURL resolve trigger (TASK-290)', () => {
 		// error surfaced
 		expect(await screen.findByText('screen.send.lnaddr.error_resolve')).toBeTruthy();
 		// textarea returns so the user can fix the address
-		expect(document.querySelector('.invoice-textarea')).toBeTruthy();
+		expect(document.querySelector('.paste-textarea')).toBeTruthy();
 
 		// dismiss/reset returns to idle editing (textarea still present)
 		const dismiss = screen.getByRole('button', { name: 'Dismiss' });
 		await fireEvent.click(dismiss);
 		expect(screen.queryByText('screen.send.lnaddr.error_resolve')).toBeNull();
-		expect(document.querySelector('.invoice-textarea')).toBeTruthy();
+		expect(document.querySelector('.paste-textarea')).toBeTruthy();
 	});
 
 	it('editing/typing again clears lnurlError', async () => {
 		fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.input(textarea, { target: { value: 'user@bad.invalid' } });
 		await fireEvent.keyDown(textarea, { key: 'Enter' });
@@ -216,10 +216,10 @@ describe('Send LNURL resolve trigger (TASK-290)', () => {
 
 		// edit the address → error cleared, textarea remains.
 		// (re-query: the error state re-renders the textarea node)
-		const textareaAfterError = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textareaAfterError = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 		await fireEvent.input(textareaAfterError, { target: { value: 'user@bad.invalidX' } });
 		await waitFor(() => expect(screen.queryByText('screen.send.lnaddr.error_resolve')).toBeNull());
-		expect(document.querySelector('.invoice-textarea')).toBeTruthy();
+		expect(document.querySelector('.paste-textarea')).toBeTruthy();
 		expect(fetchMock).toHaveBeenCalledTimes(1); // no auto re-resolve on typing
 	});
 });

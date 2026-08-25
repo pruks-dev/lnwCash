@@ -88,7 +88,7 @@ describe('Send bolt11 regression (TASK-280)', () => {
 	it('lnbc invoice → bolt11 preview (real decode), NO lnurl resolve, NO fetch', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
 
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 		await fireEvent.input(textarea, { target: { value: BOLT11_2500U } });
 
 		// bolt11 path taken: "check fee" action renders once the invoice is valid
@@ -103,7 +103,7 @@ describe('Send bolt11 regression (TASK-280)', () => {
 	it('lntb-prefixed input → routed to bolt11 path (not lnurl)', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
 
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 		await fireEvent.input(textarea, { target: { value: 'lntb1pvjluezpp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdq' } });
 
 		// bolt11 path attempted → invalid-invoice error (not a lnurl resolve)
@@ -116,7 +116,7 @@ describe('Send bolt11 regression (TASK-280)', () => {
 	it('lnbcrt-prefixed input → routed to bolt11 path (not lnurl)', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
 
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 		await fireEvent.input(textarea, { target: { value: 'lnbcrt1pvjluezpp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdq' } });
 
 		expect(await screen.findByText('screen.send.error_invalid_invoice')).toBeTruthy();

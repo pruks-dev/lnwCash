@@ -121,7 +121,7 @@ describe('Send LNURL integration (TASK-280)', () => {
 	it('address → resolve → description/domain → amount → invoice → meltFlow(mintUrl, pr, amount)', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
 
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 		// TASK-290: paste is the resolve trigger (typing no longer auto-resolves)
 		await fireEvent.paste(textarea, { clipboardData: { getData: () => 'PrukS@coinos.io' } });
 

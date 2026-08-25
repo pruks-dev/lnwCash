@@ -250,7 +250,7 @@ describe('Send — prefix strip (TASK-FIX-iter5)', () => {
 
 	it('strips lightning: prefix from pasted bolt11 (textarea shows canonical form)', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.paste(textarea, {
 			clipboardData: { getData: () => `lightning:${VALID_BOLT11}` }
@@ -265,7 +265,7 @@ describe('Send — prefix strip (TASK-FIX-iter5)', () => {
 
 	it('strips bitcoin: prefix from pasted bolt11', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.paste(textarea, {
 			clipboardData: { getData: () => `bitcoin:${VALID_BOLT11}` }
@@ -277,7 +277,7 @@ describe('Send — prefix strip (TASK-FIX-iter5)', () => {
 
 	it('strips lightning: prefix from pasted lnurl bech32 (resolves as lnurl)', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		const LNURL_BECH32 =
 			'LNURL1DP68GURN8GHJ7UM9WFMXJCM99E3K7MF0V9CXJ0M385EKVCENXC6R2C35XVUKXEFCV5MKVV34X5EKZD3EV56NYD3HXQURZEPEXEJXXEPNXSCRVWFNV9NXZCN9XQ6XYEFHVGCXXCMYXYMNSERXFQ5FNS';
@@ -292,7 +292,7 @@ describe('Send — prefix strip (TASK-FIX-iter5)', () => {
 
 	it('strips lightning: prefix from pasted lightning address (resolves as LA)', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.paste(textarea, {
 			clipboardData: { getData: () => 'lightning:PrukS@coinos.io' }
@@ -304,7 +304,7 @@ describe('Send — prefix strip (TASK-FIX-iter5)', () => {
 
 	it('paste lightning:lnbc1... into textarea → resolves as bolt11 (canonical form)', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.paste(textarea, {
 			clipboardData: { getData: () => `lightning:${VALID_BOLT11}` }
@@ -316,7 +316,7 @@ describe('Send — prefix strip (TASK-FIX-iter5)', () => {
 
 	it('handleInvoiceKeydown (Enter) strips prefix before classify', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.input(textarea, { target: { value: 'lightning:PrukS@coinos.io' } });
 		await fireEvent.keyDown(textarea, { key: 'Enter' });
@@ -327,7 +327,7 @@ describe('Send — prefix strip (TASK-FIX-iter5)', () => {
 
 	it('handleSendClick (Send button) strips prefix before classify', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.input(textarea, { target: { value: 'lightning:PrukS@coinos.io' } });
 
@@ -350,7 +350,7 @@ describe('Send — prefix strip (TASK-FIX-iter5)', () => {
 
 	it('bare uppercase bolt11 (LNBC1...) → detects as bolt11 + auto-validates', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.paste(textarea, {
 			clipboardData: { getData: () => UPPERCASE_BOLT11 }
@@ -364,7 +364,7 @@ describe('Send — prefix strip (TASK-FIX-iter5)', () => {
 
 	it('prefixed uppercase bolt11 (lightning:LNBC1...) → strips prefix + detects as bolt11', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.paste(textarea, {
 			clipboardData: { getData: () => `lightning:${UPPERCASE_BOLT11}` }
@@ -377,7 +377,7 @@ describe('Send — prefix strip (TASK-FIX-iter5)', () => {
 
 	it('all-uppercase prefixed bolt11 (LIGHTNING:LNBC1...) → case-insensitive strip + detects as bolt11', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.paste(textarea, {
 			clipboardData: { getData: () => `LIGHTNING:${UPPERCASE_BOLT11}` }
@@ -390,7 +390,7 @@ describe('Send — prefix strip (TASK-FIX-iter5)', () => {
 
 	it('bare uppercase lnurl (LNURL1...) → detects as lnurl + resolves', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.paste(textarea, {
 			clipboardData: { getData: () => UPPERCASE_LNURL }
@@ -403,7 +403,7 @@ describe('Send — prefix strip (TASK-FIX-iter5)', () => {
 
 	it('prefixed uppercase lnurl (lightning:LNURL1...) → strips prefix + detects as lnurl + resolves', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.paste(textarea, {
 			clipboardData: { getData: () => `lightning:${UPPERCASE_LNURL}` }

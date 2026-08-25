@@ -219,6 +219,7 @@
 	"screen.setup.pwa_nudge_android": "Android: แตะเมนู ⋮ → ติดตั้งแอป",
 	"screen.setup.pwa_nudge_desktop": "Desktop: คลิกไอคอนติดตั้งในแถบที่อยู่",
 	"common.next": "ถัดไป",
+	"common.scan_qr": "สแกน QR",
 	"screen.pay.title": "จ่ายเงิน",
 	"screen.pay.enter_invoice": "ป้อน invoice หรือจำนวนเงิน",
 	"screen.pay.scan_qr": "สแกน QR",

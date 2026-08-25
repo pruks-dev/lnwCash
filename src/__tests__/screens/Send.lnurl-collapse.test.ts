@@ -122,18 +122,18 @@ describe('Send LNURL UI collapse (TASK-287)', () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
 
 		// idle: textarea + paste are present
-		expect(document.querySelector('.invoice-textarea')).toBeTruthy();
+		expect(document.querySelector('.paste-textarea')).toBeTruthy();
 		expect(screen.getByText('common.paste')).toBeTruthy();
 
 		// trigger auto-resolve (TASK-290: paste is the resolve trigger)
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 		await fireEvent.paste(textarea, { clipboardData: { getData: () => 'PrukS@coinos.io' } });
 
 		// resolution completed → LNURL card visible
 		expect(await screen.findByText('screen.send.lnaddr.pay_to PrukS@coinos.io')).toBeTruthy();
 
 		// textarea + paste/QR hidden while LNURL flow active
-		expect(document.querySelector('.invoice-textarea')).toBeNull();
+		expect(document.querySelector('.paste-textarea')).toBeNull();
 		expect(screen.queryByText('common.paste')).toBeNull();
 
 		// back button present (ready state, not resolving)
@@ -142,7 +142,7 @@ describe('Send LNURL UI collapse (TASK-287)', () => {
 
 		// press back → reset → textarea reappears, LNURL card gone
 		await fireEvent.click(back);
-		expect(document.querySelector('.invoice-textarea')).toBeTruthy();
+		expect(document.querySelector('.paste-textarea')).toBeTruthy();
 		expect(screen.queryByText('screen.send.lnaddr.pay_to PrukS@coinos.io')).toBeNull();
 		expect(document.querySelector('[data-flow="send-lnurl"]')).toBeNull();
 		expect(screen.queryByRole('button', { name: 'screen.send.lnaddr.back' })).toBeNull();
@@ -155,12 +155,12 @@ describe('Send LNURL UI collapse (TASK-287)', () => {
 
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
 
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 		await fireEvent.paste(textarea, { clipboardData: { getData: () => 'PrukS@coinos.io' } });
 
 		// resolving state: spinner shown, textarea hidden, back button NOT shown
 		expect(await screen.findByText('screen.send.lnaddr.resolving')).toBeTruthy();
-		expect(document.querySelector('.invoice-textarea')).toBeNull();
+		expect(document.querySelector('.paste-textarea')).toBeNull();
 		expect(screen.queryByRole('button', { name: 'screen.send.lnaddr.back' })).toBeNull();
 
 		// finish resolution → back button appears
@@ -172,13 +172,13 @@ describe('Send LNURL UI collapse (TASK-287)', () => {
 	it('bolt11 (lnbc) input keeps textarea visible (idle path unaffected)', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
 
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 		await fireEvent.input(textarea, {
 			target: { value: 'lnbc2500u1pvjluezpp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdq5xysxxatsyp3k7enxv4jsxqzpuaztrnwngzn3kdzw5hydlzf03qdgm2hdq27cqv3agm2awhz5se903vruatfhq77w3ls4evs3ch9zw97j25emudupq63nyw24cg27h2rspfj9srp' }
 		});
 
 		// bolt11 path: textarea still present, no LNURL back button
-		await waitFor(() => expect(document.querySelector('.invoice-textarea')).toBeTruthy());
+		await waitFor(() => expect(document.querySelector('.paste-textarea')).toBeTruthy());
 		expect(document.querySelector('[data-flow="send-lnurl"]')).toBeNull();
 		expect(screen.queryByRole('button', { name: 'screen.send.lnaddr.back' })).toBeNull();
 	});

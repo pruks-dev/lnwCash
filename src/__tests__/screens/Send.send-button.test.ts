@@ -155,7 +155,7 @@ describe('Send unified button (TASK-297)', () => {
 
 	it('typing a lightning address → Send button shown; click resolves', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.input(textarea, { target: { value: 'PrukS@coinos.io' } });
 
@@ -175,7 +175,7 @@ describe('Send unified button (TASK-297)', () => {
 	// outcome as the bare form. Regression for the prefix-strip fix.
 	it('typing a lightning: prefixed lightning address → Send button shown; click resolves (prefix stripped)', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.input(textarea, { target: { value: 'lightning:alice@lnwallet.example.com' } });
 
@@ -192,7 +192,7 @@ describe('Send unified button (TASK-297)', () => {
 
 	it('typing a lnurl bech32 → Send button shown; click resolves', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.input(textarea, { target: { value: LNURL_BECH32 } });
 
@@ -208,7 +208,7 @@ describe('Send unified button (TASK-297)', () => {
 	it('bolt11 (invalid) → Send button shown; click re-validates', async () => {
 		mockDecodeBolt11.mockReturnValue({ code: 'invalid_bech32' });
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.input(textarea, { target: { value: 'lnbcinvalid' } });
 
@@ -227,7 +227,7 @@ describe('Send unified button (TASK-297)', () => {
 
 	it('valid bolt11 → auto-validates + preview; Send button NOT shown', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.input(textarea, { target: { value: VALID_BOLT11 } });
 
@@ -242,7 +242,7 @@ describe('Send unified button (TASK-297)', () => {
 
 	it('paste address → auto-resolve; Send button hidden after resolve (before it was shown)', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		// Send button visible before any interaction
 		expect(screen.getByRole('button', { name: 'screen.send.lnaddr.send_button' })).toBeTruthy();
@@ -262,7 +262,7 @@ describe('Send unified button (TASK-297)', () => {
 
 	it('resolve success (LNURL card + numpad) → Send button NOT shown', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.input(textarea, { target: { value: 'PrukS@coinos.io' } });
 		await fireEvent.click(screen.getByRole('button', { name: 'screen.send.lnaddr.send_button' }));
@@ -276,7 +276,7 @@ describe('Send unified button (TASK-297)', () => {
 
 	it('Enter keydown still resolves (kept)', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.input(textarea, { target: { value: 'PrukS@coinos.io' } });
 		await fireEvent.keyDown(textarea, { key: 'Enter' });
@@ -287,7 +287,7 @@ describe('Send unified button (TASK-297)', () => {
 
 	it('unknown input → Send button shown; click is a no-op (focuses textarea)', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
-		const textarea = document.querySelector('.invoice-textarea') as HTMLTextAreaElement;
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.input(textarea, { target: { value: 'not an address' } });
 

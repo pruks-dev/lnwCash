@@ -17,3 +17,34 @@ body {
 #app {
 	min-height: 100dvh;
 }
+
+/* ITER-5: Global error banner + close button — was duplicated identically in
+   Send.svelte and Receive.svelte. Now defined once here. */
+.error-banner {
+	display: flex;
+	align-items: center;
+	gap: var(--space-sm);
+	padding: var(--space-sm) var(--space-md);
+	background: var(--color-error-light);
+	border-radius: var(--radius-md);
+	border: 1px solid var(--color-error);
+}
+
+.error-close {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 32px;
+	height: 32px;
+	border: none;
+	border-radius: var(--radius-full);
+	background: transparent;
+	color: var(--color-error);
+	cursor: pointer;
+	margin-left: auto;
+	flex-shrink: 0;
+}
+
+.error-close:hover {
+	background: rgba(211, 47, 47, 0.1);
+}

@@ -219,6 +219,7 @@
 	"screen.setup.pwa_nudge_android": "Android: Tap ⋮ menu → Install app",
 	"screen.setup.pwa_nudge_desktop": "Desktop: Click the install icon in the address bar",
 	"common.next": "Next",
+	"common.scan_qr": "Scan QR",
 	"screen.pay.title": "Pay",
 	"screen.pay.enter_invoice": "Enter invoice or amount",
 	"screen.pay.scan_qr": "Scan QR",
