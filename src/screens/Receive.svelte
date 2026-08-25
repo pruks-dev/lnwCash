@@ -774,7 +774,7 @@
 									onclick={onQRScan}
 									disabled={cashuState === 'validating'}
 								>
-									{#snippet children()}<Iconly name="Scan" size={14} /> {$_('common.scan_qr')}{/snippet}
+									{#snippet children()}<Iconly name="Scan" size={12} /><span>{$_('common.scan_qr')}</span>{/snippet}
 								</Button>
 							{/if}
 						</div>
