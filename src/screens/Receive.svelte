@@ -1245,8 +1245,8 @@
 	.paste-input-section {
 		display: flex;
 		flex-direction: column;
-		/* ITER-5: tighter vertical gap 4px (Commander feedback ed130f6). */
-		gap: var(--space-xs);
+		/* ITER-5: tighter vertical gap 2px (Commander feedback). */
+		gap: 2px;
 	}
 
 	.paste-textarea {
