@@ -407,7 +407,7 @@
 	.qrscan-overlay {
 		position: fixed;
 		inset: 0;
-		z-index: 200;
+		z-index: var(--z-modal-backdrop);
 		background: #000;
 		display: flex;
 		flex-direction: column;
