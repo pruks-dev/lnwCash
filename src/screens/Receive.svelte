@@ -752,9 +752,9 @@
 							class="paste-textarea"
 							value={cashuTokenInput}
 							oninput={handleCashuInput}
-							placeholder={$_('screen.receive.token_placeholder')}
-							rows={3}
-							disabled={cashuState === 'validating'}
+						placeholder={$_('screen.receive.token_placeholder')}
+						rows={5}
+						disabled={cashuState === 'validating'}
 							aria-label={$_('screen.receive.paste_token')}
 						></textarea>
 						<div class="paste-input-actions">
@@ -1245,7 +1245,8 @@
 	.paste-input-section {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-sm);
+		/* ITER-5: tighter vertical gap 4px (Commander feedback ed130f6). */
+		gap: var(--space-xs);
 	}
 
 	.paste-textarea {

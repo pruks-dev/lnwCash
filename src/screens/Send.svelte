@@ -959,9 +959,9 @@
 								oninput={handleInvoiceInput}
 								onpaste={handleInvoicePaste}
 								onkeydown={handleInvoiceKeydown}
-								placeholder={$_('screen.send.invoice_placeholder')}
-								rows={3}
-								disabled={lightningState === 'fee-calculating'}
+							placeholder={$_('screen.send.invoice_placeholder')}
+							rows={5}
+							disabled={lightningState === 'fee-calculating'}
 								aria-label={$_('screen.send.enter_invoice')}
 							></textarea>
 							<!-- ITER-5: reorder input section top→bottom:
@@ -1441,8 +1441,8 @@
 	.paste-input-section {
 		display: flex;
 		flex-direction: column;
-		/* ITER-5: align with Receive — 16px gap (was 8px from TASK-307). */
-		gap: var(--space-sm);
+		/* ITER-5: tighter vertical gap 4px (Commander feedback ed130f6). */
+		gap: var(--space-xs);
 	}
 
 	.paste-textarea {
