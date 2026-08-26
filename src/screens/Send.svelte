@@ -972,7 +972,7 @@
 								</Button>
 								{#if onQRScan}
 									<Button variant="ghost" size="sm" onclick={onQRScan}>
-										{#snippet children()}<Iconly name="Scan" size={12} /><span>{$_('common.scan_qr')}</span>{/snippet}
+										{#snippet children()}<span class="scan-btn-content"><Iconly name="Scan" size={14} /> {$_('common.scan_qr')}</span>{/snippet}
 									</Button>
 								{/if}
 							</div>
@@ -1491,6 +1491,12 @@
 		display: flex;
 		gap: var(--space-sm);
 		justify-content: flex-end;
+	}
+
+	.scan-btn-content {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
 	}
 
 	/* TASK-305 (HOT-FIX): single gap system — parent `gap` removed so spacing
