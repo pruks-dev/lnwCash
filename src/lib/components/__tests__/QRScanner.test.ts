@@ -102,6 +102,8 @@ vi.mock('@agicash/qr-scanner', () => {
 		return instance;
 	});
 
+	QrScannerMock.configureWasm = vi.fn();
+
 	return {
 		default: QrScannerMock,
 		CameraPermissionError,
