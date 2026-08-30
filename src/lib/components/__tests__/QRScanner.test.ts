@@ -102,7 +102,8 @@ vi.mock('@agicash/qr-scanner', () => {
 		return instance;
 	});
 
-	QrScannerMock.configureWasm = vi.fn();
+	// TASK-507: cast to any to bypass strict Mock type narrowing (real lib has configureWasm static method)
+	(QrScannerMock as any).configureWasm = vi.fn();
 
 	return {
 		default: QrScannerMock,
