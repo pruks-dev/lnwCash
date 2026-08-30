@@ -338,3 +338,80 @@ describe('Cashu token encode/decode (NUT-00 V4)', () => {
 		});
 	});
 });
+
+// ══════════════════ NUT-00 §3 strict case-sensitivity (TASK-509 v3 audit) ══════════════════
+
+describe('NUT-00 §3 strict case-sensitivity (Commander directive 2026-08-30)', () => {
+	const validProofs: TokenProof[] = [
+		{
+			id: 'deadbeef0001',
+			amount: 64,
+			secret: 'audit-secret',
+			C: '02' + 'c1'.repeat(32)
+		}
+	];
+
+	it('encodeToken() always emits UPPERCASE cashuB prefix', () => {
+		const token = encodeToken(validProofs, 'https://mint.example.com');
+		expect(token.startsWith('cashuB')).toBe(true);
+		expect(token.startsWith('cashub')).toBe(false);
+		expect(token[5]).toBe('B'); // exact 6th char must be uppercase B
+	});
+
+	it('encodeToken(legacy=true) always emits UPPERCASE cashuA prefix', () => {
+		const token = encodeToken(validProofs, 'https://mint.example.com', 'sat', undefined, true);
+		expect(token.startsWith('cashuA')).toBe(true);
+		expect(token.startsWith('cashua')).toBe(false);
+		expect(token[5]).toBe('A');
+	});
+
+	it('decodeToken() REJECTS lowercase "cashub..." (strict NUT-00)', () => {
+		const validToken = encodeToken(validProofs, 'https://mint.example.com');
+		// Construct an invalid lowercase version
+		const invalidToken = 'cashub' + validToken.slice(6);
+
+		expect(() => decodeToken(invalidToken)).toThrow(/Unknown Cashu token prefix/i);
+	});
+
+	it('decodeToken() REJECTS lowercase "cashua..." (strict NUT-00)', () => {
+		const validToken = encodeToken(validProofs, 'https://mint.example.com', 'sat', undefined, true);
+		const invalidToken = 'cashua' + validToken.slice(6);
+
+		expect(() => decodeToken(invalidToken)).toThrow(/Unknown Cashu token prefix/i);
+	});
+
+	it('decodeToken() ACCEPTS uppercase "cashuB..." (happy path)', () => {
+		const token = encodeToken(validProofs, 'https://mint.example.com');
+		expect(() => decodeToken(token)).not.toThrow();
+	});
+
+	it('decodeToken() ACCEPTS uppercase "cashuA..." legacy (happy path)', () => {
+		const token = encodeToken(validProofs, 'https://mint.example.com', 'sat', undefined, true);
+		expect(() => decodeToken(token)).not.toThrow();
+	});
+
+	it('TOKEN_PREFIX_V4 constant is uppercase (invariant check)', () => {
+		expect(TOKEN_PREFIX_V4).toBe('cashuB');
+		expect(TOKEN_PREFIX_V4).not.toBe('cashub');
+		expect(TOKEN_PREFIX_V4[5]).toBe('B');
+	});
+
+	it('TOKEN_PREFIX constant (legacy V3) is uppercase (invariant check)', () => {
+		expect(TOKEN_PREFIX).toBe('cashuA');
+		expect(TOKEN_PREFIX).not.toBe('cashua');
+		expect(TOKEN_PREFIX[5]).toBe('A');
+	});
+
+	it('isCashuToken() detects uppercase cashuB', () => {
+		const token = encodeToken(validProofs, 'https://mint.example.com');
+		expect(isCashuToken(token)).toBe(true);
+	});
+
+	it('decodeToken round-trip preserves uppercase prefix (sanity)', () => {
+		const original = encodeToken(validProofs, 'https://mint.example.com');
+		// Cannot re-encode exact bytes (proof IDs may differ) — just verify prefix
+		expect(original.startsWith('cashuB')).toBe(true);
+		const decoded = decodeToken(original);
+		expect(decoded.mint).toBe('https://mint.example.com');
+	});
+});
