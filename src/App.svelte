@@ -265,13 +265,27 @@
 		// any downstream handling so the store, Send.svelte, and Receive.svelte
 		// all see the canonical form. Routing uses the same canonical string.
 		const stripped = result.replace(/^(lightning:|bitcoin:)/i, '');
-		// Lightning Address (user@domain) is case-sensitive (email-style).
-		// bolt11/lnurl bech32 is case-insensitive — lowercase for store
-		// consistency so downstream detectInputType / decodeBolt11 / isLnurlBech32
-		// all see canonical lowercase. Detection: if stripped contains '@'
-		// it's likely LA; preserve case for resolution.
+		// TASK-509-FIX-v3: case-sensitive token prefixes must be preserved.
+		// - cashuA/cashuB (NUT-00 V3/V4) are CASE-SENSITIVE per spec and per
+		//   cashu-ts `handleTokens()` which only accepts uppercase 'A'/'B'.
+		//   Lowercasing corrupts the prefix and the validator at
+		//   src/lib/cashu/token.ts:77 (`token.startsWith(TOKEN_PREFIX_V4)`)
+		//   rejects the token with "Unknown Cashu token prefix".
+		// - bolt11/lnurl bech32 are CASE-INSENSITIVE — lowercase for store
+		//   consistency so detectInputType/decodeBolt11/isLnurlBech32 all see
+		//   canonical lowercase.
+		// - Lightning Address (user@domain.tld) is case-sensitive (email-style),
+		//   so preserve case.
+		//
+		// Decision rule: only lowercase if the value starts with `ln` (bech32)
+		// OR is a Lightning Address. cashu* is preserved as-is.
 		const looksLikeLightningAddress = stripped.includes('@');
-		scannedQRValue.set(looksLikeLightningAddress ? stripped : stripped.toLowerCase());
+		const isBech32Lightning = /^ln(bc|tb|bcrt)/i.test(stripped);
+		const isCashuToken = /^cashu/i.test(stripped);
+		const canonical = (looksLikeLightningAddress || isBech32Lightning) && !isCashuToken
+			? stripped.toLowerCase()
+			: stripped;
+		scannedQRValue.set(canonical);
 		// Detect type from lowercased result (handles lightning: prefix)
 		const lowered = stripped.toLowerCase();
 		if (lowered.startsWith('lnbc') || lowered.startsWith('lntb') || lowered.startsWith('lnurl')) {
