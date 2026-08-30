@@ -164,11 +164,25 @@ class CborReader {
 		}
 	}
 
+	readKey(): string {
+		const { major, value: len } = this.readHeader();
+		if (major === MAJOR_TEXT) return this.readText();
+		if (major === MAJOR_BYTES) {
+			const bytes = this.readBytes(len);
+			try {
+				return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+			} catch {
+				return Array.from(bytes).map(b => String.fromCharCode(b)).join('');
+			}
+		}
+		throw new Error(`Expected text or bytes key, got major ${major >> 5}`);
+	}
+
 	readTextKeyedMap<T>(handlers: Record<string, (r: CborReader) => void>, target: T): T {
 		const { major, value: mapLen } = this.readHeader();
 		if (major !== MAJOR_MAP) throw new Error(`Expected map, got major ${major >> 5}`);
 		for (let i = 0; i < mapLen; i++) {
-			const key = this.readText();
+			const key = this.readKey();
 			if (handlers[key]) {
 				handlers[key](this);
 			} else {
