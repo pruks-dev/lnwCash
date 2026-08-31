@@ -58,7 +58,9 @@ afterEach(() => {
 // file uses the real store, so we initialize the locale scoped
 // to this file (Vera recommendation: scoped > global).
 beforeEach(() => {
-	init({ initialLocale: 'en' });
+	// fallbackLocale is required by svelte-i18n's ConfigureOptionsInit type and
+	// mirrors the production init shape in src/lib/i18n.ts (fallbackLocale: 'en').
+	init({ fallbackLocale: 'en', initialLocale: 'en' });
 });
 
 const SAMPLE_TOKEN = 'cashuAeyJ0b2tlbiI6W3sibWFudCI6Imh0dHBzOi8vZm9vLmJhciJ9XX0';
