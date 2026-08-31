@@ -21,10 +21,6 @@
 	import { meltFlow, type MeltResult } from '$lib/wallet/melt';
 	// TASK-218: wrap melt in a transaction guard so auto-lock defers mid-melt
 	import { withTransactionGuard } from '$lib/wallet/autolock';
-	// TASK-FIX-320: pure helper for "Fee: X sats (reserve: Y sats)" string
-	// when NUT-08 mint performed overpaid return. Mirrors i18n key
-	// `send.success.fee_with_reserve`. Unit-tested in src/__tests__/.
-	import { formatFeeWithReserve } from '$lib/formatFeeWithReserve';
 	import { sendTokens, type SendResult } from '$lib/wallet/transfer';
 	import { InsufficientFundsError, WalletLockedError } from '$lib/wallet/errors';
 	import { requestMeltQuote, CashuError } from '$lib/cashu/client';
