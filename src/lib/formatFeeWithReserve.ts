@@ -6,6 +6,7 @@ export interface FeeResult {
   paidFee: number;
   actualFee: number | null;
   feeReserve: number | null;
+  locale: string;
 }
 
 /**
@@ -39,21 +40,39 @@ export function shouldShowRow2(result: FeeResult): boolean {
 
 /**
  * Formats fee with reserve information for Row 3 display
- * 
- * @param result - The fee result object
- * @returns string - Formatted fee string
+ *
+ * TASK-FIX-320 authoritative contract (per MANDATE-041 F-002):
+ * - Returns `null` (not empty string) when row should not be shown
+ *   (Case 4: no fee, OR Case 1: not overpaid)
+ * - Returns formatted string with 'sats' word + locale-based labels
+ *   only when actualFee < feeReserve (overpaid / NUT-08)
+ *
+ * @param result - The fee result object (paidFee, actualFee, feeReserve, locale)
+ * @returns string | null - Formatted fee_with_reserve string, or null when not overpaid
  */
-export function formatFeeWithReserve(result: FeeResult): string {
-  // Case 4: No fee
+export function formatFeeWithReserve(result: FeeResult): string | null {
+  // Case 4: No fee → null (NOT empty string) — caller decides display
   if (result.feeReserve === 0 && result.actualFee === 0) {
-    return '';
+    return null;
   }
 
-  // Case 3: Legacy - only paidFee available
+  // Case 3: Legacy - only paidFee available, no overpaid info → null
+  // (caller should use `Fee: X` separately if needed)
   if (result.actualFee === null || result.feeReserve === null) {
-    return `Fee: ${result.paidFee}`;
+    return null;
   }
 
-  // Normal case: Show actual fee with reserve
-  return `Fee: ${result.actualFee} (reserve: ${result.feeReserve})`;
+  // Case 1: Not overpaid (actualFee >= feeReserve) → null
+  // Only overpaid (actualFee < feeReserve) shows fee_with_reserve row.
+  if (result.actualFee >= result.feeReserve) {
+    return null;
+  }
+
+  // Overpaid case: locale-based word map + 'sats' suffix
+  const words =
+    result.locale === 'th'
+      ? { fee: 'ค่าธรรมเนียม', reserve: 'สำรอง' }
+      : { fee: 'Fee', reserve: 'reserve' };
+
+  return `${words.fee}: ${result.actualFee} sats (${words.reserve}: ${result.feeReserve} sats)`;
 }

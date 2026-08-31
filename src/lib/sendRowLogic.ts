@@ -59,7 +59,8 @@ export function getFeeRowDisplay(
 	const overpaid = formatFeeWithReserve({
 		actualFee: actualFee ?? null,
 		feeReserve: feeReserve ?? null,
-		paidFee
+		paidFee,
+		locale
 	});
 	if (overpaid !== null) {
 		// Guard: formatFeeWithReserve returned non-null only when both are non-null
