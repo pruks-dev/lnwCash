@@ -56,7 +56,11 @@ export function getFeeRowDisplay(
 	}
 
 	// (a) Overpaid (NUT-08): actualFee < feeReserve → use fee_with_reserve format
-	const overpaid = formatFeeWithReserve(actualFee, feeReserve, locale);
+	const overpaid = formatFeeWithReserve({
+		actualFee: actualFee ?? null,
+		feeReserve: feeReserve ?? null,
+		paidFee
+	});
 	if (overpaid !== null) {
 		// Guard: formatFeeWithReserve returned non-null only when both are non-null
 		// and actualFee < feeReserve. Narrow types here.
