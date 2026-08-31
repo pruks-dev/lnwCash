@@ -168,7 +168,7 @@ import { setActiveSeed, clearActiveSeed } from '../nut13';
 import { mnemonicToSeed } from '../keys';
 import { setCounterK, clearAllCounters, STORAGE_KEY } from '../counterK';
 import { completeMelt } from '../melt';
-import type { TokenProof, SelectedProofInfo } from '../../../types';
+import type { TokenProof, SelectedProofInfo } from '../../types';
 
 const TEST_PIN = '123456';
 const TEST_NAME = 'Test Wallet';
