@@ -277,12 +277,14 @@
 		// - Lightning Address (user@domain.tld) is case-sensitive (email-style),
 		//   so preserve case.
 		//
-		// Decision rule: only lowercase if the value starts with `ln` (bech32)
-		// OR is a Lightning Address. cashu* is preserved as-is.
-		const looksLikeLightningAddress = stripped.includes('@');
-		const isBech32Lightning = /^ln(bc|tb|bcrt)/i.test(stripped);
+		// Decision rule: only lowercase if the value starts with `ln` (bech32).
+		// Regex mirrors detectInputType in Send.svelte: lnbc/lntb/lnbcrt/lnsb
+		// (bolt11) + lnurl (bech32) — all lowercased per BIP-173 case-
+		// insensitivity. Lightning Address (user@domain.tld) and cashu* are
+		// preserved as-is.
+		const isBech32Lightning = /^ln(bc|tb|bcrt|sb|url)/i.test(stripped);
 		const isCashuToken = /^cashu/i.test(stripped);
-		const canonical = (looksLikeLightningAddress || isBech32Lightning) && !isCashuToken
+		const canonical = isBech32Lightning && !isCashuToken
 			? stripped.toLowerCase()
 			: stripped;
 		scannedQRValue.set(canonical);
