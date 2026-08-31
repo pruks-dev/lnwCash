@@ -1,13 +1,14 @@
 /**
  * TASK-313 (CRITICAL): counter_k advance must be driven by the ACTUAL signed
- * count from the mint response, NOT the derived count from
- * `decomposeAmount(changeAmount)`.
+ * count from the mint response, NOT the derived count from the wallet's
+ * output derivation.
  *
  * Money-loss bug scenario (regression):
- *   1. Wallet derives N change outputs from changeAmount (e.g. N=5).
- *   2. Mint signs FEWER outputs (M < N) — possible with NUT-08 where the mint
- *      picks its own denomination breakdown, or if it deducts an internal fee
- *      from the change.
+ *   1. Wallet derives N change outputs (e.g. N=5).
+ *   2. Mint signs FEWER outputs (M < N) — with the NUT-08 blank-output model
+ *      (TASK-MELT-NUT08-BLANKS) this is the NORMAL case: the mint signs its
+ *      own denomination split of the overpaid amount, which may need fewer
+ *      outputs than the blanks sent, or none at all if it keeps the fee.
  *   3. OLD (buggy) code: incrementCounterK(changeKeysetId, N) — counter advances
  *      PAST what the mint actually consumed.
  *   4. Next melt: counter_k still points at the SAME B_ the mint already
@@ -19,11 +20,13 @@
  * mint cannot create outputs we did not ask for; abort to prevent counter_k
  * desync from widening the 11003 loop).
  *
- * 5 scenarios:
- *   (a) Derive 3 outputs, mint signs 2 → counter advances by 2
- *   (b) Derive 5 outputs, mint signs 5 → counter advances by 5
- *   (c) Derive 3 outputs, mint signs 0 → counter advances by 0
- *   (d) Derive 5 outputs, mint signs 6 (anomaly) → throws, counter UNCHANGED
+ * 5 scenarios (scenarios updated for the blank-output model — the mint signs
+ * its own split, so "mint signs X" amounts are the mint's own choice, not the
+ * wallet's derivation; the counter assertion is unchanged):
+ *   (a) 3 blanks sent, mint signs 2 → counter advances by 2
+ *   (b) 7 blanks sent, mint signs 5 → counter advances by 5
+ *   (c) 3 blanks sent, mint signs 0 → counter advances by 0
+ *   (d) 3 blanks sent, mint signs 6 (anomaly) → throws, counter UNCHANGED
  *   (e) State machine: 3 sequential melts with varying signed counts — final
  *       counter = initial + sum(signed) (NOT sum(derived))
  */
@@ -213,18 +216,16 @@ describe('TASK-313: counter_k per-signed advance (CRITICAL — money-loss bug)',
 	});
 
 	// ────────────────────────────────────────────────────────────
-	// (a) Derive 3 outputs, mint signs 2 → counter advances by 2
+	// (a) 3 blanks sent... mint signs 2 → counter advances by 2
+	//     Setup: spentTotal = 200, amount = 100, feeReserve = 0 (NUT-08)
+	//     changeAmount = 100 → blanks = ceil(log2(100)) = 7 (amount=0 each)
+	//     Mint signs its own 2-output split (keeps the rest as fee).
 	// ────────────────────────────────────────────────────────────
-	it('a) derive 3 outputs, mint signs 2 → counter advances by 2', async () => {
-		// Setup: spentTotal = 200, amount = 100, feeReserve = 0 (NUT-08)
-		//   changeAmount = max(0, 200 - 100 - 0) = 100
-		//   decompose(100) = [64, 32, 4] (3 outputs, sum 100)
-		// Mint anomaly: only signs 2 of the 3 derived outputs (e.g. mint
-		//   keeps the 4-sat "change" as fee).
+	it('a) 7 blanks sent, mint signs 2 → counter advances by 2', async () => {
 		await addProofs([makeProof('a1', 100), makeProof('a2', 100)], MINT_URL, KEYSET_ID);
 		setCounterK(KEYSET_ID, 100); // start counter at 100 for visibility (assertion later)
 
-		setMockMintChange([{ amount: 64 }, { amount: 32 }]); // signs 2 of 3
+		setMockMintChange([{ amount: 64 }, { amount: 32 }]); // mint's own split: 2 sigs
 
 		const inputs: SelectedProofInfo[] = [
 			makeInput(makeProof('a1', 100)),
@@ -234,23 +235,22 @@ describe('TASK-313: counter_k per-signed advance (CRITICAL — money-loss bug)',
 		const result = await completeMelt(MINT_URL, 'melt-quote-xyz', inputs, 'lnbc...', 100, 0);
 
 		expect(result.success).toBe(true);
-		// CRITICAL: counter advances by SIGNED count (2), NOT derived count (3)
+		// CRITICAL: counter advances by SIGNED count (2), NOT blank count (7)
 		expect(getCounterK(KEYSET_ID)).toBe(102); // 100 + 2 signed
 	});
 
 	// ────────────────────────────────────────────────────────────
-	// (b) Derive 5 outputs, mint signs 5 → counter advances by 5
+	// (b) 6 blanks sent, mint signs 5 → counter advances by 5
+	//     Setup: spentTotal = 162, amount = 100, feeReserve = 0
+	//     changeAmount = 62 → blanks = ceil(log2(62)) = 6 (amount=0 each)
 	// ────────────────────────────────────────────────────────────
-	it('b) derive 5 outputs, mint signs 5 → counter advances by 5', async () => {
-		// Setup: spentTotal = 162, amount = 100, feeReserve = 0
-		//   changeAmount = 62
-		//   decompose(62) = [32, 16, 8, 4, 2] (5 outputs, sum 62)
+	it('b) 6 blanks sent, mint signs 5 → counter advances by 5', async () => {
 		await addProofs([makeProof('b1', 162)], MINT_URL, KEYSET_ID);
 		setCounterK(KEYSET_ID, 100);
 
 		setMockMintChange([
 			{ amount: 32 }, { amount: 16 }, { amount: 8 }, { amount: 4 }, { amount: 2 }
-		]); // signs all 5
+		]); // mint's own split: 5 sigs
 
 		const inputs: SelectedProofInfo[] = [
 			makeInput(makeProof('b1', 162))
@@ -259,22 +259,22 @@ describe('TASK-313: counter_k per-signed advance (CRITICAL — money-loss bug)',
 		const result = await completeMelt(MINT_URL, 'melt-quote-xyz', inputs, 'lnbc...', 100, 0);
 
 		expect(result.success).toBe(true);
-		expect(getCounterK(KEYSET_ID)).toBe(105); // 100 + 5 signed (= 5 derived)
+		expect(getCounterK(KEYSET_ID)).toBe(105); // 100 + 5 signed
 	});
 
 	// ────────────────────────────────────────────────────────────
-	// (c) Derive 3 outputs, mint signs 0 → counter advances by 0
+	// (c) 7 blanks sent, mint signs 0 → counter advances by 0
+	//     Setup: spentTotal = 200, amount = 100, feeReserve = 0
+	//     changeAmount = 100 → blanks = ceil(log2(100)) = 7 (amount=0 each)
+	//     Mint signs nothing (e.g. consumed everything as fee).
+	//     Counter must NOT advance — next melt re-derives the same B_'s
+	//     (which the mint will treat as a fresh request since it never signed).
 	// ────────────────────────────────────────────────────────────
-	it('c) derive 3 outputs, mint signs 0 → counter advances by 0', async () => {
-		// Setup: spentTotal = 200, amount = 100, feeReserve = 0
-		//   changeAmount = 100 → decompose [64, 32, 4] (3 outputs)
-		// Mint anomaly: signs nothing (e.g. mint consumed everything as fee).
-		// Counter must NOT advance — next melt re-derives the same B_'s
-		// (which the mint will treat as a fresh request since it never signed).
+	it('c) 7 blanks sent, mint signs 0 → counter advances by 0', async () => {
 		await addProofs([makeProof('c1', 100), makeProof('c2', 100)], MINT_URL, KEYSET_ID);
 		setCounterK(KEYSET_ID, 100);
 
-		setMockMintChange([]); // signs 0 of 3
+		setMockMintChange([]); // mint signs 0 of 7 blanks
 
 		const inputs: SelectedProofInfo[] = [
 			makeInput(makeProof('c1', 100)),
@@ -288,18 +288,19 @@ describe('TASK-313: counter_k per-signed advance (CRITICAL — money-loss bug)',
 	});
 
 	// ────────────────────────────────────────────────────────────
-	// (d) Derive 5 outputs, mint signs 6 (anomaly) → throws, counter UNCHANGED
+	// (d) 6 blanks sent, mint signs 7 (anomaly) → throws, counter UNCHANGED
+	//     Mint cannot legally sign MORE outputs than we asked for. If it does,
+	//     abort BEFORE corrupting the counter (otherwise the next melt would
+	//     skip even more counters and the 11003 loop would widen).
+	//     Setup: spentTotal = 162, changeAmount = 62 → blanks = 6; mint signs 7.
 	// ────────────────────────────────────────────────────────────
-	it('d) derive 5 outputs, mint signs 6 (anomaly) → throws, counter UNCHANGED', async () => {
-		// Mint cannot legally sign MORE outputs than we asked for. If it does,
-		// abort BEFORE corrupting the counter (otherwise the next melt would
-		// skip even more counters and the 11003 loop would widen).
+	it('d) 6 blanks sent, mint signs 7 (anomaly) → throws, counter UNCHANGED', async () => {
 		await addProofs([makeProof('d1', 162)], MINT_URL, KEYSET_ID);
 		setCounterK(KEYSET_ID, 100);
 
 		setMockMintChange([
 			{ amount: 32 }, { amount: 16 }, { amount: 8 }, { amount: 4 },
-			{ amount: 2 }, { amount: 1 } // 6 sigs > 5 derived = anomaly
+			{ amount: 2 }, { amount: 1 }, { amount: 1 } // 7 sigs > 6 blanks = anomaly
 		]);
 
 		const inputs: SelectedProofInfo[] = [
@@ -330,8 +331,8 @@ describe('TASK-313: counter_k per-signed advance (CRITICAL — money-loss bug)',
 		setCounterK(KEYSET_ID, 100);
 
 		// ── Melt 1 ──
-		// spentTotal = 200, changeAmount = 100, decompose [64, 32, 4] = 3 derived
-		// Mint signs 2 (anomaly). Counter advances by 2 → 102.
+		// spentTotal = 200, changeAmount = 100 → blanks = ceil(log2(100)) = 7
+		// Mint signs 2 (its own split, keeps the rest as fee). Counter → 102.
 		setMockMintChange([{ amount: 64 }, { amount: 32 }]);
 		const melt1Result = await completeMelt(
 			MINT_URL, 'melt-quote-1',
@@ -339,12 +340,12 @@ describe('TASK-313: counter_k per-signed advance (CRITICAL — money-loss bug)',
 			'lnbc1', 100, 0
 		);
 		expect(melt1Result.success).toBe(true);
-		expect(getCounterK(KEYSET_ID)).toBe(102); // 100 + 2 signed (NOT + 3 derived)
+		expect(getCounterK(KEYSET_ID)).toBe(102); // 100 + 2 signed (NOT + 7 blanks)
 		const counterAfterMelt1 = getCounterK(KEYSET_ID);
 
 		// ── Melt 2 ──
-		// spentTotal = 400, changeAmount = 300, decompose [256, 32, 8, 4] = 4 derived
-		// Mint signs all 4. Counter advances by 4 → 106.
+		// spentTotal = 400, changeAmount = 300 → blanks = ceil(log2(300)) = 9
+		// Mint signs 4 (its own split). Counter advances by 4 → 106.
 		setMockMintChange([
 			{ amount: 256 }, { amount: 32 }, { amount: 8 }, { amount: 4 }
 		]);
@@ -357,12 +358,12 @@ describe('TASK-313: counter_k per-signed advance (CRITICAL — money-loss bug)',
 			'lnbc2', 100, 0
 		);
 		expect(melt2Result.success).toBe(true);
-		expect(getCounterK(KEYSET_ID)).toBe(106); // 102 + 4 signed (NOT + 4 derived — same here)
+		expect(getCounterK(KEYSET_ID)).toBe(106); // 102 + 4 signed
 		const counterAfterMelt2 = getCounterK(KEYSET_ID);
 
 		// ── Melt 3 ──
-		// spentTotal = 150, changeAmount = 50, decompose [32, 16, 2] = 3 derived
-		// Mint signs 2 (anomaly). Counter advances by 2 → 108.
+		// spentTotal = 150, changeAmount = 50 → blanks = ceil(log2(50)) = 6
+		// Mint signs 2 (its own split). Counter advances by 2 → 108.
 		setMockMintChange([{ amount: 32 }, { amount: 16 }]);
 		const melt3Result = await completeMelt(
 			MINT_URL, 'melt-quote-3',
@@ -370,19 +371,19 @@ describe('TASK-313: counter_k per-signed advance (CRITICAL — money-loss bug)',
 			'lnbc3', 100, 0
 		);
 		expect(melt3Result.success).toBe(true);
-		expect(getCounterK(KEYSET_ID)).toBe(108); // 106 + 2 signed (NOT + 3 derived)
+		expect(getCounterK(KEYSET_ID)).toBe(108); // 106 + 2 signed
 
 		// Final counter = 100 (initial) + 2 + 4 + 2 (signed) = 108
-		// If buggy (advance by derived): 100 + 3 + 4 + 3 = 110 — would desync.
+		// If buggy (advance by blank count): 100 + 7 + 9 + 6 = 122 — would desync.
 		expect(counterAfterMelt1 + 0).toBe(102); // sanity
 		expect(counterAfterMelt2 + 0).toBe(106); // sanity
 		expect(getCounterK(KEYSET_ID)).toBe(108); // final
 
-		// Critical invariant: signed sum (2+4+2=8) NOT derived sum (3+4+3=10)
+		// Critical invariant: signed sum (2+4+2=8) NOT blanks sum (7+9+6=22)
 		const signedSum = 2 + 4 + 2;
-		const derivedSum = 3 + 4 + 3;
+		const blanksSum = 7 + 9 + 6;
 		expect(signedSum).toBe(8);
-		expect(derivedSum).toBe(10);
+		expect(blanksSum).toBe(22);
 		expect(getCounterK(KEYSET_ID) - 100).toBe(signedSum);
 	});
 });

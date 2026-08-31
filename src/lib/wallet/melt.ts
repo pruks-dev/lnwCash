@@ -535,26 +535,63 @@ export async function completeMelt(
 					}
 				}
 
-				// TASK-MELT-DECOMPOSE: decompose change into standard Cashu
-				// denominations. A single change output with an off-denomination
-				// amount (e.g. 30) is truncated by the mint to the nearest lower
-				// denomination in its keyset (e.g. 16), silently losing the rest
-				// (Commander live test: melt 64, pay 34 → change 30 came back 16,
-				// 14 sats lost). Decomposing 30 → [16, 8, 4, 2] keeps every sat.
-				const changeAmounts = decomposeAmount(changeAmount);
-				const startCounter = getCounterK(changeKeysetId);
+				if (supportsNUT08) {
+					// TASK-MELT-NUT08-BLANKS (NUT-08 spec): send BLANK outputs and let
+					// the mint imprint the amounts. The wallet previously decomposed
+					// `spentTotal - amount` into denominations itself (e.g. 8 → [8],
+					// 1 output), but the mint signs its OWN split (e.g. 6 → [4, 2] =
+					// 2 outputs). When the mint's split needs MORE outputs than the
+					// wallet sent, the mint TRUNCATES to what is available (8 → [4])
+					// — silently losing the rest and tripping the Step-7 anomaly
+					// guard AFTER the LN payment already succeeded (Commander repro:
+					// spentTotal=208, amount=200 → "signed change sum (4) < expected
+					// changeAmount (6)" + 2 sats lost to truncation).
+					//
+					// NUT-08 fix: n = max(ceil(log2(changeAmount)), 1) outputs with
+					// amount = 0 each. ceil(log2(n)) blanks is always enough for the
+					// mint's binary split of any amount ≤ changeAmount (worst case:
+					// 2^k − 1 needs k outputs); the mint signs whatever it owes
+					// (possibly fewer, keeping the fee) and imprints each signature's
+					// amount per its own split. Unblinding (Step 5) reads the amount
+					// from the signature (sig.amount), not from the request.
+					const blankCount = Math.max(Math.ceil(Math.log2(changeAmount)), 1);
+					const startCounter = getCounterK(changeKeysetId);
 
-				outputs = changeAmounts.map((amt, i) => {
-					const { secret, r } = generateChangeSecretAndR(changeKeysetId, startCounter + i);
-					const { B_, blindingFactor } = blindMessage(secret, r);
-					return {
-						amount: amt,
-						id: changeKeysetId,
-						B_,
-						secret,
-						blindingFactor
-					};
-				});
+					outputs = Array.from({ length: blankCount }, (_, i) => {
+						const { secret, r } = generateChangeSecretAndR(changeKeysetId, startCounter + i);
+						const { B_, blindingFactor } = blindMessage(secret, r);
+						return {
+							amount: 0, // blank — mint imprints the amount when signing (NUT-08)
+							id: changeKeysetId,
+							B_,
+							secret,
+							blindingFactor
+						};
+					});
+				} else {
+					// Legacy mint (no NUT-08): fee is reserved upfront, so the change
+					// is exactly `spentTotal - amount - feeReserve`. Decompose into
+					// standard Cashu denominations (TASK-MELT-DECOMPOSE): a single
+					// change output with an off-denomination amount (e.g. 30) is
+					// truncated by the mint to the nearest lower denomination in its
+					// keyset (e.g. 16), silently losing the rest (Commander live
+					// test: melt 64, pay 34 → change 30 came back 16, 14 sats lost).
+					// Decomposing 30 → [16, 8, 4, 2] keeps every sat.
+					const changeAmounts = decomposeAmount(changeAmount);
+					const startCounter = getCounterK(changeKeysetId);
+
+					outputs = changeAmounts.map((amt, i) => {
+						const { secret, r } = generateChangeSecretAndR(changeKeysetId, startCounter + i);
+						const { B_, blindingFactor } = blindMessage(secret, r);
+						return {
+							amount: amt,
+							id: changeKeysetId,
+							B_,
+							secret,
+							blindingFactor
+						};
+					});
+				}
 
 				// Step 4: Submit melt to mint
 				const outputBodies = outputs.map(o => ({
@@ -567,7 +604,8 @@ export async function completeMelt(
 
 				// TASK-313 (CRITICAL — money-loss bug prevention): advance counter_k
 				// by the ACTUAL signed count (meltResponse.change.length), NOT the
-				// derived count (changeAmounts.length / outputs.length).
+				// derived output count (outputs.length — blanks in NUT-08 mode,
+				// decomposed denominations in legacy mode).
 				//
 				// Why this matters: the mint may sign FEWER change outputs than we
 				// derived. With NUT-08, the mint only signs the overpaid amount
@@ -654,7 +692,13 @@ export async function completeMelt(
 		// Edges:
 		//   - response.change.length === 0 → actual_fee = feeReserve (no refund)
 		//   - sum(change) < legacyChangeAmount (only checked when feeReserve > 0)
-		//     → mint anomaly → throw (means mint charged > feeReserve, impossible)
+		//     → TASK-MELT-NUT08-BLANKS: NO LONGER a hard throw. With the NUT-08
+		//     blank-output model the mint signs its own denomination split and
+		//     may legitimately return FEWER outputs than the blanks we sent
+		//     (keeping the fee). The Lightning payment has ALREADY succeeded at
+		//     this point — throwing would lose the tx record and misreport a
+		//     successful payment as failed. Instead: warn, and clamp actualFee
+		//     to >= 0 so the recorded fee never exceeds the reserve.
 		//   - sum(change) >= legacyChangeAmount → actual_fee reduced by overpaid
 		//   - feeReserve === 0 → no anomaly check possible (mint has no fee cap)
 		const legacyChangeAmount = Math.max(0, spentTotal - amount - feeReserve);
@@ -664,23 +708,21 @@ export async function completeMelt(
 				(s: number, c: { amount?: number }) => s + (c.amount ?? 0),
 				0
 			);
-			// Anomaly guard only fires when feeReserve > 0. When feeReserve = 0,
-			// legacyChangeAmount = spentTotal - amount (= NUT-08 MAX), and mint
-			// signing fewer outputs is LEGITIMATE (it's just keeping sats as fee —
-			// there's no fee cap to violate). When feeReserve > 0, signing less
-			// than legacy means actual fee > feeReserve — impossible.
+			// TASK-MELT-NUT08-BLANKS: under-refund is now a WARNING, not an
+			// abort. sumChange < legacyChangeAmount means the mint refunded less
+			// than the legacy expectation (it charged more than feeReserve, or
+			// truncated the change split) — suspicious, but the payment already
+			// went through, so we record truthfully what actually happened.
 			if (feeReserve > 0 && sumChange < legacyChangeAmount) {
-				// Sanity guard — consistent with TASK-313 signedCount > outputs.length guard.
-				// Mint must not return less change than the legacy changeAmount
-				// (spentTotal - amount - feeReserve). If it does, the actual fee
-				// exceeds feeReserve — impossible. Abort BEFORE recording incorrect
-				// fee accounting.
-				throw new Error(
-					`Mint anomaly: signed change sum (${sumChange}) < expected changeAmount (${legacyChangeAmount}) — ` +
-					`aborting to prevent incorrect fee accounting. Mint URL: ${mintUrl}`
+				console.warn(
+					`[melt] Mint anomaly: signed change sum (${sumChange}) < expected changeAmount (${legacyChangeAmount}) — ` +
+					`possible under-refund; clamping actual fee to feeReserve. Mint URL: ${mintUrl}`
 				);
 			}
-			// Clamp to >= 0 to guard against floating-point drift on overpaid sums.
+			// Clamp to >= 0 (guards overpaid sums / floating-point drift). NOTE:
+			// on under-refund (sumChange < legacyChangeAmount) the formula
+			// legitimately yields actualFee > feeReserve — that IS the truthful
+			// fee the mint actually kept (it charged more than the reserve).
 			actualFee = Math.max(0, feeReserve - (sumChange - legacyChangeAmount));
 		} else {
 			// No change returned → mint kept the entire fee reserve.

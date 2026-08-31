@@ -2,19 +2,21 @@
  * TASK-312: MAX change pre-derive (NUT-08).
  *
  * When the mint advertises NUT-08, it returns all overpaid sats as change
- * (min_fee_estimate = 0). The wallet must therefore derive change =
- * MAX(0, spentTotal - amount - 0), decomposed via existing `decomposeAmount`
- * into standard Cashu denominations (binary: 1, 2, 4, 8, 16, ...).
+ * (min_fee_estimate = 0). Per the NUT-08 blank-output model (TASK-MELT-NUT08-BLANKS),
+ * the wallet must therefore send n = max(ceil(log2(spentTotal - amount)), 1)
+ * BLANK outputs (amount = 0 each) and let the mint imprint the amounts per its
+ * own denomination split. ceil(log2(n)) blanks is always enough for the mint's
+ * binary split of any amount ≤ n (worst case 2^k − 1 needs k outputs).
  *
  * When the mint does NOT advertise NUT-08, the wallet must fall back to the
  * legacy fee model (feeReserve reserved upfront): change =
- * spentTotal - amount - feeReserve.
+ * spentTotal - amount - feeReserve, decomposed via existing `decomposeAmount`.
  *
  * 6 scenarios:
  *   (a) NUT-08 mint, 0 overpaid → changeAmount = 0 → no change output
- *   (b) NUT-08 mint, 100 overpaid → changeAmount = 100 → [64,32,4] = 3 outputs
- *   (c) NUT-08 mint, 1000 overpaid → [512,256,128,64,32,8] = 6 outputs
- *   (d) Non-NUT-08 mint, 100 overpaid → changeAmount = 100 - feeReserve (legacy)
+ *   (b) NUT-08 mint, 100 overpaid → 7 blank outputs (amount=0 each)
+ *   (c) NUT-08 mint, 1000 overpaid → 10 blank outputs (amount=0 each)
+ *   (d) Non-NUT-08 mint, 100 overpaid → changeAmount = 100 - feeReserve (legacy decompose)
  *   (e) spentTotal = amount → changeAmount = 0 regardless of NUT-08
  *   (f) hasNUT08 check throws → fallback to legacy feeReserve, melt succeeds
  *
@@ -235,9 +237,11 @@ describe('TASK-312: MAX change pre-derive (NUT-08)', () => {
 		expect(result.change.length).toBe(0);
 	});
 
-	it('b) NUT-08 mint, 100 overpaid → changeAmount = 100 → decompose [64,32,4] = 3 outputs', async () => {
+	it('b) NUT-08 mint, 100 overpaid → 7 blank outputs (amount=0 each, mint imprints)', async () => {
 		// 200 sats input, pay 100, feeReserve 0 → NUT-08: change = 200-100-0 = 100
-		// decompose(100) → [64, 32, 4] (3 outputs, sum 100)
+		// Blank-output model: n = max(ceil(log2(100)), 1) = 7 blanks (amount=0 each)
+		// (ceil(log2(100)) = 7 ≥ the 6 outputs the mint's binary split of 100
+		// needs — the mint imprints its own amounts when signing.)
 		await addProofs([makeProof('b1', 100), makeProof('b2', 100)], MINT_URL, KEYSET_ID);
 		setCounterK(KEYSET_ID, 2); // 2 proofs "already minted"
 
@@ -249,16 +253,17 @@ describe('TASK-312: MAX change pre-derive (NUT-08)', () => {
 		const result = await completeMelt(MINT_URL, 'melt-quote-xyz', inputs, 'lnbc...', 100, 0);
 
 		expect(result.success).toBe(true);
-		expect(capturedOutputBodies.length).toBe(3);
-		expect(capturedOutputBodies.map((o) => o.amount)).toEqual([64, 32, 4]);
-		expect(capturedOutputBodies.reduce((s, o) => s + o.amount, 0)).toBe(100);
-		expect(result.change.length).toBe(3);
-		expect(result.change.map((p) => p.amount)).toEqual([64, 32, 4]);
+		expect(capturedOutputBodies.length).toBe(7);
+		// ALL blanks: amount = 0 — the mint imprints amounts per its own split
+		expect(capturedOutputBodies.map((o) => o.amount)).toEqual([0, 0, 0, 0, 0, 0, 0]);
+		// Mint mock echoes one sig per blank (amount=0 each) → change = 7 blanks' sigs
+		expect(result.change.length).toBe(7);
+		expect(result.change.map((p) => p.amount)).toEqual([0, 0, 0, 0, 0, 0, 0]);
 	});
 
-	it('c) NUT-08 mint, 1000 overpaid → decompose [512,256,128,64,32,8] = 6 outputs', async () => {
+	it('c) NUT-08 mint, 1000 overpaid → 10 blank outputs (amount=0 each, mint imprints)', async () => {
 		// 1100 sats input, pay 100, feeReserve 0 → NUT-08: change = 1100-100-0 = 1000
-		// decompose(1000) → [512, 256, 128, 64, 32, 8] (6 outputs, sum 1000)
+		// Blank-output model: n = max(ceil(log2(1000)), 1) = 10 blanks (amount=0 each)
 		await addProofs([makeProof('c1', 500), makeProof('c2', 600)], MINT_URL, KEYSET_ID);
 		setCounterK(KEYSET_ID, 2);
 
@@ -270,15 +275,17 @@ describe('TASK-312: MAX change pre-derive (NUT-08)', () => {
 		const result = await completeMelt(MINT_URL, 'melt-quote-xyz', inputs, 'lnbc...', 100, 0);
 
 		expect(result.success).toBe(true);
-		expect(capturedOutputBodies.length).toBe(6);
-		expect(capturedOutputBodies.map((o) => o.amount)).toEqual([512, 256, 128, 64, 32, 8]);
-		expect(capturedOutputBodies.reduce((s, o) => s + o.amount, 0)).toBe(1000);
-		expect(result.change.length).toBe(6);
-		expect(result.change.map((p) => p.amount)).toEqual([512, 256, 128, 64, 32, 8]);
+		expect(capturedOutputBodies.length).toBe(10);
+		// ALL blanks: amount = 0 — the mint imprints amounts per its own split
+		expect(capturedOutputBodies.every((o) => o.amount === 0)).toBe(true);
+		expect(result.change.length).toBe(10);
+		expect(result.change.every((p) => p.amount === 0)).toBe(true);
 	});
 
-	it('d) Non-NUT-08 mint, 100 overpaid → changeAmount = 100 - feeReserve (legacy)', async () => {
-		// Legacy mint: hasNUT08 → false
+	it('d) Non-NUT-08 mint, 100 overpaid → legacy decompose [64,32,2] (3 outputs, sum 98)', async () => {
+		// Legacy mint: hasNUT08 → false — legacy branch KEEPS decomposeAmount
+		// (TASK-MELT-DECOMPOSE intent preserved; only the NUT-08 branch switched
+		// to blank outputs).
 		// 200 sats input, pay 100, feeReserve 2 → legacy: change = 200-100-2 = 98
 		// decompose(98) → [64, 32, 2] (3 outputs, sum 98)
 		mockSupportsNUT08 = false;
@@ -318,10 +325,11 @@ describe('TASK-312: MAX change pre-derive (NUT-08)', () => {
 		expect(result.change.length).toBe(0);
 	});
 
-	it('f) hasNUT08 check throws → fallback to legacy feeReserve, melt succeeds', async () => {
+	it('f) hasNUT08 check throws → fallback to legacy feeReserve + decompose, melt succeeds', async () => {
 		// Simulate network error during capability check → hasNUT08 throws
 		// → completeMelt catches → supportsNUT08 stays false → legacy path
-		// (feeReserve reserved upfront, change = spentTotal - amount - feeReserve).
+		// (feeReserve reserved upfront, change = spentTotal - amount - feeReserve,
+		// decomposed — the legacy branch keeps decomposeAmount).
 		// 200 sats, pay 100, feeReserve 2 → change = 98 → [64,32,2].
 		mockHasNUT08Throws = true;
 

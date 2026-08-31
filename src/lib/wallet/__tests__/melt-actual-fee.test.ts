@@ -10,25 +10,31 @@
  *
  * where legacyChangeAmount = max(0, spentTotal - amount - feeReserve).
  *
- * Why LEGACY changeAmount (not the NUT-08 MAX derived for output decomposition
- * in TASK-312): the NUT-08 MAX equals `spentTotal - amount` (the maximum
- * possible refund). Plugging that into the formula gives feeReserve for a
- * full refund, which lies to the user. Using legacy changeAmount makes the
- * formula give 0 for full refund and feeReserve for no refund.
+ * NUT-08 blank-output model (TASK-MELT-NUT08-BLANKS): the wallet now sends
+ * n = max(ceil(log2(spentTotal - amount)), 1) BLANK outputs (amount = 0 each)
+ * and the mint imprints the amounts per its own denomination split. The mint
+ * may legitimately sign FEWER outputs than blanks sent (keeping the fee) —
+ * counter_k still advances by the SIGNED count (TASK-313 contract, untouched).
  *
- * IMPORTANT — interacts with TASK-313 anomaly guard: the mint cannot sign
- * MORE outputs than we derived (no B_'s for them). So tests must have
+ * IMPORTANT — TASK-313 anomaly guard: the mint cannot sign MORE outputs than
+ * we derived (no B_'s for them). So tests must have
  * `mockMintChange.length <= derived outputs.length` or TASK-313 throws.
  *
- * 5 scenarios:
+ * 7 scenarios:
  *   (a) Legacy mode, no change derived, mint signs nothing
  *       → actual_fee = feeReserve
- *   (b) NUT-08 full refund (mint signs all derived, sum = MAX = spentTotal - amount)
+ *   (b) NUT-08 full refund (mint signs more outputs than legacy expectation,
+ *       sum = MAX = spentTotal - amount)
  *       → actual_fee = 0
  *   (c) NUT-08 partial refund (mint signs some, sum > legacy but < MAX)
  *       → actual_fee > 0
- *   (d) Mint anomaly: sum(change) < legacyChangeAmount → throw
- *   (e) NUT-08 end-to-end → actual_fee = 0 + DB invariants verified
+ *   (d) Mint truncation (blanks fewer than mint's split needed): mint
+ *       truncates its split to the blanks available → sum < legacy
+ *       → NO throw (warn only), actualFee clamped truthfully, tx recorded
+ *   (e) NUT-08 end-to-end happy path → actual_fee truthful + DB invariants
+ *   (f) Blanks-count assertion: overpaid 8 → ceil(log2(8)) = 3 blanks sent
+ *   (g) Commander repro: spentTotal=208, amount=200, feeReserve=2, blanks=3,
+ *       mint returns [4,2] (sum=6=legacy) → no throw, actualFee=2, tx recorded
  *
  * Test pattern mirrors melt-counter-per-signed.test.ts and
  * melt-nut08-prederive.test.ts.
@@ -173,6 +179,7 @@ import { mnemonicToSeed } from '../keys';
 import { setCounterK, clearAllCounters, STORAGE_KEY } from '../counterK';
 import { deleteDatabase, resetDB, getTransactions } from '../../storage/db';
 import { completeMelt } from '../melt';
+import { meltTokens } from '../../cashu/client';
 import type { TokenProof, SelectedProofInfo } from '../../types';
 
 const TEST_PIN = '123456';
@@ -259,21 +266,17 @@ describe('TASK-314: actual_fee — true fee paid after mint overpaid return (NUT
 	});
 
 	// ────────────────────────────────────────────────────────────
-	// (b) NUT-08 full refund — mint signs all derived outputs
+	// (b) NUT-08 full refund — mint returns the full overpaid sum
 	//     spentTotal = 115, amount = 100, feeReserve = 10
-	//     NUT-08 MAX changeAmount = 115 - 100 - 0 = 15
 	//     legacy changeAmount = 115 - 100 - 10 = 5
-	//     decompose(15) = [8, 4, 2, 1] (4 outputs, sum 15)
-	//     Mint signs [8, 4, 2, 1] (sum = 15, equals MAX changeAmount)
+	//     blanks sent = ceil(log2(15)) = 4
+	//     Mint imprints its own split [8, 4, 2, 1] (sum = 15 = MAX changeAmount)
 	//     → sumChange - legacyChangeAmount = 15 - 5 = 10 (full overpaid refund)
 	//     → actual_fee = 10 - 10 = 0 (full refund)
 	// ────────────────────────────────────────────────────────────
 	it('b) NUT-08 full refund → actual_fee = 0', async () => {
-		// NUT-08: MAX changeAmount = max(0, 115 - 100 - 0) = 15
-		//   decompose(15) → [8, 4, 2, 1] (4 outputs, sum 15)
 		// legacy changeAmount = max(0, 115 - 100 - 10) = 5
-		// Mint signs [8, 4, 2, 1] (all derived) → sum=15
-		// → actual_fee = feeReserve - (sum - legacy) = 10 - (15 - 5) = 0
+		// Mint signs [8, 4, 2, 1] (sum=15) → actual_fee = 10 - (15 - 5) = 0
 		mockSupportsNUT08 = true;
 		setMockMintChange([
 			{ amount: 8 }, { amount: 4 }, { amount: 2 }, { amount: 1 }
@@ -297,19 +300,17 @@ describe('TASK-314: actual_fee — true fee paid after mint overpaid return (NUT
 	});
 
 	// ────────────────────────────────────────────────────────────
-	// (c) NUT-08 partial refund — mint signs SOME derived outputs
+	// (c) NUT-08 partial refund — mint returns a partial overpaid sum
 	//     spentTotal = 115, amount = 100, feeReserve = 10
-	//     NUT-08 MAX changeAmount = 15, decompose [8, 4, 2, 1] (4 outputs)
 	//     legacy changeAmount = 5
-	//     Mint signs [8, 4, 2] (sum = 14) — signs 3 of 4 derived
+	//     blanks sent = ceil(log2(15)) = 4
+	//     Mint imprints [8, 4, 2] (sum = 14) — keeps 1 sat as fee
 	//     → sumChange - legacyChangeAmount = 14 - 5 = 9 (overpaid refund of 9)
 	//     → actual_fee = 10 - 9 = 1
 	// ────────────────────────────────────────────────────────────
 	it('c) NUT-08 partial refund → actual_fee = feeReserve - (sum - legacy)', async () => {
-		// NUT-08: MAX changeAmount = 15, decompose [8, 4, 2, 1] (4 outputs)
 		// legacy changeAmount = 5
-		// Mint signs [8, 4, 2] (sum=14) — signs 3 of 4
-		// → actual_fee = 10 - (14 - 5) = 10 - 9 = 1
+		// Mint signs [8, 4, 2] (sum=14) → actual_fee = 10 - (14 - 5) = 1
 		mockSupportsNUT08 = true;
 		setMockMintChange([{ amount: 8 }, { amount: 4 }, { amount: 2 }]);
 
@@ -335,29 +336,29 @@ describe('TASK-314: actual_fee — true fee paid after mint overpaid return (NUT
 	});
 
 	// ────────────────────────────────────────────────────────────
-	// (d) Mint anomaly: sum(change) < legacyChangeAmount → throw
-	//     This is the TASK-314 anomaly guard: mint returned less change than
-	//     the legacy changeAmount → actual_fee would exceed feeReserve
-	//     (impossible). Must abort BEFORE recording incorrect fee.
-	//     Mirrors TASK-313 signedCount > outputs.length guard.
+	// (d) Mint truncation: blanks < mint's split → sum(change) < legacy
+	//     → NO throw (warn only) — payment already succeeded, tx recorded
+	//
+	//     NEW behavior (TASK-MELT-NUT08-BLANKS): with the blank-output model,
+	//     the mint signs its OWN denomination split and may need MORE outputs
+	//     than the blanks we sent; it then TRUNCATES the split to the blanks
+	//     available and silently keeps the rest as fee. This is an anomaly
+	//     worth warning about — but the Lightning payment has ALREADY
+	//     succeeded, so throwing here would misreport the payment and lose
+	//     the tx record. Behavior: console.warn + truthful (clamped) fee +
+	//     tx recorded.
 	//
 	//     Setup: spentTotal = 115, amount = 100, feeReserve = 10
-	//     NUT-08 MAX changeAmount = 15, decompose [8, 4, 2, 1] (4 outputs)
-	//     legacy changeAmount = 5
-	//     Mint signs [1] only (sum=1 < 5) → anomaly (actual fee would be 9,
-	//     but 9 < feeReserve=10, still detectable as under-refund).
-	//     Wait — sum=1 < legacy=5 means actual_fee = feeReserve - (1 - 5)
-	//     = 10 + 4 = 14, exceeds feeReserve → impossible → throw.
-	//     NOTE: cannot test with mint signs [] because the formula's else
-	//     branch (change.length === 0) returns actualFee = feeReserve
-	//     without checking the anomaly condition.
+	//     legacy changeAmount = 5, blanks sent = ceil(log2(15)) = 4
+	//     Mint signs [1] only (sum=1 < legacy=5) → anomaly → warn
+	//     actualFee formula (unclamped): 10 - (1 - 5) = 14 → truthful fee the
+	//     mint actually kept (charged more than the reserve).
 	// ────────────────────────────────────────────────────────────
-	it('d) anomaly: sum(change) < legacyChangeAmount → throw', async () => {
-		// NUT-08 mode: MAX changeAmount = 15, decompose [8, 4, 2, 1] (4 outputs)
-		// legacy changeAmount = 5
-		// Mint signs [1] only (sum=1 < 5) → anomaly
+	it('d) truncation: sum(change) < legacyChangeAmount → warn (no throw), actualFee truthful, tx recorded', async () => {
+		// legacy changeAmount = 5; mint signs [1] only (sum=1 < 5) → warn
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		mockSupportsNUT08 = true;
-		setMockMintChange([{ amount: 1 }]); // signs 1 of 4, sum < legacyChangeAmount
+		setMockMintChange([{ amount: 1 }]); // sum=1 < legacy=5
 
 		await addProofs([makeProof('d1', 115)], MINT_URL, KEYSET_ID);
 		setCounterK(KEYSET_ID, 1);
@@ -366,30 +367,37 @@ describe('TASK-314: actual_fee — true fee paid after mint overpaid return (NUT
 			makeInput(makeProof('d1', 115))
 		];
 
-		// completeMelt's outer try/catch converts the throw into a structured
-		// failure result — the error message is preserved on result.error.
 		const result = await completeMelt(MINT_URL, 'melt-quote-d', inputs, 'lnbc-d', 100, FEE_RESERVE);
 
-		expect(result.success).toBe(false);
-		expect(result.error).toMatch(/Mint anomaly/);
-		expect(result.error).toMatch(/signed change sum/);
+		// NO throw — payment already succeeded, melt completes successfully
+		expect(result.success).toBe(true);
 
-		// Critical: no transaction recorded for the failed melt.
+		// Anomaly was logged as a warning (not thrown)
+		expect(warnSpy).toHaveBeenCalledWith(
+			expect.stringMatching(/Mint anomaly: signed change sum \(1\) < expected changeAmount \(5\)/)
+		);
+		warnSpy.mockRestore();
+
+		// Transaction IS recorded — a successful LN payment must never be lost
 		const txs = await getTransactions({ type: 'melt' });
 		const tx = txs.find((t) => t.id === 'melt-melt-quote-d');
-		expect(tx).toBeUndefined();
+		expect(tx).toBeDefined();
+		expect(tx?.status).toBe('confirmed');
+		// Truthful fee: mint actually kept 10 - (1 - 5) = 14 sats (over reserve)
+		expect(tx?.actual_fee).toBe(14);
+		// legacy `fee` field keeps the TASK-084 contract (the reserve)
+		expect(tx?.fee).toBe(FEE_RESERVE);
 	});
 
 	// ────────────────────────────────────────────────────────────
 	// (e) NUT-08 mode + full refund → actual_fee = 0 (end-to-end)
-	//     Verify the whole TASK-314 pipeline: NUT-08 detection → change
-	//     decomposition → mint signs all → actual_fee = 0 in DB.
+	//     Verify the whole TASK-314 pipeline: NUT-08 detection → blank outputs
+	//     → mint imprints its split → actual_fee = 0 in DB.
 	//     Also verifies UI-display invariants (actual_fee !== fee → show reserve).
 	// ────────────────────────────────────────────────────────────
 	it('e) NUT-08 full refund → actual_fee = 0 (end-to-end)', async () => {
-		// NUT-08: MAX changeAmount = 15, decompose [8, 4, 2, 1] (4 outputs)
-		// legacy changeAmount = 5
-		// Mint signs all 4 → sum=15 → actual_fee = 10 - (15 - 5) = 0
+		// legacy changeAmount = 5; blanks = ceil(log2(15)) = 4
+		// Mint imprints [8, 4, 2, 1] (sum=15) → actual_fee = 10 - (15 - 5) = 0
 		mockSupportsNUT08 = true;
 		setMockMintChange([
 			{ amount: 8 }, { amount: 4 }, { amount: 2 }, { amount: 1 }
@@ -424,5 +432,79 @@ describe('TASK-314: actual_fee — true fee paid after mint overpaid return (NUT
 		expect(tx?.actual_fee !== tx?.fee).toBe(true);
 		// Invariant: actual_fee <= fee (true cost never exceeds reserve in NUT-08 mode)
 		expect(tx!.actual_fee!).toBeLessThanOrEqual(tx!.fee!);
+	});
+
+	// ────────────────────────────────────────────────────────────
+	// (f) Blank-output count: overpaid 8 → ceil(log2(8)) = 3 blanks sent
+	//     The NUT-08 change branch must send max(ceil(log2(changeAmount)), 1)
+	//     outputs, each with amount = 0 (mint imprints the amounts).
+	// ────────────────────────────────────────────────────────────
+	it('f) NUT-08 blank outputs: overpaid 8 → 3 blanks (amount=0 each)', async () => {
+		mockSupportsNUT08 = true;
+		setMockMintChange([{ amount: 4 }, { amount: 2 }, { amount: 2 }]); // mint's own split of 8
+
+		await addProofs([makeProof('f1', 108)], MINT_URL, KEYSET_ID);
+		setCounterK(KEYSET_ID, 1);
+
+		const inputs: SelectedProofInfo[] = [
+			makeInput(makeProof('f1', 108))
+		];
+
+		const result = await completeMelt(MINT_URL, 'melt-quote-f', inputs, 'lnbc-f', 100, FEE_RESERVE);
+
+		expect(result.success).toBe(true);
+
+		// Inspect the outputs the wallet sent to the mint
+		const meltCall = (meltTokens as ReturnType<typeof vi.fn>).mock.calls[0];
+		const sentOutputs = meltCall[3] as Array<{ amount: number; id: string }>;
+		// ceil(log2(8)) = 3 blanks — exactly what the mint's 3-way split needs
+		expect(sentOutputs.length).toBe(3);
+		// ALL blanks: amount = 0 — the mint imprints amounts when signing
+		expect(sentOutputs.every((o) => o.amount === 0)).toBe(true);
+		// Change unblinded with sig.amount (mint-imprinted): [4, 2, 2]
+		expect(result.change.map((p) => p.amount)).toEqual([4, 2, 2]);
+	});
+
+	// ────────────────────────────────────────────────────────────
+	// (g) COMMANDER REPRO (TASK-MELT-NUT08-BLANKS acceptance #3):
+	//     spentTotal=208, amount=200, feeReserve=2, mint fee_paid=2
+	//     OLD bug: decompose(8) = [8] → 1 output sent; mint split 6 → [4, 2]
+	//     needed 2 outputs → mint truncated to the 1 available ([4]) →
+	//     "signed change sum (4) < expected changeAmount (6)" thrown AFTER
+	//     payment succeeded + 2 sats lost.
+	//     NEW: blanks = ceil(log2(8)) = 3 (amount=0 each) → mint returns
+	//     [4, 2] (sum=6=legacyChangeAmount) → no throw, actualFee =
+	//     2 - (6 - 6) = 2 (truthful — the real fee the mint charged),
+	//     tx recorded confirmed.
+	// ────────────────────────────────────────────────────────────
+	it('g) Commander repro: spentTotal=208, amount=200 → blanks=3, mint returns [4,2], no throw, actualFee=2', async () => {
+		mockSupportsNUT08 = true;
+		// Mint's split of the 6-sat overpay → [4, 2] (sum=6)
+		setMockMintChange([{ amount: 4 }, { amount: 2 }]);
+
+		await addProofs([makeProof('g1', 200), makeProof('g2', 8)], MINT_URL, KEYSET_ID);
+		setCounterK(KEYSET_ID, 2);
+
+		const inputs: SelectedProofInfo[] = [
+			makeInput(makeProof('g1', 200)),
+			makeInput(makeProof('g2', 8))
+		];
+
+		const result = await completeMelt(MINT_URL, 'melt-quote-g', inputs, 'lnbc-g', 200, 2);
+
+		// No throw — melt completes successfully
+		expect(result.success).toBe(true);
+		// Change = the mint-imprinted [4, 2] (sum 6, nothing truncated away)
+		expect(result.change.map((p) => p.amount)).toEqual([4, 2]);
+		expect(result.change.reduce((s, p) => s + p.amount, 0)).toBe(6);
+
+		// Tx recorded with the TRUTHFUL fee: feeReserve - (6 - 6) = 2
+		// (= the fee the mint actually charged, per the TASK-314 formula)
+		const txs = await getTransactions({ type: 'melt' });
+		const tx = txs.find((t) => t.id === 'melt-melt-quote-g');
+		expect(tx).toBeDefined();
+		expect(tx?.status).toBe('confirmed');
+		expect(tx?.actual_fee).toBe(2);
+		expect(tx?.fee).toBe(2); // legacy fallback = feeReserve
 	});
 });
