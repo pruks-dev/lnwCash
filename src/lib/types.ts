@@ -238,6 +238,11 @@ export interface TokenProof {
 	};
 }
 
+// Re-export melt-specific types so tests under src/lib/wallet/__tests__/
+// can consume them from '../../types' without reaching into wallet internals.
+// Origin preserved: src/lib/wallet/melt.ts remains the single source of truth.
+export type { SelectedProofInfo } from './wallet/melt';
+
 export interface CashuToken {
 	token: Array<{
 		mint: string;
