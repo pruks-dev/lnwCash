@@ -29,6 +29,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, cleanup } from '@testing-library/svelte/svelte5';
+import { init } from 'svelte-i18n';
 import QRCode from 'qrcode';
 import AnimatedQR from '../AnimatedQR.svelte';
 import {
@@ -47,6 +48,17 @@ afterEach(() => {
 	cleanup();
 	vi.useRealTimers();
 	vi.restoreAllMocks();
+});
+
+// F-V40-009 (TASK-601): AnimatedQR.svelte calls $_() at 5 sites
+// (lines 431, 440, 444, 451, 461). svelte-i18n throws
+// "[svelte-i18n] Cannot format a message without first setting
+// the initial locale" unless init() has been called. Other tests
+// in the repo bypass this with vi.mock('svelte-i18n', ...); this
+// file uses the real store, so we initialize the locale scoped
+// to this file (Vera recommendation: scoped > global).
+beforeEach(() => {
+	init({ initialLocale: 'en' });
 });
 
 const SAMPLE_TOKEN = 'cashuAeyJ0b2tlbiI6W3sibWFudCI6Imh0dHBzOi8vZm9vLmJhciJ9XX0';
