@@ -964,25 +964,4 @@
 		cursor: pointer;
 	}
 	.check-btn:active { opacity: 0.7; }
-
-	/* ─── TASK-315: Fee return badge (NUT-08) ─────────── */
-	.badge {
-		display: inline-block;
-		font-size: var(--font-size-xs);
-		font-weight: var(--font-weight-semibold);
-		padding: 2px 8px;
-		border-radius: var(--radius-sm);
-		white-space: nowrap;
-		line-height: 1.4;
-	}
-	.badge-success {
-		background: rgba(20, 184, 166, 0.18);
-		color: var(--color-secondary);
-	}
-	@media (prefers-color-scheme: light) {
-		.badge-success {
-			background: rgba(20, 184, 166, 0.12);
-			color: #14b8a6;
-		}
-	}
 </style>
