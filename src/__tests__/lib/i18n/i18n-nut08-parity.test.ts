@@ -19,8 +19,21 @@
  */
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { readFileSync } from 'fs';
-import { resolve } from 'path';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { get } from 'svelte/store';
+
+// TASK-803: vitest v4 worker processes run with process.cwd() === '/' (probe-
+// proven), so resolve(process.cwd(), …) produced '/src/locales/en.json' →
+// ENOENT. Derive the repo root from this test file's own location instead:
+// src/__tests__/lib/i18n/i18n-nut08-parity.test.ts → dirname up 4 levels = repo root.
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
+
+const readLocale = (name: 'en' | 'th') =>
+	JSON.parse(readFileSync(resolve(REPO_ROOT, `src/locales/${name}.json`), 'utf-8')) as Record<
+		string,
+		string
+	>;
 
 // Mock svelte-i18n to control the locale + provide a working formatter.
 // This mirrors the pattern in src/lib/components/__tests__/fee-return-indicator.test.ts
@@ -28,12 +41,8 @@ import { get } from 'svelte/store';
 // we expose a deterministic in-memory formatter keyed off the loaded JSON files.
 vi.mock('svelte-i18n', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('svelte-i18n')>();
-	const en = JSON.parse(
-		readFileSync(resolve(process.cwd(), 'src/locales/en.json'), 'utf-8')
-	) as Record<string, string>;
-	const th = JSON.parse(
-		readFileSync(resolve(process.cwd(), 'src/locales/th.json'), 'utf-8')
-	) as Record<string, string>;
+	const en = readLocale('en');
+	const th = readLocale('th');
 
 	const current = { locale: 'en' as 'en' | 'th', dict: en };
 	const dict = {
@@ -89,14 +98,8 @@ vi.mock('svelte-i18n', async (importOriginal) => {
 
 // Load the actual JSON files for scenario (a)-(c). Done at module top so the
 // count assertions are deterministic and don't depend on the mock above.
-const en = JSON.parse(readFileSync(resolve(process.cwd(), 'src/locales/en.json'), 'utf-8')) as Record<
-	string,
-	string
->;
-const th = JSON.parse(readFileSync(resolve(process.cwd(), 'src/locales/th.json'), 'utf-8')) as Record<
-	string,
-	string
->;
+const en = readLocale('en');
+const th = readLocale('th');
 
 const REQUIRED_NUT08_KEYS = [
 	'nut08.not_supported',
@@ -106,7 +109,7 @@ const REQUIRED_NUT08_KEYS = [
 	'nut08.error.derive'
 ] as const;
 
-const TOTAL_KEYS = 423; // TASK-FIX-325: 424 (post-fix-321-D) − 1 (history.fee_return removed — badge gone)
+const TOTAL_KEYS = 428; // 423 (TASK-FIX-325 baseline) + 5 scanner keys (iter5: common.scan_qr, screen.common.scanner_overlay_title, screen.receive.camera_permission_denied, screen.receive.scan_qr_button, screen.receive.scanner_modal_title). Baseline history: TASK-315 → 422, TASK-316 → 427, TASK-FIX-320 → 428, TASK-FIX-325 → 423, iter5 → 428.
 
 describe('TASK-316: i18n NUT-08 namespace + parity', () => {
 	beforeAll(() => {
@@ -141,7 +144,7 @@ describe('TASK-316: i18n NUT-08 namespace + parity', () => {
 		expect(hasThaiChars, 'th.json nut08.* values must contain Thai characters').toBe(true);
 	});
 
-	it('c) parity: en.json keys === th.json keys (423 = 423, full parity)', () => {
+	it('c) parity: en.json keys === th.json keys (428 = 428, full parity)', () => {
 		const enKeys = Object.keys(en).sort();
 		const thKeys = Object.keys(th).sort();
 

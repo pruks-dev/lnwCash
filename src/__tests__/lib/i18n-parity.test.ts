@@ -10,13 +10,21 @@
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
-import { resolve } from 'path';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
-const en = JSON.parse(readFileSync(resolve(process.cwd(), 'src/locales/en.json'), 'utf-8')) as Record<
+// TASK-803: vitest v4 worker processes run with process.cwd() === '/' (probe-
+// proven: INIT_CWD/PWD unset inside the worker), so resolve(process.cwd(), …)
+// produced '/src/locales/en.json' → ENOENT. Derive the repo root from this
+// test file's own location instead: src/__tests__/lib/i18n-parity.test.ts
+// → dirname up 3 levels = repo root.
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+
+const en = JSON.parse(readFileSync(resolve(REPO_ROOT, 'src/locales/en.json'), 'utf-8')) as Record<
 	string,
 	string
 >;
-const th = JSON.parse(readFileSync(resolve(process.cwd(), 'src/locales/th.json'), 'utf-8')) as Record<
+const th = JSON.parse(readFileSync(resolve(REPO_ROOT, 'src/locales/th.json'), 'utf-8')) as Record<
 	string,
 	string
 >;
