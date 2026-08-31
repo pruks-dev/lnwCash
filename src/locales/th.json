@@ -87,7 +87,7 @@
 	"screen.receive.qr_placeholder": "QR code จะแสดงที่นี่",
 	"screen.receive.invoice_copied": "คัดลอก invoice แล้ว!",
 	"screen.send.title": "ส่งเงิน",
-	"screen.send.enter_invoice": "ป้อน invoice หรือจำนวนเงิน",
+	"screen.send.enter_invoice": "ป้อน Lightning invoice",
 	"screen.send.scan_qr": "สแกน QR",
 	"screen.send.paste_invoice": "วาง invoice",
 	"screen.send.confirm_title": "ยืนยันการชำระ",
@@ -290,7 +290,6 @@
 	"mint.settings.empty": "ไม่มี mint ที่กำหนดเอง — ใช้ mint เริ่มต้นเท่านั้น",
 	"mint.settings.version": "เวอร์ชัน",
 	"mint.settings.supportedNuts": "NUTs ที่รองรับ",
-
 	"screen.receive.tab_lightning": "Lightning",
 	"screen.receive.tab_cashu": "Cashu",
 	"screen.receive.amount_label": "จำนวนเงิน",
@@ -328,10 +327,8 @@
 	"screen.receive.success_dleq_label": "ตรวจสอบ DLEQ แล้ว",
 	"screen.receive.success_time_label": "เสร็จสิ้น",
 	"screen.receive.success_sats_unit": "sats",
-
 	"screen.send.tab_lightning": "Lightning",
 	"screen.send.tab_cashu": "Cashu",
-	"screen.send.enter_invoice": "ป้อน Lightning invoice",
 	"screen.send.invoice_placeholder": "วาง lnbc... invoice, lnurl1... หรือ user@domain.com",
 	"screen.send.description": "รายละเอียด",
 	"screen.send.total": "รวมทั้งสิ้น",
@@ -370,7 +367,6 @@
 	"screen.send.success_sats_unit": "sats",
 	"screen.send.success_token_truncated": "Token (ย่อ)",
 	"send.success.fee_with_reserve": "ค่าธรรมเนียม: {actual} sats (สำรอง: {reserve} sats)",
-
 	"screen.send.lnaddr.resolving": "กำลังค้นหา lightning address...",
 	"screen.send.lnaddr.enter_hint": "กด Enter เพื่อ resolve lightning address หรือ LNURL",
 	"screen.send.lnaddr.send_button": "ส่ง",
@@ -388,7 +384,6 @@
 	"screen.send.lnaddr.error_amount_mismatch": "จำนวนเงินในใบแจ้งหนี้ไม่ตรงกับที่ร้องขอ",
 	"screen.send.lnaddr.error_min_max": "จำนวนเงินต้องอยู่ระหว่าง {min} ถึง {max} sat",
 	"screen.send.lnaddr.error_no_amount": "กรุณาระบุจำนวนเงิน",
-
 	"detail.title": "รายละเอียดธุรกรรม",
 	"detail.field_type": "ประเภท",
 	"detail.field_amount": "จำนวน",
@@ -399,7 +394,7 @@
 	"detail.field_invoice": "ใบแจ้งหนี้",
 	"detail.field_preimage": "Preimage",
 	"detail.field_fee": "ค่าธรรมเนียม",
-	"detail.field_fee_reserve": "ค่าธรรมเนียมจอง",
+	"detail.field_fee_reserve": "เงินสำรองค่าธรรมเนียม",
 	"detail.field_mint_url": "Mint URL",
 	"detail.field_tx_id": "รหัสธุรกรรม",
 	"detail.field_token_hash": "Token Hash",
@@ -407,7 +402,6 @@
 	"detail.direction_receive": "รับ",
 	"detail.direction_send": "ส่ง",
 	"detail.check_payment": "ตรวจสอบการชำระเงิน",
-
 	"recovery.warning.title": "สำคัญ — จดลงกระดาษเท่านั้น",
 	"recovery.warning.no_screenshot": "ห้ามถ่ายภาพหน้าจอหรือบันทึกวลีกู้คืนในรูปแบบดิจิทัล",
 	"recovery.warning.paper_only": "จดคำเหล่านี้ลงกระดาษเท่านั้น — ห้ามบันทึกในโน้ต ภาพหน้าจอ หรือ cloud",
