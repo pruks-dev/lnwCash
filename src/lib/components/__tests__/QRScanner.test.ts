@@ -338,4 +338,24 @@ describe('QRScanner component (TASK-503 — D-6 γ unified scanner)', () => {
 		// handleClose calls stopScanner() before onClose, so scanner.stop() fired.
 		expect(mockState.instances[0].stop).toHaveBeenCalled();
 	});
+
+	// ── F-V40-007 regression guard (TASK-511) ────────────────────────────
+	// QRScanner.svelte calls `QrScanner.configureWasm({ locateFile: ... })` in
+	// onMount, BEFORE constructing the QrScanner instance. If the mock factory
+	// does not provide a `configureWasm` static method, this call throws
+	// `TypeError: QrScanner.configureWasm is not a function` and the scanner
+	// silently fails to start in test environments.
+	//
+	// F-V40-007 fix: add `QrScannerMock.configureWasm = vi.fn();` to the mock
+	// factory (TASK-506-FIX-B1 commit 48f4c00) with `as any` cast to defeat
+	// TypeScript narrowing (TASK-507 commit c689f90).
+	//
+	// This regression test prevents future mock refactors from removing
+	// configureWasm and silently breaking the scanner in test environments.
+	it('F-V40-007 regression guard — mock has configureWasm static method (prevents TypeError on QrScanner.configureWasm in onMount)', () => {
+		const configureWasm = (QrScannerMock as unknown as { configureWasm?: unknown })
+			.configureWasm;
+		expect(configureWasm).toBeDefined();
+		expect(typeof configureWasm).toBe('function');
+	});
 });
