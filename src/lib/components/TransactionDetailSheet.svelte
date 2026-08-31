@@ -585,7 +585,7 @@
 
 				<!-- Row 8: Fee (only shown when > 0) -->
 				<!-- TASK-314: display actual_fee (true cost after NUT-08 overpaid return) when present, fall back to fee (legacy). -->
-				{#if (tx.actual_fee ?? tx.fee) != null && (tx.actual_fee ?? tx.fee) > 0}
+				{#if tx?.actual_fee ?? tx?.fee}
 					<div class="detail-field">
 						<span class="field-label">{$_('detail.field_fee')}</span>
 						<span class="field-value">
