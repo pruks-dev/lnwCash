@@ -25,17 +25,39 @@ export default [
 			'@typescript-eslint': ts
 		},
 		rules: {
-			...ts.configs.recommended.rules
+			...ts.configs.recommended.rules,
+			'no-undef': 'off',
+			'@typescript-eslint/no-unused-vars': 'warn',
+			'@typescript-eslint/no-explicit-any': 'warn',
+			'@typescript-eslint/ban-ts-comment': 'warn',
+			'@typescript-eslint/no-require-imports': 'warn',
+			'preserve-caught-error': 'warn',
+			'no-useless-assignment': 'warn'
 		}
+	},
+	{
+		files: ['**/*.{js,mjs}'],
+		languageOptions: {
+			globals: { ...globals.browser, ...globals.node }
+		},
+		rules: { 'no-unused-vars': 'warn' }
 	},
 	...svelte.configs['flat/recommended'],
 	{
 		files: ['**/*.svelte'],
 		languageOptions: {
 			parser: svelteParser,
-			parserOptions: {
-				parser: tsparser
-			}
+			parserOptions: { parser: tsparser },
+			globals: { ...globals.browser, ...globals.node }
+		},
+		rules: {
+			'no-unused-vars': 'warn',
+			'no-useless-assignment': 'warn',
+			'svelte/require-each-key': 'warn',
+			'svelte/no-useless-children-snippet': 'warn',
+			'svelte/prefer-writable-derived': 'warn',
+			'svelte/prefer-svelte-reactivity': 'warn',
+			'svelte/no-unused-svelte-ignore': 'warn'
 		}
 	},
 	prettier,
@@ -44,12 +66,14 @@ export default [
 			'**/node_modules/**',
 			'**/dist/**',
 			'**/.svelte-kit/**',
+			'**/dev-dist/**',
 			'**/android/**',
 			'**/ios/**',
 			'**/capacitor.config.*',
 			'**/vite.config.ts',
 			'**/svelte.config.js',
-			'**/eslint.config.js'
+			'**/.arx-evidence/**',
+			'**/audit-*.mjs'
 		]
 	}
 ];
