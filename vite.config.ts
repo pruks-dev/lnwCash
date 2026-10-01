@@ -181,12 +181,25 @@ export default defineConfig({
 		format: 'es',
 		plugins: () => (process.env.NODE_ENV === 'production' ? [stripFastlyPlugin()] : [])
 	},
-	server: {
-		https: {
-			key: fs.readFileSync(resolve(__dirname, 'cert/key.pem')),
-			cert: fs.readFileSync(resolve(__dirname, 'cert/cert.pem'))
+	// CONFIG-ROBUSTNESS (CI fix 2026-10-01): cert/ is dev-only (gitignored, never
+	// committed). Eager readFileSync at config-load time crashed `vitest run` and
+	// `vite build` on CI (ENOENT cert/key.pem) because the server scheme is
+	// evaluated even for test/build modes where https is never used.
+	// Guard: include https options ONLY when both cert files exist —
+	// dev behaviour unchanged (certs present locally → identical config).
+	server: (() => {
+		const keyPath = resolve(__dirname, 'cert/key.pem');
+		const certPath = resolve(__dirname, 'cert/cert.pem');
+		if (fs.existsSync(keyPath) && fs.existsSync(certPath)) {
+			return {
+				https: {
+					key: fs.readFileSync(keyPath),
+					cert: fs.readFileSync(certPath)
+				}
+			};
 		}
-	},
+		return {};
+	})(),
 	test: {
 		environment: 'jsdom',
 		include: ['src/**/*.{test,spec}.{ts,js}'],
