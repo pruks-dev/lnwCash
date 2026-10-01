@@ -1,0 +1,167 @@
+# =============================================================================
+# pages-deploy.yml.template — CF Pages deploy for LnwCash Wallet (TASK-904)
+# =============================================================================
+# TARGET LOCATION in the wallet repo: .github/workflows/pages-deploy.yml
+# (this file is a TEMPLATE stored in lnw-infra/configs/cloudflared/ — the
+#  Commander copies it into lnw-cash and fills the ONE placeholder).
+#
+# Playbook source: playbook/phase-04-01-cf-pages-wallet.md §3 (workflow)
+#
+# DECISION (D-pages, playbook §1.3): GitHub Actions + wrangler-action —
+#   test gate runs BEFORE deploy; direct Git integration has no test gate.
+#   The Pages "direct upload" project is created ONCE (step-01, API token in
+#   GitHub secret CLOUDFLARE_API_TOKEN, NEVER on dev machines).
+#
+# Secrets required (GitHub → Settings → Secrets and variables → Actions):
+#   CLOUDFLARE_API_TOKEN  — token scoped: Cloudflare Pages: Edit + Account
+#                           Settings: Read. Set in GitHub ONLY, never on dev.
+#   CLOUDFLARE_ACCOUNT_ID — Pages project target account (dashboard → right
+#                           sidebar). Non-secret but stored as GH secret.
+#
+# Placeholder to replace before committing to lnw-cash: lnw-cash-wallet
+# (project name created by scripts/phase-04/step-01-pages-project.sh;
+#  recommended: lnw-cash-wallet).
+#
+# NOTE (honest): wallet repo already has .github/workflows/deploy.yml
+# (VPS/rsync, currently dry-run-only, if: ENABLE_DEPLOY). It is DISABLED by
+# its own condition — this Pages workflow is ADDITIVE. Do not delete deploy.yml
+# in this phase (out of scope P4).
+#
+# Dev URL honesty (L-P010): a CF Pages project ALWAYS exposes
+#   https://lnw-cash-wallet.pages.dev regardless of custom domains.
+# playbook §5 accepts + documents this; wallet must not link it publicly.
+# =============================================================================
+
+name: Pages — LnwCash Wallet (CF Pages via wrangler)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: 'Skip test gate (NEVER use on main — emergency only)'
+        required: false
+        default: 'false'
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    name: CI — Lint, Test & Build (test gate)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tests (gate — deploy blocked on failure)
+        run: npm run test
+
+      - name: Build production
+        run: npm run build
+
+      - name: Verify build output
+        run: |
+          test -f dist/index.html || { echo "FAIL: dist/index.html missing"; exit 1; }
+          test -f dist/sw.js      || { echo "FAIL: dist/sw.js missing (SW = no-cache /v1 side)"; exit 1; }
+          echo "dist/ OK:"; du -sh dist/
+
+      - name: Verify TASK-084 no-cache rule survived the build (L-T005)
+        run: |
+          # SW-side no-cache for /v1/* — the vite.config.ts runtimeCaching entry
+          # for /v1/* must REMAIN ABSENT (removed in TASK-084). This grep FAILS
+          # the build if someone re-adds a /v1/* caching route to the SW.
+          # Same pattern as scripts/phase-04 step-03/step-04 gates (escaped
+          # slash forms like /v1\/ included).
+          if grep -qE '(urlPattern[^)]*v1[\\/]*/|registerRoute[^)]*v1[\\/]*/)' dist/sw.js; then
+            echo "FAIL: dist/sw.js contains a /v1/* caching route (TASK-084 regression)"
+            exit 1
+          fi
+          echo "OK: SW does not cache /v1/* (TASK-084 rule intact)"
+
+      - name: Attach _headers (CF Pages header rules) if absent from build
+        run: |
+          # Source of truth: _headers file in repo root is copied into dist/ by
+          # vite build; if the repo has not adopted it yet, copy from
+          # infra/pages/_headers. Verify presence either way.
+          if [ ! -f dist/_headers ]; then
+            if [ -f infra/pages/_headers ]; then cp infra/pages/_headers dist/_headers; fi
+          fi
+          test -f dist/_headers || { echo "FAIL: dist/_headers missing"; exit 1; }
+          grep -q '/v1/*' dist/_headers || { echo "FAIL: _headers has no /v1/* rule"; exit 1; }
+          echo "OK: _headers present with /v1/* no-cache rule"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lnw-cash-pages-${{ github.sha }}
+          path: dist/
+          retention-days: 7
+
+  deploy:
+    name: Deploy to Cloudflare Pages (wrangler)
+    needs: ci
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://wallet.lnw.cash
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: lnw-cash-pages-${{ github.sha }}
+          path: dist/
+
+      - name: Generate rollback tag
+        run: |
+          TAG="pages-rollback-$(date +%Y%m%d-%H%M%S)-${GITHUB_SHA:0:7}"
+          echo "ROLLBACK_TAG=$TAG" >> "$GITHUB_ENV"
+          echo "Rollback tag: $TAG (CF Pages keeps last N deployments — restore via dashboard or wrangler pages deployment rollback)"
+
+      - name: Deploy (wrangler pages deploy)
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=lnw-cash-wallet --branch=main --commit-dirty=true
+
+      - name: Health check (Pages deployment live + /v1 no-cache headers)
+        run: |
+          BASE="https://wallet.lnw.cash"
+          ok=0
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/" || echo 000)
+            if [ "$code" = "200" ]; then ok=1; echo "wallet root: HTTP $code (attempt $i)"; break; fi
+            echo "waiting... ($i/10, HTTP $code)"; sleep 6
+          done
+          [ "$ok" = "1" ] || { echo "FAIL: wallet root not 200 after 60s"; exit 1; }
+          echo "── /v1/* no-cache header proof (L-T005 CF side) ──"
+          # Mint API must be reachable THROUGH the zone with no-store headers
+          # (transform rule). This check reads headers only — never caches.
+          curl -sI "$BASE/v1/info" -H 'Origin: https://wallet.lnw.cash' | tee headers-v1.txt
+          grep -qi 'cache-control: *no-store' headers-v1.txt \
+            || echo "WARN: /v1/info missing no-store — check zone Transform Rule (phase-04-03 §3) BEFORE promoting this deploy"
+
+      - name: Upload deploy evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pages-deploy-evidence-${{ github.sha }}
+          path: |
+            headers-v1.txt
+          retention-days: 30

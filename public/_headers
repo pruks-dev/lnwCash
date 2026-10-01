@@ -1,0 +1,52 @@
+# ============================================================================
+# _headers.template — Cloudflare Pages response headers (static file rules)
+# =============================================================================
+# TARGET LOCATION in the wallet repo: repo root as `_headers` (vite copies it
+# into dist/ on build; wrangler uploads it with the deployment).
+# This template lives in lnw-infra/configs/cloudflared/ as the source copy.
+#
+# Playbook source: playbook/phase-04-03-dns-proxy-cache.md §3.2 (Pages side)
+#
+# IMPORTANT (layering, honest):
+#   - _headers applies ONLY to requests answered by the Pages project
+#     (wallet.lnw.cash). It CANNOT set headers on mint.lnw.cash (that origin
+#     is behind the tunnel — headers there come from the zone Transform Rule,
+#     playbook §3.1).
+#   - Pages may serve from Cloudflare cache only where rules below allow;
+#     /v1/* on the WALLET domain is wallet-frontend paths only (none exist),
+#     rule kept as belt-and-braces.
+#
+# TASK-084 rule (L-T005): no-cache for mint API responses must exist on
+# CF side AND SW side. This file = CF side for the Pages zone; SW side is
+# verified in CI (pages-deploy.yml.template step "Verify TASK-084").
+# =============================================================================
+
+# ── SPA shell + SW files: NEVER cached by CF edge or browser ──
+/index.html
+  Cache-Control: no-store
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+
+/sw.js
+  Cache-Control: no-cache, must-revalidate
+  Service-Worker-Allowed: /
+  X-Content-Type-Options: nosniff
+
+/registerSW.js
+  Cache-Control: no-cache, must-revalidate
+
+# ── belt-and-braces: no /v1/* path is served by Pages, but if one ever is,
+#    it must never cache ──
+/v1/*
+  Cache-Control: no-store
+
+# ── hashed build assets: immutable ──
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# ── CSP for the wallet SPA (§4.2 of phase-04-03 — matrix L-T004) ──
+# connect-src: wallet origin self + mint API over HTTPS ONLY.
+# An http:// origin is PROHIBITED — crypto.subtle is undefined on insecure
+# origins (L-T004) and mint tokens must never traverse plaintext.
+/index.html
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://mint.lnw.cash; frame-ancestors 'none'; base-uri 'self'; form-action 'none'; upgrade-insecure-requests
