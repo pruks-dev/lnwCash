@@ -33,6 +33,10 @@ export function resolveTheme(mode: ThemeMode): ResolvedTheme {
 export function applyThemeDom(theme: ResolvedTheme) {
 	if (typeof document !== 'undefined') {
 		document.documentElement.setAttribute('data-theme', theme);
+		// TASK-1101 (INTENT-009): upsert meta[name=theme-color] — light #fafafa / dark #12121a
+		let meta = document.querySelector('meta[name="theme-color"]');
+		if (!meta) { meta = document.createElement('meta'); document.head.appendChild(meta); meta.setAttribute('name', 'theme-color'); }
+		meta.setAttribute('content', theme === 'dark' ? '#12121a' : '#fafafa');
 	}
 }
 
