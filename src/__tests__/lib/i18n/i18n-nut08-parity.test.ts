@@ -20,7 +20,7 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath } from 'node:url';
 import { get } from 'svelte/store';
 
 // TASK-803: vitest v4 worker processes run with process.cwd() === '/' (probe-

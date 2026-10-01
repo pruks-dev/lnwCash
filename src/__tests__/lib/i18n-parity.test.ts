@@ -11,7 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath } from 'node:url';
 
 // TASK-803: vitest v4 worker processes run with process.cwd() === '/' (probe-
 // proven: INIT_CWD/PWD unset inside the worker), so resolve(process.cwd(), …)

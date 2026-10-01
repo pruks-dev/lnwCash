@@ -205,6 +205,17 @@ export default defineConfig({
 		include: ['src/**/*.{test,spec}.{ts,js}'],
 		setupFiles: ['./src/vitest.setup.ts'],
 		globals: true,
+		server: {
+			// CI-COLD FIX (2026-10-01): fresh `npm ci` starts with NO dep-optimizer
+			// cache; the svelte-i18n → intl-messageformat chain gets externalized
+			// and loads via native ESM, which rejects its extensionless
+			// relative import ('./src/core' inside lib/index.js).
+			// Inline the chain so vite transforms it (extensionless tolerated) —
+			// identical behaviour warm/cold, and machine-neutral.
+			deps: {
+				inline: ['svelte-i18n', 'intl-messageformat']
+			}
+		},
 		deps: {
 			optimizer: {
 				web: {

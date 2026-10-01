@@ -21,6 +21,12 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/svelte';
 import Send from '../../screens/Send.svelte';
 import Receive from '../../screens/Receive.svelte';
 
+// REPO path derived from this file's own location — machine-neutral
+// (fix: CI ENOENT — the absolute /home/debian/arx-projects/... path was a dev-machine hardcode)
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'node:url';
+const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../../screens');
+
 vi.mock('svelte-i18n', () => {
 	const store = {
 		subscribe(fn: (val: (key: string) => string) => void) {
@@ -173,7 +179,7 @@ describe('Success Screens (TASK-169 / MOD-013) — Source Audits', () => {
 		// Verify by inspecting source for the success-section content
 		const { default: fs } = await import('fs');
 		const src = fs.readFileSync(
-			'/home/debian/arx-projects/lnw-cash/src/screens/Send.svelte',
+			`${SRC_DIR}/Send.svelte`,
 			'utf-8'
 		);
 		// Extract success-section content (between data-flow and OK button)
@@ -189,7 +195,7 @@ describe('Success Screens (TASK-169 / MOD-013) — Source Audits', () => {
 	it('Send.svelte: Cashu success has Token QR at TOP (before rows)', async () => {
 		const { default: fs } = await import('fs');
 		const src = fs.readFileSync(
-			'/home/debian/arx-projects/lnw-cash/src/screens/Send.svelte',
+			`${SRC_DIR}/Send.svelte`,
 			'utf-8'
 		);
 		const idx = src.indexOf('class="success-section" data-flow="send-cashu"');
@@ -211,7 +217,7 @@ describe('Success Screens (TASK-169 / MOD-013) — Source Audits', () => {
 		//   3. success-copy-btn and handleCopyToken are REMOVED
 		const { default: fs } = await import('fs');
 		const src = fs.readFileSync(
-			'/home/debian/arx-projects/lnw-cash/src/screens/Send.svelte',
+			`${SRC_DIR}/Send.svelte`,
 			'utf-8'
 		);
 		const idx = src.indexOf('class="success-section" data-flow="send-cashu"');
@@ -228,7 +234,7 @@ describe('Success Screens (TASK-169 / MOD-013) — Source Audits', () => {
 	it('Receive.svelte: Lightning success has NO preimage (MOD-013 correction)', async () => {
 		const { default: fs } = await import('fs');
 		const src = fs.readFileSync(
-			'/home/debian/arx-projects/lnw-cash/src/screens/Receive.svelte',
+			`${SRC_DIR}/Receive.svelte`,
 			'utf-8'
 		);
 		const idx = src.indexOf('class="success-section" data-flow="receive-lightning"');
@@ -243,7 +249,7 @@ describe('Success Screens (TASK-169 / MOD-013) — Source Audits', () => {
 	it('Receive.svelte: success sections use Option A conditional rendering (no "—")', async () => {
 		const { default: fs } = await import('fs');
 		const src = fs.readFileSync(
-			'/home/debian/arx-projects/lnw-cash/src/screens/Receive.svelte',
+			`${SRC_DIR}/Receive.svelte`,
 			'utf-8'
 		);
 		// Both success-sections in Receive
@@ -263,11 +269,11 @@ describe('Success Screens (TASK-169 / MOD-013) — Source Audits', () => {
 	it('Both files: success-sections contain role="list" with row children', async () => {
 		const { default: fs } = await import('fs');
 		const sendSrc = fs.readFileSync(
-			'/home/debian/arx-projects/lnw-cash/src/screens/Send.svelte',
+			`${SRC_DIR}/Send.svelte`,
 			'utf-8'
 		);
 		const receiveSrc = fs.readFileSync(
-			'/home/debian/arx-projects/lnw-cash/src/screens/Receive.svelte',
+			`${SRC_DIR}/Receive.svelte`,
 			'utf-8'
 		);
 		// Each success section has 2+ success-rows
@@ -282,11 +288,11 @@ describe('Success Screens (TASK-169 / MOD-013) — Source Audits', () => {
 	it('Both files: no hardcoded hex in success CSS (TASK-167 tokens applied)', async () => {
 		const { default: fs } = await import('fs');
 		const sendSrc = fs.readFileSync(
-			'/home/debian/arx-projects/lnw-cash/src/screens/Send.svelte',
+			`${SRC_DIR}/Send.svelte`,
 			'utf-8'
 		);
 		const receiveSrc = fs.readFileSync(
-			'/home/debian/arx-projects/lnw-cash/src/screens/Receive.svelte',
+			`${SRC_DIR}/Receive.svelte`,
 			'utf-8'
 		);
 		// Find CSS blocks — search for hex patterns like #abc, #abcdef
@@ -303,11 +309,11 @@ describe('Success Screens (TASK-169 / MOD-013) — Source Audits', () => {
 	it('Both files: success-rows use spacing-only dividers (no border-bottom)', async () => {
 		const { default: fs } = await import('fs');
 		const sendSrc = fs.readFileSync(
-			'/home/debian/arx-projects/lnw-cash/src/screens/Send.svelte',
+			`${SRC_DIR}/Send.svelte`,
 			'utf-8'
 		);
 		const receiveSrc = fs.readFileSync(
-			'/home/debian/arx-projects/lnw-cash/src/screens/Receive.svelte',
+			`${SRC_DIR}/Receive.svelte`,
 			'utf-8'
 		);
 		// Check .success-row and .success-rows CSS
@@ -346,7 +352,7 @@ describe('Success Screens (TASK-169) — Live Render', () => {
 	it('Send: success-cta class exists in CSS (verified by source)', async () => {
 		const { default: fs } = await import('fs');
 		const src = fs.readFileSync(
-			'/home/debian/arx-projects/lnw-cash/src/screens/Send.svelte',
+			`${SRC_DIR}/Send.svelte`,
 			'utf-8'
 		);
 		expect(src).toMatch(/\.success-cta\s*\{/);
@@ -355,7 +361,7 @@ describe('Success Screens (TASK-169) — Live Render', () => {
 	it('Receive: success-cta class exists in CSS (verified by source)', async () => {
 		const { default: fs } = await import('fs');
 		const src = fs.readFileSync(
-			'/home/debian/arx-projects/lnw-cash/src/screens/Receive.svelte',
+			`${SRC_DIR}/Receive.svelte`,
 			'utf-8'
 		);
 		expect(src).toMatch(/\.success-cta\s*\{/);
@@ -364,7 +370,7 @@ describe('Success Screens (TASK-169) — Live Render', () => {
 	it('Send: success-rows CSS uses gap (not border) for dividers', async () => {
 		const { default: fs } = await import('fs');
 		const src = fs.readFileSync(
-			'/home/debian/arx-projects/lnw-cash/src/screens/Send.svelte',
+			`${SRC_DIR}/Send.svelte`,
 			'utf-8'
 		);
 		const cssBlock = src.match(/\.success-rows\s*\{[\s\S]*?\n\t\}/);
@@ -375,7 +381,7 @@ describe('Success Screens (TASK-169) — Live Render', () => {
 	it('Receive: success-rows CSS uses gap (not border) for dividers', async () => {
 		const { default: fs } = await import('fs');
 		const src = fs.readFileSync(
-			'/home/debian/arx-projects/lnw-cash/src/screens/Receive.svelte',
+			`${SRC_DIR}/Receive.svelte`,
 			'utf-8'
 		);
 		const cssBlock = src.match(/\.success-rows\s*\{[\s\S]*?\n\t\}/);
