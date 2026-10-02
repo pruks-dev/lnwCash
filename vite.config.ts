@@ -91,9 +91,15 @@ export default defineConfig({
 			registerType: 'autoUpdate',
 			includeAssets: ['favicon.svg'],
 			manifest: {
-				name: 'LNWCASH Wallet',
-				short_name: 'LNWCASH',
-				description: 'Lightning Network Wallet',
+			name: 'LNWCASH Wallet',
+			short_name: 'LNWCASH',
+			description: 'Lightning Network Wallet',
+			// FIX (2026-10-02, Commander Option A): Android launcher showed
+			// "Utilities" — Web App Manifest `categories` was missing, so
+			// Chrome defaulted the installed-app category. 'finance' matches
+			// the app's purpose (ecash/Lightning wallet). iOS ignores
+			// categories (limitation of its home-screen install).
+			categories: ['finance'],
 				theme_color: '#fafafa',
 				background_color: '#ffffff',
 				display: 'standalone',
