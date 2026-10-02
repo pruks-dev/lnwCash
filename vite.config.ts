@@ -95,7 +95,7 @@ export default defineConfig({
 				short_name: 'LNWCASH',
 				description: 'Lightning Network Wallet',
 				theme_color: '#fafafa',
-				background_color: '#ffffff',
+				background_color: '#12121a',
 				display: 'standalone',
 				scope: '/',
 				start_url: '/',
@@ -109,12 +109,6 @@ export default defineConfig({
 						src: 'icon-512.png',
 						sizes: '512x512',
 						type: 'image/png'
-					},
-					{
-						src: 'icon-512.png',
-						sizes: '512x512',
-						type: 'image/png',
-						purpose: 'any maskable'
 					}
 				]
 			},
