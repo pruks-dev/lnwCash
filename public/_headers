@@ -48,9 +48,13 @@
 # connect-src: wallet origin self + mint API over HTTPS ONLY.
 # An http:// origin is PROHIBITED — crypto.subtle is undefined on insecure
 # origins (L-T004) and mint tokens must never traverse plaintext.
-# FIXED (2026-10-02, Commander Option A): 'wasm-unsafe-eval' added to
-# script-src — the QR scanner decodes via ZXing WebAssembly inside a
-# Web Worker; without this token, WebAssembly.compile is blocked by CSP
-# on ALL devices (scanner frames never decode).
+# FIXED (2026-10-02): Pages serves the SPA entry at BOTH `/` and
+# `/index.html` — the `/` navigation does NOT inherit the /index.html rules
+# (live-verified: /index.html carried CSP, / carried none — cf DYNAMIC cache).
+# CSP must therefore be declared on BOTH paths. Without it, the browser
+# blocks WebAssembly compile in the QR scanner worker on every device.
+/
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://mint.lnw.cash; frame-ancestors 'none'; base-uri 'self'; form-action 'none'; upgrade-insecure-requests
+
 /index.html
   Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://mint.lnw.cash; frame-ancestors 'none'; base-uri 'self'; form-action 'none'; upgrade-insecure-requests
