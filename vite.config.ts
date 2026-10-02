@@ -9,47 +9,67 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
 const pkg = JSON.parse(fs.readFileSync(resolve(__dirname, 'package.json'), 'utf-8'));
 
-// TASK-703 v7.1.1 (FAST-LANE OVERRIDE — Commander directive 2026-08-31):
-// Inline plugin to strip 'fastly.jsdelivr.net' from production bundle.
-// Constraints (per BLUEPRINT-003 v7.1.1 FORBIDDEN_SCOPE_AMENDMENT):
+// TASK-703 v7.2 (2026-10-02 — INTENT-010 fast lane, Commander Option A):
+// Inline plugin — zxing-wasm CDN base → self-hosted same-origin path.
+// v7.1.1 stripped 'fastly.jsdelivr.net' to an empty string, which mutated the
+// bundled fallback URL into `https:///npm/zxing-wasm@...` (invalid host) and
+// the worker's wasm fetch died: "Failed to load 'https://npm/zxing-wasm@...'".
+// Root context: QrScanner.configureWasm() sets overrides in the MAIN thread,
+// but wasm loading happens INSIDE the worker, which uses its own bundled
+// default locateFile (the fastly URL) — main-thread overrides never reach it.
+// Pre-CI era worked because the VPS served without a restrictive CSP, so the
+// intact fastly URL fetched fine. Under Cloudflare Pages + CSP connect-src
+// 'self', only same-origin loads survive — so we complete the ORIGINAL
+// TASK-703 intent (no third-party CDN) properly:
+//   1. rewrite `https://fastly.jsdelivr.net/npm/zxing-wasm@X.Y.Z/dist/` →
+//      `/assets/zxing-wasm/` (same-origin, CSP 'self' passes)
+//   2. closeBundle copies the real wasm binary from node_modules into
+//      dist/assets/zxing-wasm/reader/zxing_reader.wasm
+//   3. legacy STRIP_RE kept as safety net for any other fastly reference
+// Constraints (per BLUEPRINT-003 v7.1.1 FORBIDDEN_SCOPE_AMENDMENT, unchanged):
 //   (a) production-only — gated by NODE_ENV at call sites (no dev/test impact)
-//   (b) regex-anchored to /fastly\.jsdelivr\.net/g only (no false positives)
+//   (b) regex-anchored to the zxing-wasm CDN base + fastly host (no false positives)
 //   (c) auditable in this file (inline, visible in source control)
 //   (d) NO other plugins added — single bounded inline plugin only
-// Root cause: vite `define` is identifier-replacement (rolldown/oxc) and
-// does not match substrings inside template literals — zxing-wasm@2.2.4
-// embeds the CDN URL only inside a template literal, so define was a no-op.
-// IMPLEMENTATION (two-stage):
-//   1. `transform` hook strips from main bundle's inlined zxing-wasm
-//      source modules (rolldown DOES call transform on the main bundle's
-//      modules because the qr-scanner entry isn't a `new URL(..., import.meta.url)`
-//      pattern at the top level — only the `worker.js` reference is).
-//   2. `closeBundle` hook post-processes dist/assets/worker-*.js because
-//      Vite 8 + Rolldown write worker asset files from a snapshot taken
-//      before any of our output hooks fire. Direct fs.writeFileSync is
-//      the only reliable way to mutate the emitted worker bundle.
-// The plugin is gated by `process.env.NODE_ENV === 'production'` at the
-// call sites (main `plugins` array and `worker.plugins` function) so dev
-// and test modes are untouched.
 function stripFastlyPlugin() {
-	const STRIP_RE = /fastly\.jsdelivr\.net/g;
+	// Rewrite the full zxing-wasm CDN base (host + package + version + /dist/)
+	// to a same-origin self-hosted path. Anchored so other URLs never match.
+	const CDN_BASE_RE = /https:\/\/fastly\.jsdelivr\.net\/npm\/zxing-wasm@\d+\.\d+\.\d+\/dist\//g;
+	const SELFHOST_BASE = '/assets/zxing-wasm/';
+	// v7.1.1 safety net: any remaining fastly host reference gets dropped.
+	const LEGACY_STRIP_RE = /fastly\.jsdelivr\.net/g;
 	return {
 		name: 'strip-fastly-cdn',
 		transform(code: string) {
-			return code.replace(STRIP_RE, '');
+			if (!code.includes('fastly.jsdelivr.net')) return null;
+			return code.replace(CDN_BASE_RE, SELFHOST_BASE).replace(LEGACY_STRIP_RE, '');
 		},
 		closeBundle() {
-			// Post-write strip on emitted worker files. Single bounded effect.
-			const distDir = resolve(__dirname, 'dist/assets');
-			if (!fs.existsSync(distDir)) return;
-			for (const file of fs.readdirSync(distDir)) {
+			// Post-write rewrite on emitted worker files (Vite 8 + Rolldown write
+			// worker assets from a snapshot taken before our output hooks fire —
+			// direct fs writes are the only reliable mutation point, per v7.1.1).
+			const distAssets = resolve(__dirname, 'dist/assets');
+			if (!fs.existsSync(distAssets)) return;
+			for (const file of fs.readdirSync(distAssets)) {
 				if (!file.startsWith('worker-') || !file.endsWith('.js')) continue;
-				const fullPath = join(distDir, file);
+				const fullPath = join(distAssets, file);
 				const content = fs.readFileSync(fullPath, 'utf-8');
 				if (content.includes('fastly.jsdelivr.net')) {
-					const stripped = content.replace(STRIP_RE, '');
-					fs.writeFileSync(fullPath, stripped, 'utf-8');
+					const rewritten = content
+						.replace(CDN_BASE_RE, SELFHOST_BASE)
+						.replace(LEGACY_STRIP_RE, '');
+					fs.writeFileSync(fullPath, rewritten, 'utf-8');
 				}
+			}
+			// Self-host the wasm binary so the rewritten URL resolves same-origin.
+			const wasmSource = resolve(
+				__dirname,
+				'node_modules/zxing-wasm/dist/reader/zxing_reader.wasm'
+			);
+			if (fs.existsSync(wasmSource)) {
+				const wasmTargetDir = join(distAssets, 'zxing-wasm/reader');
+				fs.mkdirSync(wasmTargetDir, { recursive: true });
+				fs.copyFileSync(wasmSource, join(wasmTargetDir, 'zxing_reader.wasm'));
 			}
 		}
 	};
