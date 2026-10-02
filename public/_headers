@@ -1,7 +1,7 @@
 # ============================================================================
 # _headers.template — Cloudflare Pages response headers (static file rules)
 # =============================================================================
-# TARGET LOCATION in the wallet repo: repo root as `_headers` (vite copies it
+# TARGET LOCATION in the wallet repo: `public/_headers` (vite copies public/*
 # into dist/ on build; wrangler uploads it with the deployment).
 # This template lives in lnw-infra/configs/cloudflared/ as the source copy.
 #
@@ -43,6 +43,16 @@
 # ── hashed build assets: immutable ──
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+
+# ── worker bundle exception (INTENT-010 lesson, 2026-10-02) ──
+# Rolldown hashes worker files from the PRE-closeBundle snapshot, but our
+# stripFastlyPlugin rewrites worker content AFTER emission → same filename,
+# different content. Immutable 1-year caching would serve the stale worker
+# at the old name (live-verified: edge held the old bundle while the new
+# deployment shipped). Short cache so content shifts always propagate.
+# NOTE: Pages splat rules only support trailing *, so /assets/worker-* it is.
+/assets/worker-*
+  Cache-Control: public, max-age=0, must-revalidate
 
 # ── CSP for the wallet SPA (§4.2 of phase-04-03 — matrix L-T004) ──
 # connect-src: wallet origin self + mint API over HTTPS ONLY.
