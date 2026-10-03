@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { VitePWA } from 'vite-plugin-pwa';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
+import { createHash } from 'node:crypto';
 import { resolve, join } from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -26,6 +27,22 @@ const pkg = JSON.parse(fs.readFileSync(resolve(__dirname, 'package.json'), 'utf-
 //   2. closeBundle copies the real wasm binary from node_modules into
 //      dist/assets/zxing-wasm/reader/zxing_reader.wasm
 //   3. legacy STRIP_RE kept as safety net for any other fastly reference
+// INTENT-011 (2026-10-03, TASK-WRK-01 — worker rename fast lane):
+//   Vite 8 + Rolldown name the worker file from a PRE-rewrite content
+//   snapshot. After step 1 mutates dist/assets/worker-*.js, the filename no
+//   longer matches the content it holds → cache poisoning (real incident
+//   INTENT-010: immutable edge + browser cache served a stale worker for a
+//   year). Fix: after rewriting, rename the file to a hash of its FINAL
+//   content and patch every reference to the old name across dist.
+//   Hash scheme — sha256(utf8(finalContent)) → base64url (RFC 4648 §5,
+//   unpadded) → first 8 ASCII chars → `worker-<hash>.js`. Deterministic:
+//   same content → same name on every build/machine. Rolldown's own chunk
+//   hash (xxhash-rust/xxh3 per symbols in @rolldown/binding-linux-x64-gnu
+//   1.1.5, hashCharacters default 'base64') was NOT re-implemented: the
+//   exact hasher input buffer (chunk content + internal metadata) is not
+//   unambiguously recoverable from the shipped node_modules artifacts, and
+//   guessing would break reproducibility. Files whose content was NOT
+//   rewritten keep their original name — it still matches their content.
 // Constraints (per BLUEPRINT-003 v7.1.1 FORBIDDEN_SCOPE_AMENDMENT, unchanged):
 //   (a) production-only — gated by NODE_ENV at call sites (no dev/test impact)
 //   (b) regex-anchored to the zxing-wasm CDN base + fastly host (no false positives)
@@ -38,6 +55,12 @@ function stripFastlyPlugin() {
 	const SELFHOST_BASE = '/assets/zxing-wasm/';
 	// v7.1.1 safety net: any remaining fastly host reference gets dropped.
 	const LEGACY_STRIP_RE = /fastly\.jsdelivr\.net/g;
+	// INTENT-011: deterministic content hash for post-rewrite file naming.
+	// sha256(utf8(content)) → base64url (RFC 4648 §5, unpadded) → first 8
+	// ASCII chars. 8 chars keeps the existing name style (`worker-ahvgEorK.js`)
+	// and gives a 48-bit collision space. Node built-in crypto — no new deps.
+	const contentHash = (content: string): string =>
+		createHash('sha256').update(content, 'utf-8').digest('base64url').slice(0, 8);
 	return {
 		name: 'strip-fastly-cdn',
 		transform(code: string) {
@@ -48,17 +71,57 @@ function stripFastlyPlugin() {
 			// Post-write rewrite on emitted worker files (Vite 8 + Rolldown write
 			// worker assets from a snapshot taken before our output hooks fire —
 			// direct fs writes are the only reliable mutation point, per v7.1.1).
-			const distAssets = resolve(__dirname, 'dist/assets');
+			const distDir = resolve(__dirname, 'dist');
+			const distAssets = join(distDir, 'assets');
 			if (!fs.existsSync(distAssets)) return;
+			// INTENT-011 step 1: rewrite fastly URLs and RENAME each mutated
+			// worker file to a hash of its FINAL content. The name emitted by
+			// Rolldown was derived from the pre-rewrite snapshot — after our
+			// rewrite it no longer matches the content, which is what let the
+			// INTENT-010 cache poisoning happen. Files whose content was NOT
+			// rewritten keep their original name (it still matches content).
+			const renameMap: Record<string, string> = {};
 			for (const file of fs.readdirSync(distAssets)) {
 				if (!file.startsWith('worker-') || !file.endsWith('.js')) continue;
 				const fullPath = join(distAssets, file);
 				const content = fs.readFileSync(fullPath, 'utf-8');
-				if (content.includes('fastly.jsdelivr.net')) {
-					const rewritten = content
-						.replace(CDN_BASE_RE, SELFHOST_BASE)
-						.replace(LEGACY_STRIP_RE, '');
+				if (!content.includes('fastly.jsdelivr.net')) continue;
+				const rewritten = content
+					.replace(CDN_BASE_RE, SELFHOST_BASE)
+					.replace(LEGACY_STRIP_RE, '');
+				const newName = `worker-${contentHash(rewritten)}.js`;
+				if (newName !== file) {
+					fs.writeFileSync(join(distAssets, newName), rewritten, 'utf-8');
+					fs.unlinkSync(fullPath);
+					renameMap[file] = newName;
+				} else {
+					// ~2^-48 coincidence: content changed but hash equals old name.
+					// Name still matches content — write in place, no rename needed.
 					fs.writeFileSync(fullPath, rewritten, 'utf-8');
+				}
+			}
+			// INTENT-011 step 2: patch every reference to the old worker names.
+			// Plain string token replace (split/join) — no regex, so nothing
+			// beyond the exact `worker-<hash>.js` token can be touched.
+			if (Object.keys(renameMap).length > 0) {
+				const refFiles = [
+					...fs
+						.readdirSync(distAssets)
+						.filter((f) => /^index-.*\.js$/.test(f))
+						.map((f) => join(distAssets, f)),
+					join(distDir, 'sw.js'),
+					join(distDir, 'index.html')
+				];
+				for (const refFile of refFiles) {
+					if (!fs.existsSync(refFile)) continue;
+					let refContent = fs.readFileSync(refFile, 'utf-8');
+					let changed = false;
+					for (const [oldName, newName] of Object.entries(renameMap)) {
+						if (!refContent.includes(oldName)) continue;
+						refContent = refContent.split(oldName).join(newName);
+						changed = true;
+					}
+					if (changed) fs.writeFileSync(refFile, refContent, 'utf-8');
 				}
 			}
 			// Self-host the wasm binary so the rewritten URL resolves same-origin.
