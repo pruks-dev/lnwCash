@@ -3,7 +3,7 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { VitePWA } from 'vite-plugin-pwa';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
 import { createHash } from 'node:crypto';
-import { resolve, join } from 'path';
+import { resolve, join, basename } from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -43,6 +43,26 @@ const pkg = JSON.parse(fs.readFileSync(resolve(__dirname, 'package.json'), 'utf-
 //   unambiguously recoverable from the shipped node_modules artifacts, and
 //   guessing would break reproducibility. Files whose content was NOT
 //   rewritten keep their original name — it still matches their content.
+// INTENT-011 rev 2 (2026-10-03, TASK-WRK-04 — rename fixpoint cascade):
+//   WRK-03 smoke caught the SAME poisoning class one level up: WRK-01 then
+//   patched index-*.js in place, but Rolldown had already named that file
+//   from its PRE-patch snapshot → the main bundle shipped old-name/new-
+//   content (edge served index-DdkOnsOa.js still referencing a stale
+//   worker). CloseBundle is therefore a FIXPOINT over "name ≡ content":
+//   (1) rewrite workers → rename to sha256 of final content (as WRK-01);
+//   (2) CASCADE: any hashed-name file whose content references a renamed
+//       token is patched AND renamed to sha256 of its patched content,
+//       feeding the rename map, until the cascade closes;
+//   (3) canonical files (index.html / sw.js / registerSW.js) are patched
+//       exactly ONCE with the final map and NEVER renamed — they are the
+//       static PWA URLs (registerSW.js hardcodes '/sw.js'; index.html is
+//       the Pages entry; sw.js is what every installed client imports);
+//   (4) self-verify on disk: every file closeBundle relocated must satisfy
+//       sha256(utf8(on-disk content)) == its name stem — another cascade
+//       round runs if not, and the build FAILS if the fixpoint does not
+//       converge, instead of silently shipping a poisoned cache again.
+//   Files never mutated by this plugin keep their Rolldown name — their
+//   content is never touched after naming, so name ≡ content holds.
 // Constraints (per BLUEPRINT-003 v7.1.1 FORBIDDEN_SCOPE_AMENDMENT, unchanged):
 //   (a) production-only — gated by NODE_ENV at call sites (no dev/test impact)
 //   (b) regex-anchored to the zxing-wasm CDN base + fastly host (no false positives)
@@ -74,16 +94,40 @@ function stripFastlyPlugin() {
 			const distDir = resolve(__dirname, 'dist');
 			const distAssets = join(distDir, 'assets');
 			if (!fs.existsSync(distAssets)) return;
-			// INTENT-011 step 1: rewrite fastly URLs and RENAME each mutated
-			// worker file to a hash of its FINAL content. The name emitted by
-			// Rolldown was derived from the pre-rewrite snapshot — after our
-			// rewrite it no longer matches the content, which is what let the
-			// INTENT-010 cache poisoning happen. Files whose content was NOT
-			// rewritten keep their original name (it still matches content).
+			// Hashed-name file pattern: Vite/Rolldown emit `<stem>-<8 base64url
+			// chars>.js|css`. Matches our own renames too (same alphabet). Only
+			// text assets are cascaded — binaries carry no renameable tokens.
+			const HASHED_FILE_RE = /^(.+)-([A-Za-z0-9_-]{8})\.(js|css)$/;
+			// INTENT-011 token patching is plain string split/join — no regex, so
+			// nothing beyond the exact `name-<hash>.<ext>` token can be touched
+			// (route skeletons / externalized URLs stay byte-exact, per WRK-01).
+			// Transitive re-application collapses multi-level rename chains
+			// (old→new, new→newer) inside a single patch pass.
+			const applyRenameMap = (content: string, map: Record<string, string>): string => {
+				let out = content;
+				for (let pass = 0; pass < 8; pass++) {
+					let next = out;
+					for (const [oldName, newName] of Object.entries(map)) {
+						if (next.includes(oldName)) next = next.split(oldName).join(newName);
+					}
+					if (next === out) break;
+					out = next;
+				}
+				return out;
+			};
+			// INTENT-011 step 1 (unchanged from WRK-01): rewrite fastly URLs and
+			// RENAME each mutated worker file to a hash of its FINAL content. The
+			// name emitted by Rolldown was derived from the pre-rewrite snapshot —
+			// after our rewrite it no longer matches the content, which is what
+			// let the INTENT-010 cache poisoning happen.
 			const renameMap: Record<string, string> = {};
+			// Absolute paths of every file this plugin relocated (or hash-
+			// coincidentally wrote in place) — self-verified on disk at the end.
+			const relocated = new Set<string>();
 			for (const file of fs.readdirSync(distAssets)) {
 				if (!file.startsWith('worker-') || !file.endsWith('.js')) continue;
 				const fullPath = join(distAssets, file);
+				if (!fs.statSync(fullPath).isFile()) continue;
 				const content = fs.readFileSync(fullPath, 'utf-8');
 				if (!content.includes('fastly.jsdelivr.net')) continue;
 				const rewritten = content
@@ -91,38 +135,89 @@ function stripFastlyPlugin() {
 					.replace(LEGACY_STRIP_RE, '');
 				const newName = `worker-${contentHash(rewritten)}.js`;
 				if (newName !== file) {
+					renameMap[file] = newName;
+					relocated.add(join(distAssets, newName));
 					fs.writeFileSync(join(distAssets, newName), rewritten, 'utf-8');
 					fs.unlinkSync(fullPath);
-					renameMap[file] = newName;
 				} else {
 					// ~2^-48 coincidence: content changed but hash equals old name.
 					// Name still matches content — write in place, no rename needed.
+					relocated.add(fullPath);
 					fs.writeFileSync(fullPath, rewritten, 'utf-8');
 				}
 			}
-			// INTENT-011 step 2: patch every reference to the old worker names.
-			// Plain string token replace (split/join) — no regex, so nothing
-			// beyond the exact `worker-<hash>.js` token can be touched.
-			if (Object.keys(renameMap).length > 0) {
-				const refFiles = [
-					...fs
-						.readdirSync(distAssets)
-						.filter((f) => /^index-.*\.js$/.test(f))
-						.map((f) => join(distAssets, f)),
-					join(distDir, 'sw.js'),
-					join(distDir, 'index.html')
-				];
-				for (const refFile of refFiles) {
-					if (!fs.existsSync(refFile)) continue;
-					let refContent = fs.readFileSync(refFile, 'utf-8');
-					let changed = false;
-					for (const [oldName, newName] of Object.entries(renameMap)) {
-						if (!refContent.includes(oldName)) continue;
-						refContent = refContent.split(oldName).join(newName);
+			// INTENT-011 rev 2 phases 2–4: the fixpoint cascade. A hashed-name
+			// file whose content references a renamed token was named from its
+			// PRE-patch content — patch it and rename it to the hash of the
+			// patched content, feeding the map, until the cascade closes.
+			// Canonical files (index.html / sw.js / registerSW.js) are patched
+			// ONCE per round with the final accumulated map and are NEVER
+			// renamed — they are static PWA URLs: registerSW.js hardcodes
+			// '/sw.js', sw.js is imported by every installed client, and
+			// index.html is the Pages entry document. Scanned roots: dist/assets
+			// plus dist root (the workbox runtime chunk lives there). A file
+			// containing no renamed token is NOT written (no free mutation).
+			const MAX_FIXPOINT_ROUNDS = 8;
+			let converged = false;
+			for (let round = 0; round < MAX_FIXPOINT_ROUNDS && !converged; round++) {
+				let changed = false;
+				for (const dir of [distAssets, distDir]) {
+					for (const file of fs.readdirSync(dir)) {
+						const fullPath = join(dir, file);
+						if (!HASHED_FILE_RE.test(file)) continue;
+						if (!fs.statSync(fullPath).isFile()) continue;
+						const content = fs.readFileSync(fullPath, 'utf-8');
+						const patched = applyRenameMap(content, renameMap);
+						if (patched === content) continue;
 						changed = true;
+						const match = HASHED_FILE_RE.exec(file);
+						if (!match) continue;
+						const newName = `${match[1]}-${contentHash(patched)}.${match[3]}`;
+						if (newName !== file) {
+							const newPath = join(dir, newName);
+							if (fs.existsSync(newPath)) {
+								throw new Error(
+									`strip-fastly-cdn: rename collision — ${newName} already exists in ${dir}`
+								);
+							}
+							renameMap[file] = newName;
+							relocated.delete(fullPath);
+							relocated.add(newPath);
+							fs.writeFileSync(newPath, patched, 'utf-8');
+							fs.unlinkSync(fullPath);
+						} else {
+							// ~2^-48 hash coincidence — name still matches content;
+							// write the patched content in place.
+							relocated.add(fullPath);
+							fs.writeFileSync(fullPath, patched, 'utf-8');
+						}
 					}
-					if (changed) fs.writeFileSync(refFile, refContent, 'utf-8');
 				}
+				// Phase 3 — canonical files: one write each, final content only.
+				for (const canonical of ['index.html', 'sw.js', 'registerSW.js']) {
+					const cPath = join(distDir, canonical);
+					if (!fs.existsSync(cPath)) continue;
+					const content = fs.readFileSync(cPath, 'utf-8');
+					const patched = applyRenameMap(content, renameMap);
+					if (patched !== content) fs.writeFileSync(cPath, patched, 'utf-8');
+				}
+				// Phase 4 — self-verify (first build gate of its kind): every file
+				// this plugin relocated must satisfy sha256(utf8(on-disk content))
+				// == name stem. Drift → another cascade round; never converging →
+				// fail the build loudly rather than ship a poisoned cache again.
+				converged = true;
+				for (const finalPath of relocated) {
+					const match = HASHED_FILE_RE.exec(basename(finalPath));
+					if (!match || contentHash(fs.readFileSync(finalPath, 'utf-8')) !== match[2]) {
+						converged = false;
+						break;
+					}
+				}
+			}
+			if (!converged) {
+				throw new Error(
+					`strip-fastly-cdn: rename fixpoint did not converge after ${MAX_FIXPOINT_ROUNDS} rounds — refusing to finish a poisoned dist`
+				);
 			}
 			// Self-host the wasm binary so the rewritten URL resolves same-origin.
 			const wasmSource = resolve(
