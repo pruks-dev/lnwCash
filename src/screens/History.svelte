@@ -45,6 +45,9 @@
 	let isPulling: boolean = $state(false);
 	let refreshing: boolean = $state(false);
 	let touchStartY: number = $state(0);
+	// TASK-1203 (INTENT-012): element ref for pull indicator — CSP style-src 'self'
+	// forbids inline style attributes; height is applied via style.setProperty below.
+	let pullIndicatorEl: HTMLDivElement | null = $state(null);
 
 	// TASK-150: Transaction detail sheet state
 	let selectedTx: Transaction | null = $state(null);
@@ -198,6 +201,16 @@
 		isPulling = false;
 	}
 
+	// TASK-1203 (INTENT-012): pull indicator height via JS style API.
+	// Runs on mount of the {#if isPulling} block (bind:this assigns the ref,
+	// re-triggering this effect) and on every pullDistance change — identical
+	// visual behavior to the previous inline style attribute, CSP-safe.
+	$effect(() => {
+		if (pullIndicatorEl) {
+			pullIndicatorEl.style.setProperty('height', `${pullDistance}px`);
+		}
+	});
+
 	/**
 	 * Empty state hint text — no i18n key modification (per TASK-060 rules).
 	 * Fallback: Thai text when lang is 'th', English otherwise.
@@ -232,7 +245,7 @@
 
 	<!-- ─── Pull indicator ─────────────────────────────── -->
 	{#if isPulling}
-		<div class="pull-indicator" style="height: {pullDistance}px" aria-hidden="true">
+		<div class="pull-indicator" bind:this={pullIndicatorEl} aria-hidden="true">
 			<Body size="sm" color="secondary">
 				{#if refreshing}
 					{$_('common.loading')}
