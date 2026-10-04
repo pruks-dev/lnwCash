@@ -21,7 +21,8 @@
 		"cap:apk:debug": "cd android && ./gradlew assembleDebug",
 		"cap:apk:release": "cd android && ./gradlew assembleRelease",
 		"apk:build": "bash scripts/build-apk.sh",
-		"env:check": "bash scripts/check-env.sh"
+		"env:check": "bash scripts/check-env.sh",
+		"postinstall": "patch-package || exit 0"
 	},
 	"dependencies": {
 		"@agicash/qr-scanner": "^0.1.2",
@@ -57,6 +58,7 @@
 		"eslint-plugin-svelte": "^3.22.0",
 		"globals": "^17.8.0",
 		"jsdom": "^29.1.1",
+		"patch-package": "^8.0.1",
 		"playwright": "^1.62.1",
 		"prettier": "^3.9.6",
 		"prettier-plugin-svelte": "^4.1.1",

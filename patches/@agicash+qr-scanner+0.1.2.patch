@@ -1,0 +1,37 @@
+diff --git a/node_modules/@agicash/qr-scanner/dist/index.js b/node_modules/@agicash/qr-scanner/dist/index.js
+index 4266578..9ba1409 100644
+--- a/node_modules/@agicash/qr-scanner/dist/index.js
++++ b/node_modules/@agicash/qr-scanner/dist/index.js
+@@ -412,11 +412,11 @@ var FrameExtractor = class {
+     this.getScanRegion = config.getScanRegion;
+     if (typeof OffscreenCanvas !== "undefined") {
+       this.canvas = new OffscreenCanvas(1, 1);
+-      this.ctx = this.canvas.getContext("2d");
++      this.ctx = this.canvas.getContext("2d", { willReadFrequently: true });
+     } else {
+       this.canvas = document.createElement("canvas");
+       this.canvas.style.display = "none";
+-      this.ctx = this.canvas.getContext("2d");
++      this.ctx = this.canvas.getContext("2d", { willReadFrequently: true });
+     }
+   }
+   start(onFrame) {
+@@ -863,15 +863,15 @@ async function loadImageData(source, scanRegion, canvas) {
+     drawCanvas = canvas;
+     canvas.width = sw;
+     canvas.height = sh;
+-    ctx = canvas.getContext("2d");
++    ctx = canvas.getContext("2d", { willReadFrequently: true });
+   } else if (typeof OffscreenCanvas !== "undefined") {
+     drawCanvas = new OffscreenCanvas(sw, sh);
+-    ctx = drawCanvas.getContext("2d");
++    ctx = drawCanvas.getContext("2d", { willReadFrequently: true });
+   } else {
+     drawCanvas = document.createElement("canvas");
+     drawCanvas.width = sw;
+     drawCanvas.height = sh;
+-    ctx = drawCanvas.getContext("2d");
++    ctx = drawCanvas.getContext("2d", { willReadFrequently: true });
+   }
+   ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+   return ctx.getImageData(0, 0, sw, sh);
