@@ -91,6 +91,7 @@ import { createWallet, unlockWallet } from '../state';
 import { clearAllWalletData } from '../storage';
 import { deleteProofDB, resetProofDB, getTotalBalance } from '../proofsDb';
 import { mintFlow, requestMint, completeMint, decomposeAmount } from '../mint';
+import { completeSet } from '../completeSet';
 import { getTransactions, clearTransactions } from '../../storage/db';
 
 const TEST_PIN = '123456';
@@ -121,8 +122,11 @@ describe('Mint flow', () => {
 		vi.clearAllMocks();
 
 		// Reset all client mocks to their default implementations
+		// TASK-1304 (INTENT-013): completeMint submits completeSet(amount) outputs
+		// — the mock mint echoes exactly what was submitted (as a real mint does),
+		// so these signatures mirror completeSet(10) = [1,1,2,4,1,1], not pow2 [8,2].
 		const mintTokensMock = client.mintTokens as ReturnType<typeof vi.fn>;
-		mintTokensMock.mockResolvedValue(makeMockSignatures(decomposeAmount(10)));
+		mintTokensMock.mockResolvedValue(makeMockSignatures(completeSet(10)));
 
 		const getKeysetsMock = client.getKeysets as ReturnType<typeof vi.fn>;
 		getKeysetsMock.mockResolvedValue([

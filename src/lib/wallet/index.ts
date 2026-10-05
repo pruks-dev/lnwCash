@@ -23,6 +23,18 @@ export {
 	type ProofBalance
 } from './tokenStore';
 
+// TASK-1304 (INTENT-013): auto-normalize wiring (T1/T2/T3 + bound swap)
+export {
+	isWalletOnline,
+	boundSwapFn,
+	createAutoNormalizeDeps,
+	scheduleNormalizeAfterReceiveOnline,
+	scheduleNormalizeAfterMint,
+	flushPendingNormalizeOnBackOnline,
+	normalizePileNow,
+	cancelScheduledNormalize
+} from './normalizeWiring';
+
 // proofs and proofsDb have overlapping names, export selectively:
 export { selectProofs, sumProofs, groupByKeyset, groupByMint } from './proofs';
 export {

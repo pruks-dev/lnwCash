@@ -21,18 +21,21 @@ import {
 	getBalanceByMint,
 	getProofCount,
 	clearProofs,
+	markPendingNormalizeByProof,
 	type StoredProof
 } from './proofsDb';
 import { addTransaction } from '../storage/db';
 import { selectProofs, sumProofs } from './proofs';
 import { encodeToken, decodeToken, getTokenAmount } from '../cashu/token';
 import { decomposeAmount } from './mint';
+import { completeSet } from './completeSet';
 import { checkState, swapProofs } from '../cashu/client';
 import { blindMessage, unblindSignature, blindingFactorToHex } from '../cashu/blind';
 import { fetchAndCacheKeysets, getMintPubkey, resolveKeysetId } from '../cashu/keyset';
 import { getPrivateKey } from './state';
 import { deriveSecretAndR, getActiveSeed } from './nut13';
 import { getCounterK, incrementCounterK, withKeysetLock } from './counterK';
+import { isWalletOnline, scheduleNormalizeAfterReceiveOnline } from './normalizeWiring';
 import type { TokenProof, DecodedToken } from '../types';
 import { TokenValidationError } from './errors';
 
@@ -310,6 +313,47 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 	// seed so they are recoverable from the seed-phrase backup.
 	getPrivateKey(); // throws WalletLockedError if wallet is locked
 	const seed = getActiveSeed();
+
+	// ─── TASK-1304 (5): OFFLINE receive — passthrough 1:1 เดิม 100% ───
+	// Blueprint C: "ถ้า offline ให้เก็บแบบ passthrough ก่อน แล้ว consolidate ที
+	// หลังเมื่อ online". ข้อห้าม: ห้ามเปลี่ยน passthrough เป็น swap — เก็บ 1:1
+	// ตามเดิม, counter_k ไม่ถูกแตะ (flag "ไม่เข้าระบบ counter") — เก็บ
+	// pending_normalize แทน แล้ว T3 (flushPendingNormalizeOnBackOnline) เคลียร์
+	// เมื่อกลับ online. Derivation ไม่ถูกใช้ → legacy wallet (ไม่มี seed) ยัง
+	// รับ offline ได้ปกติ.
+	if (!isWalletOnline()) {
+		const totalAmount = decoded.proofs.reduce((sum, p) => sum + p.amount, 0);
+		await addProofs(decoded.proofs, mintUrl, keysetId); // 1:1 — mark as-is
+		await markPendingNormalizeByProof(decoded.proofs);
+		const dleqCount = decoded.proofs.filter(p => p.dleq).length;
+
+		// Record transaction (F-088) — best-effort
+		try {
+			await addTransaction({
+				id: `cashu-recv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+				type: 'cashu_receive',
+				protocol: 'cashu',
+				amount: totalAmount,
+				mint_url: mintUrl,
+				timestamp: Date.now(),
+				token_hash: tokenString,
+				status: 'confirmed',
+				fee: 0
+			});
+		} catch {
+			// IndexedDB may be unavailable
+		}
+
+		return {
+			amount: totalAmount,
+			mint: mintUrl,
+			unit: decoded.unit,
+			proofCount: decoded.proofs.length,
+			dleqCount: dleqCount > 0 ? dleqCount : undefined
+		};
+	}
+
+	// ONLINE swap receive — deterministic derivation REQUIRES a seed.
 	if (!seed) {
 		throw new Error(
 			'NUT-13: no active wallet seed — deterministic swap receive requires a seed-phrase wallet. ' +
@@ -342,17 +386,26 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 				}
 			}
 
+			// TASK-1304 (3): the swap receive consolidates straight into a
+			// complete set of its own sum — S = sum(decoded.proofs) →
+			// outputs = completeSet(S). The mint signs EXACTLY these outputs, so
+			// the counter MUST advance by outputs.length (จุดเสี่ยง 2 HIGH —
+			// ห้ามค้าง decoded.proofs.length; advance = จำนวนก้อนที่ mint sign
+			// เสมอ เพื่อให้ NUT-9 restore ครอบทุกก้อน).
+			const targetAmounts = completeSet(
+				decoded.proofs.reduce((sum, p) => sum + p.amount, 0)
+			);
+
 			// Create blinded outputs (deterministic NUT-13 secrets + blinding)
 			const blindPairs: Array<{ secret: string; B_: string; r: string }> = [];
 			const outputs: Array<{ amount: number; id: string; B_: string }> = [];
 
 			const startCounter = getCounterK(fullId);
-			for (let i = 0; i < decoded.proofs.length; i++) {
-				const proof = decoded.proofs[i];
+			for (let i = 0; i < targetAmounts.length; i++) {
 				const { secret, r } = deriveSecretAndR(seed, fullId, startCounter + i);
 				const { B_, blindingFactor } = blindMessage(secret, r);
 				blindPairs.push({ secret, B_, r: blindingFactor });
-				outputs.push({ amount: proof.amount, id: fullId, B_ });
+				outputs.push({ amount: targetAmounts[i], id: fullId, B_ });
 			}
 
 			// Swap: send old proofs as inputs, new blinded messages as outputs
@@ -360,11 +413,34 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 			const swapInputs = decoded.proofs.map(p => ({ ...p, id: fullId }));
 			const swapResult = await swapProofs(mintUrl, swapInputs, outputs);
 
-			// TASK-244 (F-V27-005): the mint has now signed the swap receive outputs
-			// (swapProofs returned) — advance counter_k even if local persistence
-			// (addProofs below) later throws, otherwise the next receive re-derives
-			// the same B_ and the mint rejects it as "outputs already signed".
-			incrementCounterK(fullId, decoded.proofs.length);
+			// ── TASK-313 guard (melt.ts:624 pattern — TASK-1304) ────────
+			// MORE than derived: the mint created outputs we never submitted —
+			// advancing the counter would desync it (widening 11003 loops).
+			// FEWER than derived: NUT-03 contract violation — index alignment
+			// `outputs[i] ↔ signatures[i]` cannot be trusted. Both abort BEFORE
+			// the counter advance below — counter_k survives intact.
+			const signedCount = swapResult.signatures.length;
+			if (signedCount > outputs.length) {
+				throw new Error(
+					`Mint anomaly: signed ${signedCount} swap outputs but we derived only ${outputs.length} — ` +
+					`aborting to prevent counter_k desync. Mint URL: ${mintUrl}`
+				);
+			}
+			if (signedCount < outputs.length) {
+				throw new Error(
+					`Mint anomaly: signed only ${signedCount} of ${outputs.length} swap outputs ` +
+					`(the mint must sign every submitted output) — aborting to prevent misaligned secrets. ` +
+					`Mint URL: ${mintUrl}`
+				);
+			}
+
+			// TASK-244 (F-V27-005) + TASK-1304 (จุดเสี่ยง 2 HIGH): the mint has
+			// now signed the swap receive outputs (swapProofs returned) — advance
+			// counter_k by outputs.length (= จำนวนก้อนที่ mint sign เสมอ) even if
+			// local persistence (addProofs below) later throws, otherwise the next
+			// receive re-derives the same B_ and the mint rejects it as "outputs
+			// already signed".
+			incrementCounterK(fullId, outputs.length);
 
 			// Unblind signatures to get new proofs
 			const unblinded = swapResult.signatures.map((sig, i) => {
@@ -407,6 +483,12 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 		} catch {
 			// IndexedDB may be unavailable
 		}
+
+		// TASK-1304 (6): T1 — receive online finished → schedule the debounced
+		// (~2s) auto-normalize toward a complete set (zero-swap short-circuit
+		// inside normalizeToCompleteSet skips the swap when the pile already
+		// IS the completeSet target).
+		scheduleNormalizeAfterReceiveOnline();
 
 		return {
 			amount: totalAmount,

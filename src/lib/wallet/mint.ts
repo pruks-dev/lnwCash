@@ -19,6 +19,8 @@ import { blindMessage, unblindSignature, blindingFactorToHex } from '../cashu/bl
 import { getPrivateKey } from './state';
 import { deriveSecretAndR, getActiveSeed } from './nut13';
 import { getCounterK, incrementCounterK, withKeysetLock } from './counterK';
+import { completeSet } from './completeSet';
+import { scheduleNormalizeAfterMint } from './normalizeWiring';
 import { addProofs, getAllProofs } from './proofsDb';
 import { addTransaction } from '../storage/db';
 import type { TokenProof, MintQuote, Transaction } from '../types';
@@ -256,7 +258,12 @@ export async function completeMint(
 		}
 
 		// Step 2: Decompose amount into outputs
-		const amounts = decomposeAmount(amount);
+		// TASK-1304 (INTENT-013): mint into a complete-set of the amount —
+		// completeSet(amount) yields [1,1,2,4,…] so the wallet can pay EVERY
+		// amount 1..amount exactly without a swap (fold C). With amounts =
+		// completeSet, the counter advance below (amounts.length — the count of
+		// outputs the mint actually signed) stays automatically correct.
+		const amounts = completeSet(amount);
 
 		// TASK-250 (RC-2): minting now REQUIRES a seed — no random-secret fallback.
 		// A legacy (24-word) wallet has no mnemonic, so deterministic NUT-13 output
@@ -312,6 +319,28 @@ export async function completeMint(
 					await fetchAndCacheKeysets(mintUrl);
 				} catch {
 					// Continue — unblinding will fall back to multiplicative if keys unavailable
+				}
+
+				// ── TASK-313 guard (melt.ts:624 pattern — TASK-1304) ────
+				// MORE than derived: the mint created outputs we never
+				// submitted — advancing the counter would desync it (the
+				// 11003 loop widens). Aborting BEFORE the counter advance
+				// below keeps counter_k intact.
+				// FEWER than derived: mint-contract violation — the index
+				// alignment `outputs[i] ↔ signatures[i]` cannot be trusted
+				// (a short return would store wrong secret/signature pairs).
+				// Both directions throw before addProofs/counter-advance.
+				if (response.signatures.length > amounts.length) {
+					throw new Error(
+						`Mint anomaly: signed ${response.signatures.length} outputs but we derived only ${amounts.length} — ` +
+						`aborting to prevent counter_k desync. Mint URL: ${mintUrl}`
+					);
+				}
+				if (response.signatures.length < amounts.length) {
+					throw new Error(
+						`Mint anomaly: signed only ${response.signatures.length} of ${amounts.length} outputs ` +
+						`(the mint must sign every submitted output) — aborting to prevent misaligned secrets. Mint URL: ${mintUrl}`
+					);
 				}
 
 				// Step 5: Unblind signatures → proofs
@@ -377,6 +406,14 @@ export async function completeMint(
 			} as Transaction);
 		} catch {
 			// IndexedDB may be unavailable — transaction recording is best-effort
+		}
+
+		// TASK-1304 (2): T2 — completeMint finished → schedule the debounced
+		// (~2s) auto-normalize of the whole spendable pile toward a complete
+		// set. Zero-swap short-circuit inside `normalizeToCompleteSet` skips
+		// the mint round-trip entirely when the pile already IS one.
+		if (proofs.length > 0) {
+			scheduleNormalizeAfterMint();
 		}
 
 		return {

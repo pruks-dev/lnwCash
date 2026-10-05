@@ -24,6 +24,14 @@ export interface StoredProof extends TokenProof {
 	 * manually reviewed or deleted.
 	 */
 	orphaned?: boolean;
+	/**
+	 * TASK-1304 (INTENT-013): pending normalize flag — true when the proof was
+	 * stored via the offline passthrough receive (1:1, NOT swapped at the mint,
+	 * counter NOT advanced — the flag deliberately lives outside the counter
+	 * system). Cleared by the T3 back-online auto-normalize flush
+	 * (`flushPendingNormalizeOnBackOnline`) once the pile has been consolidated.
+	 */
+	pending_normalize?: boolean;
 }
 
 // ─── DB Setup ────────────────────────────────────────────────
@@ -79,7 +87,7 @@ export async function deleteProofDB(): Promise<void> {
 
 // ─── Generate local_id ───────────────────────────────────────
 
-function makeLocalId(proof: TokenProof): string {
+export function makeLocalId(proof: TokenProof): string {
 	// Use a hash approach to avoid collisions from truncated secrets
 	// Combine proof id + first 8 and last 8 chars of secret for uniqueness
 	const secretStart = proof.secret.substring(0, 8);
@@ -388,4 +396,52 @@ export async function clearOrphaned(localId: string): Promise<void> {
 export async function needsRetagging(knownMints: KnownMintInfo[]): Promise<boolean> {
 	const dryRunResult = await retagProofs(knownMints, true);
 	return dryRunResult.retagged > 0 || dryRunResult.orphaned > 0;
+}
+
+// ─── TASK-1304 (INTENT-013): pending-normalize flags ─────────
+
+/**
+ * TASK-1304: mark proofs emitted by the OFFLINE passthrough receive as
+ * pending-normalize. This is a bookkeeping flag ONLY — it deliberately does
+ * NOT touch the NUT-13 counter system (offline passthrough derives nothing,
+ * so the counter stays where it is).
+ */
+export async function markPendingNormalizeByProof(proofs: TokenProof[]): Promise<void> {
+	const db = await getDB();
+	const tx = db.transaction(STORE_NAME, 'readwrite');
+	for (const proof of proofs) {
+		const stored = await tx.store.get(makeLocalId(proof));
+		if (stored) {
+			stored.pending_normalize = true;
+			await tx.store.put(stored);
+		}
+	}
+	await tx.done;
+}
+
+/**
+ * TASK-1304: all UNSPENT proofs currently flagged pending-normalize
+ * (the offline-passthrough pile waiting for the T3 back-online consolidate).
+ */
+export async function getPendingNormalizeProofs(): Promise<StoredProof[]> {
+	const db = await getDB();
+	const all = await db.getAll(STORE_NAME);
+	return all.filter(p => p.pending_normalize === true && !p.spent);
+}
+
+/**
+ * TASK-1304: clear the pending-normalize flag (T3 flush bookkeeping — the pile
+ * has either been consolidated via swap or was already a complete set).
+ */
+export async function clearPendingNormalize(localIds: string[]): Promise<void> {
+	const db = await getDB();
+	const tx = db.transaction(STORE_NAME, 'readwrite');
+	for (const id of localIds) {
+		const stored = await tx.store.get(id);
+		if (stored) {
+			stored.pending_normalize = false;
+			await tx.store.put(stored);
+		}
+	}
+	await tx.done;
 }
