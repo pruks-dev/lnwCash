@@ -57,7 +57,10 @@ describe('Transfer', () => {
 			await sendTokens(20, MINT_URL);
 
 			const balanceAfter = await getTotalBalance();
-			expect(balanceAfter).toBe(balanceBefore - 32); // spent 32 (closest >= 20)
+			// TASK-1303 (INTENT-013): 20 = 10100₂ — denomination-first hit 16,
+			// DP ยืม 8 (เกณฑ์ 2, excess 4) → selected [16,8] sum 24.
+			// Test env ไม่มี mint → swap fail → fallback ส่ง selected เดิม → ลด 24.
+			expect(balanceAfter).toBe(balanceBefore - 24);
 		});
 
 		it('should produce a decodable token', async () => {

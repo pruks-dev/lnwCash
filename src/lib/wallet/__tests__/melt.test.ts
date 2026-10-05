@@ -173,7 +173,18 @@ describe('Melt flow', () => {
 
 		// ─── C05-05: input_fee_ppk fee calculation ─────────────
 
-		it('C05-05: should calculate fee = 1 × ppk for 1 input', async () => {
+		it('C05-05 (TASK-1303): should calculate fee = 1 × ppk for 1 input', async () => {
+			// TASK-1303: กอง [32] จ่าย 30 — 30=11110₂ ไม่มี denomination 2/4/16
+			// → DP เกณฑ์ 2 ยืม 32 (excess 2) → 1 input
+			await clearAllWalletData();
+			await deleteProofDB();
+			resetProofDB();
+			await createWallet(TEST_PIN, TEST_NAME);
+			await unlockWallet(TEST_PIN);
+			await addProofs([makeProof('p1', 32)], MINT_URL, KEYSET_ID);
+			// TASK-250 (RC-3): proofs "already minted" → counter ต้อง > 0 ก่อน melt
+			setCounterK(KEYSET_ID, 1);
+
 			// Mock checkState to return UNSPENT
 			(client.checkState as ReturnType<typeof vi.fn>).mockResolvedValue({
 				states: [
@@ -186,6 +197,22 @@ describe('Melt flow', () => {
 			expect(result.success).toBe(true);
 			expect(result.inputFeePpk).toBe(5);
 			expect(result.calculatedFee).toBe(5); // 1 input × ppk=5
+		});
+
+		it('C05-05 (TASK-1303): denomination-first + DP เลือก 3 inputs สำหรับ 30 จาก [32,16,8] → fee = 3 × ppk', async () => {
+			// TASK-1303: 30 = 11110₂ — ขั้น 1 hit 8,16 · R=6 → DP เกณฑ์ 2 ยืม 32
+			// (excess 26) → selected 3 ก้อน — fee คิดตามจำนวน input จริง
+			(client.checkState as ReturnType<typeof vi.fn>).mockResolvedValue({
+				states: [
+					{ secret: 'secret-p1', state: 'UNSPENT', witness: null }
+				]
+			});
+
+			const result = await meltFlow(MINT_URL, 'lnbc...', 30);
+
+			expect(result.success).toBe(true);
+			expect(result.inputFeePpk).toBe(5);
+			expect(result.calculatedFee).toBe(15); // 3 inputs × ppk=5
 		});
 
 		it('C05-05: should calculate fee = 3 × ppk for 3 inputs', async () => {

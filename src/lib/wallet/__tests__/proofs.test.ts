@@ -48,11 +48,13 @@ describe('Proof selection', () => {
 			expect(result[0].amount).toBe(16);
 		});
 
-		it('should select fewest proofs using greedy approach', () => {
+		it('should prefer exact subset over fewest proofs (INTENT-013 TASK-1303)', () => {
 			const result = selectProofs(proofs, 70);
-			// Greedy picks 64 + 8 = 72 (2 proofs) — that's fewer than 64 + 4 + 2
-			expect(result.length).toBe(2);
-			expect(sumProofs(result)).toBeGreaterThanOrEqual(70);
+			// 70 = 1000110₂ — 4-step ladder: denomination-first หยิบ 64+4+2 exact
+			// (ส่งเป๊ะ ไม่มี change) — เดิม greedy ได้ [64,8]=72 แต่ ruling_1 ยอมรับ
+			// พฤติกรรมใหม่ exact-subset-first แล้ว (greedy คงเป็นชั้นท้ายเมื่อไม่มี subset)
+			expect(result.length).toBe(3);
+			expect(sumProofs(result)).toBe(70);
 		});
 
 		it('should select all if necessary', () => {

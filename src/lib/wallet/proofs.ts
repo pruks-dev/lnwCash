@@ -4,18 +4,29 @@
  */
 import type { StoredProof } from './proofsDb';
 import { ProofSelectionError } from './errors';
+import { remainderSelect } from './remainderSelect';
+import { completeSet } from './completeSet';
 
 // ─── Selection Strategies ────────────────────────────────────
 
 /**
- * Select proofs to cover `amount`.
+ * Select proofs to cover `amount` — TASK-1303 (INTENT-013) 4-step ladder:
  *
- * Strategy (prefer fewest proofs):
- * 1. Try exact single proof match
- * 2. Try greedy largest-first (fewest proofs heuristic)
- * 3. Fallback: any combination that covers amount
+ * 1. Exact single proof match (เดิม) — a proof whose amount === `amount`.
+ * 2. Denomination-first (re-use TASK-1302 `remainderSelect` ขั้น 1): write
+ *    `amount` in binary, take ONE matching-denomination proof per set bit.
+ * 3. DP min-excess remainder (re-use TASK-1302 `remainderSelect` ขั้น 2-3):
+ *    cover the leftover remainder exactly (เกณฑ์ 1) or with minimal
+ *    (excess, coin-count) overpay (เกณฑ์ 2-3). Any excess is reported to the
+ *    caller by the sum alone — call sites keep their existing swap path.
+ * 4. Greedy largest-first fallback (เดิม :41-61 คงเป็นชั้นท้าย) — only when
+ *    steps 1-3 find no way (defensive; e.g. malformed amounts).
  *
- * @returns Array of selected proofs (unspent, marked for use)
+ * Contract/signature unchanged: same `(proofs, amount) → StoredProof[]`,
+ * same `ProofSelectionError` on insufficient funds — every call site
+ * (transfer.ts, melt.ts, offline.ts, tokenStore.ts) accepts it as-is.
+ *
+ * @returns Array of selected proofs (unspent, marked for use), sum ≥ amount
  * @throws ProofSelectionError if insufficient funds
  */
 export function selectProofs(proofs: StoredProof[], amount: number): StoredProof[] {
@@ -31,13 +42,25 @@ export function selectProofs(proofs: StoredProof[], amount: number): StoredProof
 		throw new ProofSelectionError(amount);
 	}
 
-	// Try exact match: a single proof equal to amount
+	// ขั้น 1 — exact single proof equal to amount
 	const exactMatch = unspent.find(p => p.amount === amount);
 	if (exactMatch) {
 		return [exactMatch];
 	}
 
-	// Try greedy: sort descending, pick largest until amount covered
+	// ขั้น 2+3 — denomination-first + DP min-excess remainder
+	// (re-use remainderSelect from TASK-1302 — one call runs ขั้น 1 then ขั้น 2-3;
+	//  no duplicated implementation, semantics locked by remainderSelect tests)
+	try {
+		const pool = unspent.map(p => p.amount);
+		const pick = remainderSelect(amount, pool);
+		// ขั้น 3 (remainderSelect): excess > 0 → คืน caller — swap path เดิมของ call site
+		return [...pick.denominationHits, ...pick.dpSubset].map(i => unspent[i]);
+	} catch {
+		// ขั้น 2+3 หาทางไม่เจอ (input ผิดปกติ เช่น non-safe-integer) → ตกไปชั้นท้าย
+	}
+
+	// ขั้น 4 — greedy fallback: sort descending, pick largest until amount covered
 	const sorted = [...unspent].sort((a, b) => b.amount - a.amount);
 
 	let selected: StoredProof[] = [];
@@ -62,6 +85,171 @@ export function selectProofs(proofs: StoredProof[], amount: number): StoredProof
 
 	// Fallback: return everything (should not reach here given total check)
 	return selected;
+}
+
+// ─── Consolidation — normalize to complete-set (TASK-1303 B) ─
+
+/**
+ * Host-performed NUT-03 swap, injected into `normalizeToCompleteSet`.
+ * Hands over `proofs` and must return the proofs received back with exactly
+ * `outputs` denominations (sum(outputs) === sum(proofs)).
+ * All I/O lives here — the orchestrator itself stays pure.
+ */
+export type SwapFn = (proofs: StoredProof[], outputs: number[]) => Promise<StoredProof[]>;
+
+/** Result of one `normalizeToCompleteSet` attempt. */
+export interface NormalizeResult {
+	/** true — swapFn ran · false — zero-swap short-circuit (or empty pile). */
+	swapped: boolean;
+	/** true — pile already complete-set of its own sum → swap skipped. */
+	zeroSwap: boolean;
+	/** Σ amount of the pile before normalize. */
+	sum: number;
+	/** completeSet(sum) target denominations (empty when sum = 0). */
+	target: number[];
+	/** Proofs after the attempt (swapFn result when swapped; input otherwise). */
+	proofs: StoredProof[];
+}
+
+/** Multiset equality (order-free) between the pile amounts and the target. */
+function isCompleteSetMultiset(amounts: number[], target: number[]): boolean {
+	if (amounts.length !== target.length) return false;
+	const a = [...amounts].sort((x, y) => x - y);
+	const t = [...target].sort((x, y) => x - y);
+	return a.every((v, i) => v === t[i]);
+}
+
+/**
+ * Consolidate a proof pile into a complete-set of its own sum — TASK-1303
+ * (INTENT-013, ruling_2). Pure orchestrator: the swap is function injection
+ * (`swapFn`), no I/O here.
+ *
+ * zero-swap short-circuit: when the pile's amount multiset already equals
+ * `completeSet(sum)` (TASK-1301), skip the swap entirely (risk R-8/R-9
+ * mitigation — assumption verified:false, covered by unit tests here).
+ *
+ * @param proofs the pile to consolidate
+ * @param swapFn injected NUT-03 swap (see `SwapFn`)
+ * @throws whatever `swapFn` throws — propagated to the caller untouched
+ */
+export async function normalizeToCompleteSet(
+	proofs: StoredProof[],
+	swapFn: SwapFn
+): Promise<NormalizeResult> {
+	const sum = proofs.reduce((s, p) => s + p.amount, 0);
+
+	// Empty pile — nothing to consolidate
+	if (sum <= 0) {
+		return { swapped: false, zeroSwap: true, sum: 0, target: [], proofs };
+	}
+
+	const target = completeSet(sum);
+
+	// zero-swap short-circuit (ruling_2): pile already in complete-set shape
+	if (isCompleteSetMultiset(proofs.map(p => p.amount), target)) {
+		return { swapped: false, zeroSwap: true, sum, target, proofs };
+	}
+
+	const newProofs = await swapFn(proofs, target);
+	return { swapped: true, zeroSwap: false, sum, target, proofs: newProofs };
+}
+
+// ─── AUTO MODE normalize infra (TASK-1303 C — ruling_2) ──────
+// Infra + export เท่านั้น — wire จริง (mint.ts / tokenStore.ts) เป็นของ
+// TASK-1304. Hook points: T1 (หลัง receive online) · T2 (หลัง completeMint) ·
+// T3 (กลับ online เคลียร์ pending-normalize). T4 force-normalize-after-send
+// ยกเลิก (ruling_2) — ไม่มีในโค้ด.
+
+/** Debounce window for T1/T2 auto-normalize (ruling_2: ~2s). */
+export const AUTO_NORMALIZE_DEBOUNCE_MS = 2000;
+
+/** Which hook point scheduled the auto-normalize (observability only). */
+export type AutoNormalizeHook = 'T1-receive-online' | 'T2-complete-mint' | 'T3-back-online';
+
+/** Dependencies injected by the wiring layer (TASK-1304). */
+export interface AutoNormalizeDeps {
+	/** Gather the current spendable pile (unspent proofs) to normalize. */
+	getProofs: () => Promise<StoredProof[]> | StoredProof[];
+	/** NUT-03 swap — injected I/O (see `SwapFn`). */
+	swapFn: SwapFn;
+	/** Optional settle callback: `(result, undefined, hook)` on success,
+	 *  `(null, error, hook)` on failure. Never throws. */
+	onSettle?: (result: NormalizeResult | null, error: unknown | undefined, hook: AutoNormalizeHook) => void;
+}
+
+let autoNormalizeTimer: ReturnType<typeof setTimeout> | null = null;
+let autoNormalizePending = false;
+let autoNormalizeRunning = false;
+
+/** true when an auto-normalize is scheduled but has not run yet. */
+export function isAutoNormalizePending(): boolean {
+	return autoNormalizePending;
+}
+
+/** true while a normalize attempt is in flight (guards double-runs). */
+export function isAutoNormalizeRunning(): boolean {
+	return autoNormalizeRunning;
+}
+
+/** Cancel a scheduled (not yet run) auto-normalize and clear pending state. */
+export function cancelAutoNormalize(): void {
+	if (autoNormalizeTimer !== null) {
+		clearTimeout(autoNormalizeTimer);
+		autoNormalizeTimer = null;
+	}
+	autoNormalizePending = false;
+}
+
+/** Shared debounced scheduler — re-scheduling inside the window collapses
+ *  into a single run (`debounce` semantics of ruling_2). */
+function scheduleAutoNormalize(deps: AutoNormalizeDeps, hook: AutoNormalizeHook): void {
+	autoNormalizePending = true;
+	if (autoNormalizeTimer !== null) clearTimeout(autoNormalizeTimer);
+	autoNormalizeTimer = setTimeout(() => {
+		autoNormalizeTimer = null;
+		void runAutoNormalizeNow(deps, hook);
+	}, AUTO_NORMALIZE_DEBOUNCE_MS);
+}
+
+/** Run one normalize attempt now (guarded — never double-runs, never throws). */
+export async function runAutoNormalizeNow(
+	deps: AutoNormalizeDeps,
+	hook: AutoNormalizeHook
+): Promise<NormalizeResult | null> {
+	if (autoNormalizeRunning) return null;
+	autoNormalizeRunning = true;
+	autoNormalizePending = false;
+	try {
+		const pile = await deps.getProofs();
+		const result = await normalizeToCompleteSet(pile, deps.swapFn);
+		deps.onSettle?.(result, undefined, hook);
+		return result;
+	} catch (err) {
+		deps.onSettle?.(null, err, hook);
+		return null;
+	} finally {
+		autoNormalizeRunning = false;
+	}
+}
+
+/** T1 — หลัง receive online จบ (wire = TASK-1304) — debounced ~2s. */
+export function autoNormalizeAfterReceiveOnline(deps: AutoNormalizeDeps): void {
+	scheduleAutoNormalize(deps, 'T1-receive-online');
+}
+
+/** T2 — หลัง completeMint จบ (wire = TASK-1304) — debounced ~2s. */
+export function autoNormalizeAfterCompleteMint(deps: AutoNormalizeDeps): void {
+	scheduleAutoNormalize(deps, 'T2-complete-mint');
+}
+
+/** T3 — กลับ online: เคลียร์ pending-normalize ทันที (bypass debounce wait).
+ *  Pile ที่ normalize อยู่แล้วจะโดน zero-swap short-circuit ปล่อยผ่านเอง. */
+export function autoNormalizeOnBackOnline(deps: AutoNormalizeDeps): Promise<NormalizeResult | null> {
+	if (autoNormalizeTimer !== null) {
+		clearTimeout(autoNormalizeTimer);
+		autoNormalizeTimer = null;
+	}
+	return runAutoNormalizeNow(deps, 'T3-back-online');
 }
 
 /**
