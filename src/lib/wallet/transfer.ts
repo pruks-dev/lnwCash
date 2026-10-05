@@ -16,6 +16,7 @@ import { selectProofs, sumProofs } from './proofs';
 import { getUnspentProofsByMint, addProofs, markSpent, type StoredProof } from './proofsDb';
 import { addTransaction } from '../storage/db';
 import { decomposeAmount } from './mint';
+import { completeSet } from './completeSet';
 import { deriveSecretAndR, getActiveSeed } from './nut13';
 import { getCounterK, incrementCounterK } from './counterK';
 import type { TokenProof, DecodedToken } from '../types';
@@ -100,7 +101,13 @@ export async function sendTokens(
 
 			// Decompose amounts into valid denominations (powers of 2)
 			const needAmounts = decomposeAmount(needFromSwap);
-			const excessAmounts = decomposeAmount(swapExcess);
+			// TASK-1305 (INTENT-013): change (excess) = completeSet(swapExcess) —
+			// the change pile can pay every amount 1..swapExcess exactly with a
+			// subset of its own coins (TASK-1301). incrementCounterK below by
+			// excessAmounts.length is therefore auto-exact: the counter band
+			// covers every derived change secret 1:1 (NUT-13 recoverable — the
+			// NUT-9 restore scan finds all of them).
+			const excessAmounts = completeSet(swapExcess);
 			const allAmounts = [...needAmounts, ...excessAmounts];
 
 			// SEND portion (needAmounts): random secrets — these proofs go to the

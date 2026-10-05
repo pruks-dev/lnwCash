@@ -58,6 +58,7 @@ import { decodeToken } from '../../cashu/token';
 import { setActiveSeed, clearActiveSeed, deriveSecret } from '../nut13';
 import { mnemonicToSeed } from '../keys';
 import { getCounterK, clearAllCounters, STORAGE_KEY } from '../counterK';
+import { completeSet } from '../completeSet';
 import type { TokenProof } from '../../types';
 
 const TEST_PIN = '123456';
@@ -91,7 +92,11 @@ describe('TASK-F2-CHANGE-DERIVED: transfer change deterministic, send random', (
 	});
 
 	it('derives change secrets deterministically and advances counter_k by change count', async () => {
-		// single 32-sat proof → send 10 → change 22 → decompose [16, 4, 2]
+		// single 32-sat proof → send 10 → change 22.
+		// TASK-1305: change = completeSet(22) = [1,1,2,4,8] ⊕ decompose(6)
+		// = [1,1,2,4,8,1,1,2,1,1] — 10 coins (INTENT-013 complete-set change;
+		// dev DEV-1305-1: value expectations follow the mandated completeSet —
+		// the DETERMINISM + counter-advance = change-count contract is unchanged)
 		await addProofs([makeProof('p1', 32)], MINT_URL, KEYSET_ID);
 
 		const result = await sendTokens(10, MINT_URL);
@@ -99,19 +104,18 @@ describe('TASK-F2-CHANGE-DERIVED: transfer change deterministic, send random', (
 		// send portion is exactly the requested amount (8 + 2)
 		expect(result.amount).toBe(10);
 
-		// change portion is stored back into the wallet (unspent), amounts [16, 4, 2]
+		// change portion is stored back into the wallet (unspent) — completeSet(22), 10 coins
 		const change = (await getAllProofs()).filter((p) => !p.spent);
-		expect(change.map((p) => p.amount).sort((a, b) => b - a)).toEqual([16, 4, 2]);
+		expect(change.map((p) => p.amount).sort((a, b) => b - a)).toEqual([8, 4, 2, 2, 1, 1, 1, 1, 1, 1]);
+		expect(change).toHaveLength(completeSet(22).length);
 
-		// change secrets are the NUT-13 derivation for counters 0..2 (NOT random)
-		expect(change.map((p) => p.secret).sort()).toEqual([
-			deriveSecret(seed, KEYSET_ID, 0),
-			deriveSecret(seed, KEYSET_ID, 1),
-			deriveSecret(seed, KEYSET_ID, 2)
-		].sort());
+		// change secrets are the NUT-13 derivation for counters 0..9 (NOT random)
+		expect(change.map((p) => p.secret).sort()).toEqual(
+			completeSet(22).map((_, i) => deriveSecret(seed, KEYSET_ID, i)).sort()
+		);
 
-		// counter advanced by exactly the number of change outputs (3)
-		expect(getCounterK(KEYSET_ID)).toBe(3);
+		// counter advanced by exactly the number of change outputs (completeSet(22).length = 10)
+		expect(getCounterK(KEYSET_ID)).toBe(10);
 	});
 
 	it('same seed → same change secrets across independent runs (recoverable)', async () => {
@@ -128,11 +132,9 @@ describe('TASK-F2-CHANGE-DERIVED: transfer change deterministic, send random', (
 		const secondChange = (await getAllProofs()).filter((p) => !p.spent).map((p) => p.secret).sort();
 
 		expect(secondChange).toEqual(firstChange);
-		expect(firstChange).toEqual([
-			deriveSecret(seed, KEYSET_ID, 0),
-			deriveSecret(seed, KEYSET_ID, 1),
-			deriveSecret(seed, KEYSET_ID, 2)
-		].sort());
+		expect(firstChange).toEqual(
+			completeSet(22).map((_, i) => deriveSecret(seed, KEYSET_ID, i)).sort()
+		);
 	});
 
 	it('send portion stays random (not derivable from the seed)', async () => {
