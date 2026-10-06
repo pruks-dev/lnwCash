@@ -6,7 +6,7 @@
  * - getOfflineHistory() — read transaction history from IndexedDB
  * - sendEcashP2P() — create token locally (no network)
  * - semiVerifyRedeem() — validate token structure locally
- * - isOnline() — navigator.onLine check
+ * - isOnline() — detector state (thin re-export of $lib/offline-indicator)
  */
 import {
 	getUnspentProofs,
@@ -174,27 +174,13 @@ export function semiVerifyRedeem(tokenString: string): SemiVerifyResult {
 	};
 }
 
-// ─── Online Status ───────────────────────────────────────────
+// ─── Online Status (FR-2 / TASK-1307 — thin re-export) ───────
 
 /**
- * Check if the device has network connectivity.
+ * Connectivity state — single source of truth is the probe-based detector
+ * service (`$lib/offline-indicator`). These are THIN RE-EXPORTS: identical
+ * signatures, shared state with the app-wide banner (D1 detector).
+ * Consumers of the legacy import path (Home.svelte / F003-Balance.svelte)
+ * automatically see the same detector state.
  */
-export function isOnline(): boolean {
-	return typeof navigator !== 'undefined' && navigator.onLine;
-}
-
-/**
- * Listen for online/offline events (for reactive UIs).
- */
-export function onConnectivityChange(callback: (online: boolean) => void): () => void {
-	if (typeof window === 'undefined') return () => {};
-
-	const handler = () => callback(navigator.onLine);
-	window.addEventListener('online', handler);
-	window.addEventListener('offline', handler);
-
-	return () => {
-		window.removeEventListener('online', handler);
-		window.removeEventListener('offline', handler);
-	};
-}
+export { isOnline, onConnectivityChange } from '../offline-indicator';

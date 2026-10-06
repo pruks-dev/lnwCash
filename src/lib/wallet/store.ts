@@ -11,6 +11,7 @@
 import { writable } from 'svelte/store';
 import type { MintConfig } from './config';
 import { DEFAULT_MINT_CONFIG, createPlaceholderConfig } from './config';
+import { setProbeTargets } from '../offline-indicator';
 
 // ─── Storage Key ──────────────────────────────────────────────
 
@@ -98,6 +99,7 @@ export function setMintConfig(config: MintConfig): void {
 	};
 
 	saveStore();
+	refreshProbeTargets();
 }
 
 /**
@@ -108,6 +110,7 @@ export function removeMintConfig(mintUrl: string): void {
 	const store = loadStore();
 	delete store.mints[normalizedUrl];
 	saveStore();
+	refreshProbeTargets();
 }
 
 /**
@@ -149,6 +152,17 @@ export function clearMintConfigs(): void {
 	} catch {
 		// ignore
 	}
+	refreshProbeTargets();
+}
+
+/**
+ * TASK-1307 (D1) — Feed the connectivity detector its probe targets:
+ * the default mint + every user-configured mint (getAllMintConfigs always
+ * seeds the default). Called whenever the mint config changes and once at
+ * module init (initial push) so the boot probe has real targets.
+ */
+function refreshProbeTargets(): void {
+	setProbeTargets(getAllMintConfigs().map(c => c.url));
 }
 
 /**
@@ -216,3 +230,13 @@ export function getOrCreateMintConfig(mintUrl: string): MintConfig {
 	setMintConfig(placeholder);
 	return placeholder;
 }
+
+// ─── Detector wiring (TASK-1307 D1-boot-probe) ───────────────
+
+/**
+ * Initial probe-target push at module init: the detector service's boot
+ * probe runs at its own module init; when this store loads (wallet layer),
+ * the target list lands and the single late-wired boot catch-up fires.
+ * No probe loop — setProbeTargets alone never probes (4 triggers only).
+ */
+refreshProbeTargets();
