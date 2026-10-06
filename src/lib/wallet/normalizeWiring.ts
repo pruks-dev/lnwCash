@@ -51,17 +51,25 @@ import {
 import type { TokenProof } from '../types';
 import { getCounterK, incrementCounterK, withKeysetLock } from './counterK';
 import { deriveSecretAndR, getActiveSeed } from './nut13';
+import { getDetectorStatus, onConnectivityChange } from '../offline-indicator';
 
 // ─── Online detection ───────────────────────────────────────
 
 /**
- * Deliberate inline copy of `offline.ts isOnline()` semantics — NOT imported
- * from there to keep this module's import graph free of `transfer.ts`
- * (TASK-1305 lane) and the `cashu/token` prefixes that would break the mock
- * surface of existing test files.
+ * TASK-1308 (F-048-001, layer 3): truth = the probe-based detector service
+ * (`$lib/offline-indicator`) — the ONE connectivity state for the app.
+ * `navigator.onLine` is NOT truth anymore (FR-2): it only seeds the detector
+ * and demotes window events to probe TRIGGERS.
+ *
+ * Reads the detector state directly (NOT isOnline()): while 'probing' there
+ * is no completed verdict yet → false → the wallet takes the offline
+ * passthrough path (risk-6 safe); 'online' only after a probe run succeeded
+ * (probe-success). This module's import graph stays free of transfer.ts /
+ * cashu/token — offline-indicator imports nothing, so the mock surfaces of
+ * existing test suites are unchanged.
  */
 export function isWalletOnline(): boolean {
-	return typeof navigator !== 'undefined' && navigator.onLine;
+	return getDetectorStatus().state === 'online';
 }
 
 // ─── SwapFn binding (TASK-1304 must_do 7) ─────────────────────
@@ -365,3 +373,18 @@ export function cancelScheduledNormalize(): void {
 
 // ─── completeSet passthrough — single import surface for callers ──
 export { completeSet };
+
+// ─── T3 flush trigger source (TASK-1308 — F-048-001 closure, single binding) ─
+// The production flush trigger binds to the DETECTOR state change
+// (probe-success → definite 'online' verdict), NOT to the window 'online'
+// event: the event window never fires when the device never leaves online
+// state (e.g. VPN tunneled machines — F-048-001 dead window). The detector
+// fires listeners only when a COMPLETED probe run flips the verdict to
+// 'online' — the one true "back online" moment. Engine semantics unchanged
+// (zero-swap short-circuit + running lock remain in proofs.ts); the binding
+// stays in this single wiring point (v4.1 heart).
+if (typeof window !== 'undefined') {
+	onConnectivityChange((online) => {
+		if (online) void flushPendingNormalizeOnBackOnline();
+	});
+}

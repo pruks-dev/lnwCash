@@ -67,6 +67,38 @@ vi.mock('../../cashu/token', () => ({
 	decodeToken: vi.fn()
 }));
 
+/**
+ * TASK-1308 (F-048-001): isWalletOnline() reads the DETECTOR state
+ * (getDetectorStatus) — not navigator.onLine. This suite adapts with a
+ * CONTROLLABLE FAKE detector (per-suite module mock); the real
+ * probe→flip→flush flight is proven in `detector-flush-flight.test.ts`
+ * against the real offline-indicator module.
+ */
+const detectorMock = vi.hoisted(() => ({
+	state: 'online' as 'online' | 'offline' | 'probing'
+}));
+
+vi.mock('../../offline-indicator', () => ({
+	getDetectorStatus: vi.fn(() => ({
+		state: detectorMock.state,
+		online: detectorMock.state === 'online',
+		suspect: false,
+		probing: detectorMock.state === 'probing',
+		bootWired: true,
+		targets: [],
+		probeCount: 0,
+		lastProbeAt: 0,
+		lastResult: detectorMock.state === 'probing' ? null : detectorMock.state
+	})),
+	isOnline: vi.fn(() => detectorMock.state === 'online'),
+	onConnectivityChange: vi.fn(() => () => {}),
+	notifySuspectOffline: vi.fn(),
+	setProbeTargets: vi.fn(),
+	wasOffline: vi.fn(() => false),
+	resetWasOffline: vi.fn(),
+	trackWasOffline: vi.fn(() => () => {})
+}));
+
 vi.mock('../../cashu/keyset', () => ({
 	fetchAndCacheKeysets: vi.fn().mockResolvedValue([
 		{
@@ -132,13 +164,12 @@ function bytesToBigInt(bytes: Uint8Array): bigint {
 }
 
 function setOnline(online: boolean): void {
-	Object.defineProperty(window.navigator, 'onLine', {
-		value: online,
-		configurable: true
-	});
+	// TASK-1308: the wallet's online truth is the detector state — the
+	// navigator.onLine pin is history (FR-2).
+	detectorMock.state = online ? 'online' : 'offline';
 }
 
-const ONLINE_DEFAULT = typeof navigator !== 'undefined' && navigator.onLine;
+const ONLINE_DEFAULT = true;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
