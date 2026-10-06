@@ -29,13 +29,26 @@ import { selectProofs, sumProofs } from './proofs';
 import { encodeToken, decodeToken, getTokenAmount } from '../cashu/token';
 import { decomposeAmount } from './mint';
 import { completeSet } from './completeSet';
-import { checkState, swapProofs } from '../cashu/client';
+// TASK-1309: the transport error classes are part of the D3 boundary —
+// client.ts classes ONLY (wallet/errors.ts MintUnreachableError is a
+// DIFFERENT class in a different graph; the receive swap throws the ones
+// mapped inside client.ts fetchFromMint). The RETHROW group (CashuError with
+// HTTP code/status incl. BENIGN 11003/20002 + InvalidResponseError) needs no
+// import here: anything that is NOT a transport error rethrows via the tail
+// below.
+import {
+	checkState,
+	swapProofs,
+	MintUnreachableError,
+	NetworkError
+} from '../cashu/client';
 import { blindMessage, unblindSignature, blindingFactorToHex } from '../cashu/blind';
 import { fetchAndCacheKeysets, getMintPubkey, resolveKeysetId } from '../cashu/keyset';
 import { getPrivateKey } from './state';
 import { deriveSecretAndR, getActiveSeed } from './nut13';
 import { getCounterK, incrementCounterK, withKeysetLock } from './counterK';
 import { isWalletOnline, scheduleNormalizeAfterReceiveOnline } from './normalizeWiring';
+import { notifySuspectOffline } from '../offline-indicator';
 import type { TokenProof, DecodedToken } from '../types';
 import { TokenValidationError } from './errors';
 
@@ -55,6 +68,82 @@ export interface ProofBalance {
 }
 
 // ─── Token Store Operations ──────────────────────────────────
+
+/**
+ * TASK-1309 (D3, risk HIGH) — THE receive-fallback boundary predicate.
+ *
+ * Fallback group (pure TRANSPORT failures — nothing ever reached the mint's
+ * rules engine): client.ts throws these BEFORE any HTTP-driven CashuError
+ * exists:
+ *   - MintUnreachableError — fetch threw TypeError (network/DNS), mapped at
+ *     client.ts:360 (inside the catch of fetchFromMint:before-HTTP path);
+ *   - NetworkError — AbortError timeout (client.ts:356), generic wrapping
+ *     (client.ts:363), or the post-retries guarantee (client.ts:368).
+ *   - TypeError — the raw WHATWG fetch network failure class (kept per the
+ *     dispatch grouping; client.ts normally maps it, but a raw transport
+ *     TypeError across the same wire carries the same semantics).
+ *
+ * RETHROW group (mint saw the request and answered — rethrow เสมอ, ห้าม
+ * passthrough — storing them would bank mint-rejected proofs incl.
+ * double-spent): ANY remaining CashuError bearing HTTP code/status (incl.
+ * BENIGN 11003/20002) and InvalidResponseError — and, unchanged, everything
+ * else (plain errors keep the pre-D3 catch shape).
+ *
+ * NOTE: MintUnreachableError/NetworkError/InvalidResponseError all extend
+ * CashuError — the transport tests MUST come first; anything left CashuError
+ * is a rules-reject (proving the transport group is NOT a catch-all).
+ */
+function isTransportNetworkError(err: unknown): boolean {
+	return (
+		err instanceof MintUnreachableError ||
+		err instanceof NetworkError ||
+		err instanceof TypeError
+	);
+}
+
+/**
+ * TASK-1309 — the offline PASSTHROUGH mechanism (1:1 addProofs, counter_k
+ * untouched, pending_normalize flag, same-shape transaction + result) —
+ * extracted from the old offline-gate branch and reused verbatim by BOTH
+ * the offline gate and the D3 network-error fallback, so the two paths
+ * CANNOT drift apart.
+ */
+async function receiveProofsPassthrough(
+	decoded: DecodedToken,
+	mintUrl: string,
+	tokenString: string
+): Promise<ReceiveResult> {
+	const offlineProofs = decoded.proofs; // 1:1 — stored EXACTLY as decoded
+	const totalAmount = offlineProofs.reduce((sum, p) => sum + p.amount, 0);
+	await addProofs(offlineProofs, mintUrl, offlineProofs[0].id); // 1:1 — mark as-is
+	await markPendingNormalizeByProof(offlineProofs);
+	const dleqCount = offlineProofs.filter(p => p.dleq).length;
+
+	// Record transaction (F-088) — best-effort
+	try {
+		await addTransaction({
+			id: `cashu-recv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+			type: 'cashu_receive',
+			protocol: 'cashu',
+			amount: totalAmount,
+			mint_url: mintUrl,
+			timestamp: Date.now(),
+			token_hash: tokenString,
+			status: 'confirmed',
+			fee: 0
+		});
+	} catch {
+		// IndexedDB may be unavailable
+	}
+
+	return {
+		amount: totalAmount,
+		mint: mintUrl,
+		unit: decoded.unit,
+		proofCount: offlineProofs.length,
+		dleqCount: dleqCount > 0 ? dleqCount : undefined
+	};
+}
 
 /**
  * Store newly minted tokens.
@@ -321,36 +410,10 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 	// pending_normalize แทน แล้ว T3 (flushPendingNormalizeOnBackOnline) เคลียร์
 	// เมื่อกลับ online. Derivation ไม่ถูกใช้ → legacy wallet (ไม่มี seed) ยัง
 	// รับ offline ได้ปกติ.
+	// TASK-1309: the mechanism itself lives in receiveProofsPassthrough() —
+	// the D3 network-error fallback reuses THIS SAME mechanism (no drift).
 	if (!isWalletOnline()) {
-		const totalAmount = decoded.proofs.reduce((sum, p) => sum + p.amount, 0);
-		await addProofs(decoded.proofs, mintUrl, keysetId); // 1:1 — mark as-is
-		await markPendingNormalizeByProof(decoded.proofs);
-		const dleqCount = decoded.proofs.filter(p => p.dleq).length;
-
-		// Record transaction (F-088) — best-effort
-		try {
-			await addTransaction({
-				id: `cashu-recv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-				type: 'cashu_receive',
-				protocol: 'cashu',
-				amount: totalAmount,
-				mint_url: mintUrl,
-				timestamp: Date.now(),
-				token_hash: tokenString,
-				status: 'confirmed',
-				fee: 0
-			});
-		} catch {
-			// IndexedDB may be unavailable
-		}
-
-		return {
-			amount: totalAmount,
-			mint: mintUrl,
-			unit: decoded.unit,
-			proofCount: decoded.proofs.length,
-			dleqCount: dleqCount > 0 ? dleqCount : undefined
-		};
+		return await receiveProofsPassthrough(decoded, mintUrl, tokenString);
 	}
 
 	// ONLINE swap receive — deterministic derivation REQUIRES a seed.
@@ -498,11 +561,27 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 			dleqCount: dleqCount > 0 ? dleqCount : undefined
 		};
 	} catch (err) {
+		// ─── TASK-1309 (D3): FIRST — pure transport failure → fallback ────────
+		// Nothing reached the mint's rules engine (wire-level error only) →
+		// keep the proofs: same offline-passthrough mechanism (addProofs 1:1 +
+		// pending_normalize + same-shape record, counter_k untouched) — plus
+		// notifySuspectOffline() so the detector's badge is real state
+		// immediately (D1 trigger (c) → probe follows → verdict is truth).
+		// Mint-rejected-rules errors (CashuError code/status incl.
+		// double-spent / BENIGN 11003,20002 + InvalidResponseError) NEVER hit
+		// this branch — isTransportNetworkError does not accept them — they
+		// fall to the rethrow tail below (token rejected เชิง rules ห้ามเก็บ).
+		if (isTransportNetworkError(err)) {
+			notifySuspectOffline();
+			return await receiveProofsPassthrough(decoded, mintUrl, tokenString);
+		}
+
+		// ── OLD rethrow tail (คงเดิม 100%): mint-reject / validation → throw ──
 		if (err instanceof TokenValidationError) throw err;
 		throw new TokenValidationError(
 			err instanceof Error ? err.message : 'Swap failed — token may be spent or invalid'
 		);
 	}
 
-	// Not reached — swap or throw above
+	// Not reached — swap, fallback or throw above
 }
