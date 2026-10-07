@@ -95,6 +95,7 @@ vi.mock('../../cashu/keyset', () => ({
 
 import * as client from '../../cashu/client';
 import { decodeToken } from '../../cashu/token';
+import { getMintPubkey } from '../../cashu/keyset';
 import { createWallet, unlockWallet } from '../state';
 import { clearAllWalletData } from '../storage';
 import { deleteProofDB, resetProofDB, getAllProofs, getPendingNormalizeProofs } from '../proofsDb';
@@ -135,6 +136,33 @@ interface ClientErrorCtor {
  */
 let releaseParkedProbe: ((resp: { ok: boolean } & Record<string, unknown>) => void) | null = null;
 
+// TASK-1404 UPD (S4/P1): passthrough proofs MUST carry a complete DLEQ proof
+// {e,s,r} and pass verifyDleqCarol under the keyset cache — the dleq-less
+// mockReceiveProofs shape pre-dates TASK-1314 (S4: dleq-less = ปฏิเสธรับ).
+import { createTestMint, buildCarolChain } from './dleq-harness';
+const TEST_MINT = createTestMint('d3fallback');
+
+/** Last-hex-digit tamper (deterministic — no RNG). */
+function tamperLastHex(hex: string): string {
+	const last = parseInt(hex[hex.length - 1], 16);
+	const bumped = last === 15 ? 1 : last + 1;
+	return hex.slice(0, -1) + bumped.toString(16);
+}
+
+function mockReceiveProofs(amounts: number[], tamperIdx = -1): void {
+	vi.mocked(decodeToken).mockReturnValue({
+		mint: MINT_URL,
+		unit: 'sat',
+		proofs: amounts.map((a, i) => {
+			const chain = buildCarolChain(TEST_MINT, a, KEYSET_ID, `rcv${i}`);
+			if (i === tamperIdx) (chain.proof.dleq!).e = tamperLastHex((chain.proof.dleq!).e);
+			return chain.proof;
+		})
+	} as never);
+	// A from the keyset cache — the passthrough gate reads it:
+	vi.mocked(getMintPubkey).mockReturnValue(TEST_MINT.A);
+}
+
 function parkProbeFetcher(): void {
 	fetchMock.mockImplementation((url: unknown) => {
 		if (String(url).includes('/v1/info')) {
@@ -146,14 +174,6 @@ function parkProbeFetcher(): void {
 
 function clientClass(name: 'CashuError' | 'MintUnreachableError' | 'NetworkError' | 'InvalidResponseError'): ClientErrorCtor {
 	return (client as unknown as Record<string, ClientErrorCtor>)[name];
-}
-
-function mockReceiveProofs(amounts: number[]): void {
-	vi.mocked(decodeToken).mockReturnValue({
-		mint: MINT_URL,
-		unit: 'sat',
-		proofs: amounts.map((a, i) => ({ id: KEYSET_ID, amount: a, secret: `rcv${i}`, C: `C-rcv${i}` }))
-	} as never);
 }
 
 describe('TASK-1309: receiveTokens D3 boundary — transport vs rules-reject', () => {

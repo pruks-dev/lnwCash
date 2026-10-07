@@ -11,6 +11,7 @@ import { encodeToken, decodeToken, getTokenAmount } from '../cashu/token';
 import { swapProofs } from '../cashu/client';
 import { blindMessage, unblindSignature, blindingFactorToHex } from '../cashu/blind';
 import { fetchAndCacheKeysets, getMintPubkey, resolveKeysetId } from '../cashu/keyset';
+import { verifyDleqAlice, DleqVerifyFailedError } from '../cashu/dleq';
 import { getPrivateKey } from './state';
 import { selectProofs, sumProofs } from './proofs';
 import { getUnspentProofsByMint, addProofs, markSpent, type StoredProof } from './proofsDb';
@@ -146,6 +147,22 @@ export async function sendTokens(
 				const pubkey = getMintPubkey(mintUrl, keysetId, sig.amount);
 				const C = pubkey ? unblindSignature(sig.C_, bp.blindingFactor, pubkey) : sig.C_;
 				const rHex = blindingFactorToHex(bp.blindingFactor);
+				// ── TASK-1314 (NUT-12 — Alice MUST-verify, send-exact swap) ───
+				// NUT-03 swap response with a DLEQ proof: VERIFY before the call
+				// proceeds — abort here would let a counterfeit mint response get
+				// stored as change / encoded into the token. dleq-less signatures
+				// continue unverified (spec: verify iff included). The throw escapes
+				// the swap fall-back catch via the DleqVerifyFailedError class
+				// (generic swap bugs keep their benign fall-through below).
+				if (sig.dleq) {
+					if (!pubkey || !verifyDleqAlice(sig.dleq, outputs[i].B_, sig.C_, pubkey)) {
+						throw new DleqVerifyFailedError(
+							`TASK-1314: DLEQ verification FAILED for swap signature #${i} (amount ${sig.amount})` +
+							`${pubkey ? '' : ' — mint public key unavailable from keyset cache'}` +
+							` — aborting send (possible counterfeit mint). Mint URL: ${mintUrl}`
+						);
+					}
+				}
 				return {
 					local_id: '', id: sig.id, amount: sig.amount,
 					secret: bp.secret, C,
@@ -171,7 +188,14 @@ export async function sendTokens(
 					id: p.id, amount: p.amount, secret: p.secret, C: p.C, dleq: p.dleq
 				})), mintUrl, keysetId);
 			}
-		} catch {
+		} catch (err) {
+			// TASK-1314: a DLEQ-verification failure is NOT a generic swap
+			// fall-back — the response was counterfeit-proof-checked and failed;
+			// swallowing it would fall through to sending the ORIGINAL proofs
+			// (which the mint has ALREADY consumed in the swap) — surface it.
+			if (err instanceof DleqVerifyFailedError) {
+				throw err;
+			}
 			// Swap failed — fall back
 		}
 		}

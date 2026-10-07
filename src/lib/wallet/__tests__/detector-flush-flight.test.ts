@@ -31,6 +31,7 @@
 import 'fake-indexeddb/auto';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
+import { buildCarolChainFromKeys } from './dleq-harness';
 import { bytesToHex } from '@noble/hashes/utils.js';
 
 const { MINT_URL, KEYSET_ID, MNEMONIC, fetchMock } = vi.hoisted(() => ({
@@ -147,19 +148,23 @@ async function waitForState(expected: 'online' | 'offline', timeout = 3000): Pro
 	);
 }
 
+// TASK-1314 (S4/P1): the passthrough gate needs a COMPLETE real dleq chain —
+// built on this suite's mint scalar (set in beforeEach, consumed by mockReceive).
+let mintK = 0n;
+let mintPubkeyHex = '';
+
 function mockReceive(amounts: number[]): void {
 	vi.mocked(decodeToken).mockReturnValue({
 		mint: MINT_URL,
 		unit: 'sat',
-		proofs: amounts.map((a, i) => ({ id: KEYSET_ID, amount: a, secret: `rcv${i}`, C: `C-rcv${i}` }))
+		proofs: amounts.map((a, i) =>
+			buildCarolChainFromKeys(mintK, mintPubkeyHex, a, KEYSET_ID, `rcv${i}`).proof
+		)
 	} as never);
 }
 
 describe('TASK-1308: T3 flush trigger = detector probe-success (F-048-001)', () => {
 	const seed = mnemonicToSeed(MNEMONIC);
-	const mintSecret = secp256k1.utils.randomSecretKey();
-	const mintK = bytesToBigInt(mintSecret);
-	const mintPubkeyHex = bytesToHex(secp256k1.getPublicKey(mintSecret, true));
 
 	beforeEach(async () => {
 		fetchMock.mockReset();
@@ -169,6 +174,11 @@ describe('TASK-1308: T3 flush trigger = detector probe-success (F-048-001)', () 
 		await clearAllWalletData();
 		await deleteProofDB();
 		resetProofDB();
+
+		// TASK-1314: deterministic WITHIN-INSTANCE mint identity (as before):
+		const mintSecret = secp256k1.utils.randomSecretKey();
+		mintK = bytesToBigInt(mintSecret);
+		mintPubkeyHex = bytesToHex(secp256k1.getPublicKey(mintSecret, true));
 
 		vi.mocked(getMintPubkey).mockReturnValue(mintPubkeyHex);
 		const signB = (B_: string) => secp256k1.Point.fromHex(B_).multiply(mintK).toHex(true);

@@ -45,6 +45,20 @@ export interface DleqProof {
 	r?: string;
 }
 
+/**
+ * TASK-1314: thrown by the wallet wiring when a mint's DLEQ proof fails Alice
+ * verification (or cannot be verified, e.g. missing A from the keyset cache).
+ * A distinctive class so flow-level catch/fallback handlers (e.g. transfer.ts
+ * swap fall-back) can recognize it and NOT swallow it as a generic transport
+ * failure — aborting is the honest outcome for a counterfeit mint response.
+ */
+export class DleqVerifyFailedError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'DleqVerifyFailedError';
+	}
+}
+
 const G = secp256k1.Point.BASE;
 
 // ─── Serialization helpers ───────────────────────────────────

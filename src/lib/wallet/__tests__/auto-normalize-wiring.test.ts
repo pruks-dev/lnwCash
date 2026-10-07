@@ -142,6 +142,16 @@ import {
 import { completeSet } from '../completeSet';
 import { setActiveSeed, clearActiveSeed } from '../nut13';
 import { mnemonicToSeed } from '../keys';
+import { createTestMint, buildCarolChain } from './dleq-harness';
+import type { TokenProof } from '../../types';
+
+const TEST_MINT = createTestMint('autonorm');
+/** Real Carol-verifyable chains (S4/P1 gate requires complete {e,s,r} — TASK-1314). */
+function dleqChains(amounts: number[]): TokenProof[] {
+	return amounts.map((amount, i) =>
+		buildCarolChain(TEST_MINT, amount, KEYSET_ID, `ofs${i + 1}`).proof
+	);
+}
 import {
 	getCounterK,
 	setCounterK,
@@ -324,14 +334,14 @@ describe('TASK-1304: T1/T2/T3 auto-normalize wiring', () => {
 		setCounterK(KEYSET_ID, 4);
 
 		setOnline(false);
+		// TASK-1314 (S4/P1): the offline passthrough requires a complete dleq
+		// {e,s,r} verifying against the keyset cache's A — real chains here:
 		vi.mocked(decodeToken).mockReturnValue({
 			mint: MINT_URL,
 			unit: 'sat',
-			proofs: [
-				{ id: KEYSET_ID, amount: 3, secret: 'ofs1', C: 'C-of1' },
-				{ id: KEYSET_ID, amount: 2, secret: 'ofs2', C: 'C-of2' }
-			]
+			proofs: dleqChains([3, 2])
 		} as never);
+		vi.mocked(getMintPubkey).mockReturnValue(TEST_MINT.A);
 
 		const offline = await receiveTokens('cashuAdummy');
 		// Passthrough 1:1 — the proofs are stored EXACTLY as decoded:
@@ -366,6 +376,8 @@ describe('TASK-1304: T1/T2/T3 auto-normalize wiring', () => {
 	});
 
 	it('T3 cancels a lurking T1 timer — no double normalize run', async () => {
+		// TASK-1314 (S4/P1): the OFFLINE leg below requires a complete dleq chain:
+		vi.mocked(getMintPubkey).mockReturnValue(TEST_MINT.A);
 		vi.mocked(decodeToken).mockReturnValue({
 			mint: MINT_URL,
 			unit: 'sat',
@@ -378,7 +390,7 @@ describe('TASK-1304: T1/T2/T3 auto-normalize wiring', () => {
 		vi.mocked(decodeToken).mockReturnValue({
 			mint: MINT_URL,
 			unit: 'sat',
-			proofs: [{ id: KEYSET_ID, amount: 2, secret: 'ot2', C: 'C-ot2' }]
+			proofs: [buildCarolChain(TEST_MINT, 2, KEYSET_ID, 'ot2').proof]
 		} as never);
 		await receiveTokens('cashuAdummy'); // offline passthrough + pending flag
 		expect(await getPendingNormalizeProofs()).toHaveLength(1);

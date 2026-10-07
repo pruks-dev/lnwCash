@@ -44,6 +44,7 @@ import {
 } from '../cashu/client';
 import { blindMessage, unblindSignature, blindingFactorToHex } from '../cashu/blind';
 import { fetchAndCacheKeysets, getMintPubkey, resolveKeysetId } from '../cashu/keyset';
+import { verifyDleqCarol } from '../cashu/dleq';
 import { getPrivateKey } from './state';
 import { deriveSecretAndR, getActiveSeed } from './nut13';
 import { getCounterK, incrementCounterK, withKeysetLock } from './counterK';
@@ -102,6 +103,56 @@ function isTransportNetworkError(err: unknown): boolean {
 }
 
 /**
+ * TASK-1314 (P1/S4 — NUT-12) — THE offline/fallback DLEQ receive gate.
+ *
+ * Carol's rule (NUT-12 §Carol): a received proof's DLEQ proof MUST be verified
+ * with the mint's public key `A` for the amount. There is no mint state check
+ * available while offline, so the DLEQ chain is the ONLY counterfeit defense
+ * the passthrough has — hence fail-closed:
+ *   - proof without a complete dleq {e, s, r}  → REJECT (S4: dleq-less = ปฏิเสธรับ)
+ *   - no A accessible from the keyset cache    → REJECT (fallback — cannot verify offline)
+ *   - verifyDleqCarol fails (tampered e/s/C)   → REJECT
+ * The whole token is rejected (all-or-nothing): the caller stores NOTHING and
+ * records NOTHING when any proof fails — reject BEFORE addProofs below.
+ *
+ * Covers BOTH 1309 wires on the single choke point: the offline gate branch
+ * and the D3 network-error fallback both call receiveProofsPassthrough.
+ * The ONLINE swap receive path is NOT here (P2 — untouched).
+ */
+function dleqReceiveGate(decoded: DecodedToken, mintUrl: string): void {
+	for (let i = 0; i < decoded.proofs.length; i++) {
+		const proof = decoded.proofs[i];
+		const where = `proof #${i} (amount ${proof.amount}, keyset ${proof.id})`;
+		if (
+			!proof.dleq ||
+			typeof proof.dleq.e !== 'string' || proof.dleq.e.length === 0 ||
+			typeof proof.dleq.s !== 'string' || proof.dleq.s.length === 0 ||
+			typeof proof.dleq.r !== 'string' || proof.dleq.r.length === 0
+		) {
+			throw new TokenValidationError(
+				`TASK-1314 (S4): received proof ${where} carries no complete DLEQ proof {e, s, r} — ` +
+				`refusing dleq-less coins on offline/fallback receive (NUT-12). No proof was stored.`
+			);
+		}
+		// A from the keyset cache (offline-safe: getMintPubkey works purely from
+		// localStorage cache; getMintPubkey resolves short/long IDs internally).
+		const A = getMintPubkey(mintUrl, proof.id, proof.amount);
+		if (!A) {
+			throw new TokenValidationError(
+				`TASK-1314: received proof ${where} — no denomination key in the keyset cache ` +
+				`(cache empty or stale while offline) — cannot verify DLEQ, refusing receive. No proof was stored.`
+			);
+		}
+		if (!verifyDleqCarol(proof.dleq, proof.secret, proof.C, A)) {
+			throw new TokenValidationError(
+				`TASK-1314: DLEQ Carol-verification FAILED for received proof ${where} — ` +
+				`counterfeit or tampered token; rejecting the WHOLE token. No proof was stored.`
+			);
+		}
+	}
+}
+
+/**
  * TASK-1309 — the offline PASSTHROUGH mechanism (1:1 addProofs, counter_k
  * untouched, pending_normalize flag, same-shape transaction + result) —
  * extracted from the old offline-gate branch and reused verbatim by BOTH
@@ -113,6 +164,11 @@ async function receiveProofsPassthrough(
 	mintUrl: string,
 	tokenString: string
 ): Promise<ReceiveResult> {
+	// TASK-1314 (P1/S4): Carol-verify the DLEQ chain of every proof BEFORE
+	// anything is stored — a tampered/dleq-less token throws here and the
+	// passthrough below never runs (no addProofs, no record).
+	dleqReceiveGate(decoded, mintUrl);
+
 	const offlineProofs = decoded.proofs; // 1:1 — stored EXACTLY as decoded
 	const totalAmount = offlineProofs.reduce((sum, p) => sum + p.amount, 0);
 	await addProofs(offlineProofs, mintUrl, offlineProofs[0].id); // 1:1 — mark as-is
