@@ -128,6 +128,21 @@ export async function getAllProofs(): Promise<StoredProof[]> {
 export async function getUnspentProofs(): Promise<StoredProof[]> {
 	const db = await getDB();
 	const all = await db.getAll(STORE_NAME);
+	// TASK-1315 (P3): pending-normalize proofs are NOT spendable — they came
+	// from the offline passthrough and wait for the T3 consolidate swap.
+	// This is the SPENDABLE pool (send/melt/swap/normalize pick from here);
+	// balance queries must use getUnspentProofsIncludingPending instead.
+	return all.filter(p => !p.spent && !p.orphaned && !p.pending_normalize);
+}
+
+/**
+ * TASK-1315 (P3/balance): unspent pool INCLUDING pending-normalize proofs.
+ * Pending proofs are still the user's money — balance queries MUST count them
+ * (ห้ามหายเงียบ) even though they cannot be selected for spending.
+ */
+export async function getUnspentProofsIncludingPending(): Promise<StoredProof[]> {
+	const db = await getDB();
+	const all = await db.getAll(STORE_NAME);
 	return all.filter(p => !p.spent && !p.orphaned);
 }
 
@@ -186,18 +201,22 @@ export async function getProofCount(): Promise<number> {
 
 /**
  * Get total balance across all stored proofs.
- * Only counts unspent, non-orphaned proofs.
+ * Counts unspent, non-orphaned proofs INCLUDING pending-normalize ones
+ * (TASK-1315: pending = the user's money — the total never goes quiet-missing;
+ * the SPENDABLE selection is getUnspentProofs, the BALANCE is this).
  */
 export async function getTotalBalance(): Promise<number> {
-	const unspent = await getUnspentProofs();
+	const unspent = await getUnspentProofsIncludingPending();
 	return unspent.reduce((sum, p) => sum + p.amount, 0);
 }
 
 /**
  * Get balance breakdown by mint.
+ * Includes pending-normalize proofs (TASK-1315 — the user's money is counted
+ * per mint even while pending; selection uses getUnspentProofs).
  */
 export async function getBalanceByMint(): Promise<Record<string, number>> {
-	const unspent = await getUnspentProofs();
+	const unspent = await getUnspentProofsIncludingPending();
 	const breakdown: Record<string, number> = {};
 
 	for (const p of unspent) {

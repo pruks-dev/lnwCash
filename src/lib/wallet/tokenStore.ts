@@ -13,6 +13,7 @@ import {
 	addProofs,
 	getAllProofs,
 	getUnspentProofs,
+	getUnspentProofsIncludingPending,
 	getProofsByMint,
 	getUnspentProofsByMint,
 	removeProofs,
@@ -228,7 +229,9 @@ export async function storeTokens(
  * Get comprehensive balance including by-keyset breakdown.
  */
 export async function getProofBalance(): Promise<ProofBalance> {
-	const proofs = await getUnspentProofs();
+	// TASK-1315: include pending-normalize proofs — balance counts the user's
+	// money; spending is gated by getUnspentProofs/selectProofs (P3).
+	const proofs = await getUnspentProofsIncludingPending();
 
 	const byMint: Record<string, number> = {};
 	const byKeyset: Record<string, number> = {};

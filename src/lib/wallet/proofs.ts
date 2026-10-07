@@ -34,7 +34,12 @@ export function selectProofs(proofs: StoredProof[], amount: number): StoredProof
 		throw new ProofSelectionError(amount);
 	}
 
-	const unspent = proofs.filter(p => !p.spent);
+	// TASK-1315 (P3/L-P005 layer 2 — defensive guard): callers may hand this
+	// pool directly (e.g. a stale snapshot) — pending-normalize proofs are
+	// NEVER spendable regardless of what the caller supplied. Layer 1 (DB:
+	// getUnspentProofs) already excludes them; this second line makes the
+	// guarantee hold even for raw pools.
+	const unspent = proofs.filter(p => !p.spent && !p.pending_normalize);
 
 	// Check total balance
 	const totalAvailable = unspent.reduce((sum, p) => sum + p.amount, 0);

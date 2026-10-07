@@ -42,6 +42,7 @@ import {
 	addProofs,
 	getAllProofs,
 	getUnspentProofs,
+	getUnspentProofsIncludingPending,
 	getPendingNormalizeProofs,
 	clearPendingNormalize,
 	markSpent,
@@ -330,7 +331,12 @@ export const boundSwapFn: SwapFn = async (proofs, outputs) => {
 /** Shared AutoNormalizeDeps over the whole spendable pile. */
 export function createAutoNormalizeDeps(): AutoNormalizeDeps {
 	return {
-		getProofs: () => getUnspentProofs(),
+		// TASK-1315 (P3/balance): the normalize engine works on ALL unspent
+		// money INCLUDING the pending pile — the T3 flush exists precisely to
+		// consolidate it; T1/T2 treat pending as money too (if a pending pile
+		// lingers, an auto run consolidates it). Spending itself remains gated
+		// by selectProofs/getUnspentProofs (P3 layer 1+2).
+		getProofs: () => getUnspentProofsIncludingPending(),
 		swapFn: boundSwapFn
 	};
 }
