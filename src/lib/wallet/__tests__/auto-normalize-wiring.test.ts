@@ -396,12 +396,17 @@ describe('TASK-1304: T1/T2/T3 auto-normalize wiring', () => {
 		expect(await getPendingNormalizeProofs()).toHaveLength(1);
 
 		// Back online — T3 must consume the pending pile AND the lurking T1
-		// timer. The pile ([received 1] + [passthrough 2]) ALREADY equals
-		// completeSet(3): zero-swap → no mint round-trip, flags still cleared.
+		// timer. TASK-1316 (P4): T3 now FORCE-SWAPS — the pile ([received 1] +
+		// [passthrough 2]) already equals completeSet(3), but the zero-swap
+		// short-circuit is bypassed on this path: the mint itself re-verifies
+		// the pending coins were never spent. swapCalls must be ≥1 and the
+		// flags cleared by the flush.
 		setOnline(true);
 		const flush = (await flushPendingNormalizeOnBackOnline()) as
 			{ swapped: boolean; zeroSwap: boolean } | null;
-		expect(flush && flush.zeroSwap).toBe(true);
+		expect(flush && flush.swapped).toBe(true);
+		expect(flush && flush.zeroSwap).toBe(false);
+		expect(swapCalls().mock.calls.length).toBeGreaterThanOrEqual(1);
 		expect(await getPendingNormalizeProofs()).toHaveLength(0);
 		expect(isAutoNormalizePending()).toBe(false);
 

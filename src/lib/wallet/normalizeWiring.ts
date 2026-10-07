@@ -46,9 +46,11 @@ import {
 	getPendingNormalizeProofs,
 	clearPendingNormalize,
 	markSpent,
+	markQuarantined,
 	makeLocalId,
 	type StoredProof
 } from './proofsDb';
+import { isDoubleSpentFamilyError, QuarantineAppliedError } from './errors';
 import type { TokenProof } from '../types';
 import { getCounterK, incrementCounterK, withKeysetLock } from './counterK';
 import { deriveSecretAndR, getActiveSeed } from './nut13';
@@ -230,7 +232,28 @@ async function swapGroup(
 			secret: p.secret,
 			C: p.C
 		}));
-		const swapResult = await clientMod.swapProofs(mintUrl, swapInputs, outputs);
+
+		// TASK-1316 (P5): the DOUBLE-SPENT family reject (11002/11005 — hard
+		// evidence the coins are dead) quarantines the group and lets the flush
+		// continue with the remaining groups. Network errors / the benign
+		// idempotent family (11003/20002) / unknown errors are NOT evidence of
+		// dead coins — they propagate untouched (boundary tests both ways).
+		let swapResult: Awaited<ReturnType<typeof clientMod.swapProofs>>;
+		try {
+			swapResult = await clientMod.swapProofs(mintUrl, swapInputs, outputs);
+		} catch (err) {
+			if (isDoubleSpentFamilyError(err)) {
+				const deadIds = inputs.map((p) => p.local_id);
+				await markQuarantined(deadIds);
+				throw new QuarantineAppliedError(
+					`TASK-1316: quarantined ${deadIds.length} proofs of keyset ${keysetId} — ` +
+					`mint double-spent family reject: ${err instanceof Error ? err.message : String(err)}`,
+					deadIds,
+					err
+				);
+			}
+			throw err;
+		}
 
 		// ── TASK-313 guard (melt.ts:624 pattern — TASK-1304) ────────────────
 		// The mint may not sign MORE outputs than we derived (counter cannot
@@ -314,7 +337,17 @@ export const boundSwapFn: SwapFn = async (proofs, outputs) => {
 	for (const g of groups) {
 		const { share, rest } = extractShare(remaining, g.sum);
 		remaining = rest;
-		newProofs.push(...await swapGroup(g.mintUrl, g.keysetId, g.proofs, share));
+		try {
+			newProofs.push(...await swapGroup(g.mintUrl, g.keysetId, g.proofs, share));
+		} catch (err) {
+			// TASK-1316 (P5): a quarantined group is already handled (marked in
+			// proofsDb) — the flush CONTINUES with the remaining groups. Anything
+			// else (network, benign, unknown) aborts the run untouched.
+			if (err instanceof QuarantineAppliedError) {
+				continue;
+			}
+			throw err;
+		}
 	}
 
 	if (remaining.length > 0) {

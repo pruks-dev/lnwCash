@@ -32,6 +32,17 @@ export interface StoredProof extends TokenProof {
 	 * (`flushPendingNormalizeOnBackOnline`) once the pile has been consolidated.
 	 */
 	pending_normalize?: boolean;
+	/**
+	 * TASK-1316 (P5): quarantine flag — true when the flush swap (T3) was
+	 * rejected by the mint with the DOUBLE-SPENT family (11002 tokens already
+	 * spent / 11005 tokens already signed) — hard evidence the coins are dead.
+	 * SEPARATE field, separate reason: proofsDb.ts:26 `orphaned` = keyset-
+	 * unknown (TASK-101/F-072) and `pending_normalize` = awaits-consolidation —
+	 * neither may be reused for this. Quarantined proofs are excluded from
+	 * the spendable pool AND from every balance (the amount is no longer the
+	 * user's money — the mint already counted it as spent).
+	 */
+	quarantined?: boolean;
 }
 
 // ─── DB Setup ────────────────────────────────────────────────
@@ -130,20 +141,24 @@ export async function getUnspentProofs(): Promise<StoredProof[]> {
 	const all = await db.getAll(STORE_NAME);
 	// TASK-1315 (P3): pending-normalize proofs are NOT spendable — they came
 	// from the offline passthrough and wait for the T3 consolidate swap.
+	// TASK-1316 (P5): quarantined proofs are dead coins (double-spent family
+	// reject at the mint) — never spendable either.
 	// This is the SPENDABLE pool (send/melt/swap/normalize pick from here);
 	// balance queries must use getUnspentProofsIncludingPending instead.
-	return all.filter(p => !p.spent && !p.orphaned && !p.pending_normalize);
+	return all.filter(p => !p.spent && !p.orphaned && !p.pending_normalize && !p.quarantined);
 }
 
 /**
  * TASK-1315 (P3/balance): unspent pool INCLUDING pending-normalize proofs.
  * Pending proofs are still the user's money — balance queries MUST count them
  * (ห้ามหายเงียบ) even though they cannot be selected for spending.
+ * TASK-1316 (P5): quarantined proofs are EXCLUDED — the mint has already
+ * counted them as spent; counting them would lie about the user's money.
  */
 export async function getUnspentProofsIncludingPending(): Promise<StoredProof[]> {
 	const db = await getDB();
 	const all = await db.getAll(STORE_NAME);
-	return all.filter(p => !p.spent && !p.orphaned);
+	return all.filter(p => !p.spent && !p.orphaned && !p.quarantined);
 }
 
 export async function getProofsByMint(mintUrl: string): Promise<StoredProof[]> {
@@ -439,13 +454,35 @@ export async function markPendingNormalizeByProof(proofs: TokenProof[]): Promise
 }
 
 /**
- * TASK-1304: all UNSPENT proofs currently flagged pending-normalize
+ * TASK-1315: all UNSPENT proofs currently flagged pending-normalize
  * (the offline-passthrough pile waiting for the T3 back-online consolidate).
+ * TASK-1316 (P5): quarantined proofs are NOT returned here either — once the
+ * mint proved them dead they are out of the flush pipeline for good.
  */
 export async function getPendingNormalizeProofs(): Promise<StoredProof[]> {
 	const db = await getDB();
 	const all = await db.getAll(STORE_NAME);
-	return all.filter(p => p.pending_normalize === true && !p.spent);
+	return all.filter(p => p.pending_normalize === true && !p.spent && !p.quarantined);
+}
+
+/**
+ * TASK-1316 (P5): mark proofs as quarantined — dead coins (double-spent
+ * family reject at the mint during the T3 flush swap). They drop out of the
+ * spendable pool AND out of every balance (getUnspentProofs /
+ * getUnspentProofsIncludingPending both filter them). The DB row is KEPT
+ * (audit trail — mirror of markSpent/markOrphaned patterns).
+ */
+export async function markQuarantined(localIds: string[]): Promise<void> {
+	const db = await getDB();
+	const tx = db.transaction(STORE_NAME, 'readwrite');
+	for (const id of localIds) {
+		const stored = await tx.store.get(id);
+		if (stored) {
+			stored.quarantined = true;
+			await tx.store.put(stored);
+		}
+	}
+	await tx.done;
 }
 
 /**

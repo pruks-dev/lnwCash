@@ -124,6 +124,15 @@ function isCompleteSetMultiset(amounts: number[], target: number[]): boolean {
 	return a.every((v, i) => v === t[i]);
 }
 
+/** TASK-1316 (P4): normalize options — forceSwap bypasses the zero-swap
+ *  short-circuit. ONLY the T3 flush path (normalizeWiring) passes it: the
+ *  pending pile MUST be re-signed at the mint (the mint itself re-verifies the
+ *  coins were never spent — the one authority that can). T1/T2 keep the
+ *  zero-skip semantics exactly as TASK-1303 ruled (self-minted coins). */
+export interface NormalizeOptions {
+	forceSwap?: boolean;
+}
+
 /**
  * Consolidate a proof pile into a complete-set of its own sum — TASK-1303
  * (INTENT-013, ruling_2). Pure orchestrator: the swap is function injection
@@ -132,14 +141,19 @@ function isCompleteSetMultiset(amounts: number[], target: number[]): boolean {
  * zero-swap short-circuit: when the pile's amount multiset already equals
  * `completeSet(sum)` (TASK-1301), skip the swap entirely (risk R-8/R-9
  * mitigation — assumption verified:false, covered by unit tests here).
+ * TASK-1316 (P4): opts.forceSwap=true (T3 flush ONLY) bypasses this
+ * short-circuit — the pending pile is swapped at the mint even when it is
+ * already complete-set shaped, so the mint gets to attest every coin.
  *
  * @param proofs the pile to consolidate
  * @param swapFn injected NUT-03 swap (see `SwapFn`)
+ * @param opts optional forceSwap bypass (T3 flush only — see NormalizeOptions)
  * @throws whatever `swapFn` throws — propagated to the caller untouched
  */
 export async function normalizeToCompleteSet(
 	proofs: StoredProof[],
-	swapFn: SwapFn
+	swapFn: SwapFn,
+	opts?: NormalizeOptions
 ): Promise<NormalizeResult> {
 	const sum = proofs.reduce((s, p) => s + p.amount, 0);
 
@@ -150,8 +164,9 @@ export async function normalizeToCompleteSet(
 
 	const target = completeSet(sum);
 
-	// zero-swap short-circuit (ruling_2): pile already in complete-set shape
-	if (isCompleteSetMultiset(proofs.map(p => p.amount), target)) {
+	// zero-swap short-circuit (ruling_2): pile already in complete-set shape —
+	// BYPASSED when forceSwap (P4: T3 flush must swap at the mint)
+	if (!opts?.forceSwap && isCompleteSetMultiset(proofs.map(p => p.amount), target)) {
 		return { swapped: false, zeroSwap: true, sum, target, proofs };
 	}
 
@@ -219,14 +234,15 @@ function scheduleAutoNormalize(deps: AutoNormalizeDeps, hook: AutoNormalizeHook)
 /** Run one normalize attempt now (guarded — never double-runs, never throws). */
 export async function runAutoNormalizeNow(
 	deps: AutoNormalizeDeps,
-	hook: AutoNormalizeHook
+	hook: AutoNormalizeHook,
+	opts?: NormalizeOptions
 ): Promise<NormalizeResult | null> {
 	if (autoNormalizeRunning) return null;
 	autoNormalizeRunning = true;
 	autoNormalizePending = false;
 	try {
 		const pile = await deps.getProofs();
-		const result = await normalizeToCompleteSet(pile, deps.swapFn);
+		const result = await normalizeToCompleteSet(pile, deps.swapFn, opts);
 		deps.onSettle?.(result, undefined, hook);
 		return result;
 	} catch (err) {
@@ -248,13 +264,15 @@ export function autoNormalizeAfterCompleteMint(deps: AutoNormalizeDeps): void {
 }
 
 /** T3 — กลับ online: เคลียร์ pending-normalize ทันที (bypass debounce wait).
- *  Pile ที่ normalize อยู่แล้วจะโดน zero-swap short-circuit ปล่อยผ่านเอง. */
+ *  TASK-1316 (P4): T3 ส่ง forceSwap — pending pile ถูก swap จริง ณ mint
+ *  เสมอ (mint เป็นผู้ยืนยันไม่เคยใช้) — zero-swap short-circuit ถูก bypass
+ *  เฉพาะเส้นนี้ (T1/T2 คง zero-skip เดิม 100%). */
 export function autoNormalizeOnBackOnline(deps: AutoNormalizeDeps): Promise<NormalizeResult | null> {
 	if (autoNormalizeTimer !== null) {
 		clearTimeout(autoNormalizeTimer);
 		autoNormalizeTimer = null;
 	}
-	return runAutoNormalizeNow(deps, 'T3-back-online');
+	return runAutoNormalizeNow(deps, 'T3-back-online', { forceSwap: true });
 }
 
 /**

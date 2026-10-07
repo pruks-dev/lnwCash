@@ -16,6 +16,7 @@ import {
 	autoNormalizeAfterReceiveOnline,
 	autoNormalizeAfterCompleteMint,
 	autoNormalizeOnBackOnline,
+	runAutoNormalizeNow,
 	isAutoNormalizePending,
 	isAutoNormalizeRunning,
 	cancelAutoNormalize
@@ -178,16 +179,36 @@ describe('TASK-1303 ชุด (5): AUTO MODE debounce + hook points', () => {
 		expect(swap.calls.length).toBe(1); // timer เดิมไม่ยิงซ้ำ
 	});
 
-	it('T3 บนกองที่ complete-set อยู่แล้ว → zero-swap short-circuit ปล่อยผ่าน', async () => {
+	it('T3 บนกองที่ complete-set อยู่แล้ว → FORCE swap (P4 — zero-swap short-circuit ถูก bypass เฉพาะ T3)', async () => {
 		const { deps, swap, onSettle } = makeDeps([
 			makeProof(1),
 			makeProof(2),
 			makeProof(4)
 		]);
 		const result = await autoNormalizeOnBackOnline(deps);
+		// TASK-1316 (P4): pending pile ต้องถูก swap จริง ณ mint — mint เป็นผู้ยืนยัน
+		// ไม่เคยใช้ — แม้ pile เป็น complete-set shape แล้ว (zero-skip ถูก bypass):
+		expect(swap.calls.length).toBe(1);
+		expect(result?.swapped).toBe(true);
+		expect(result?.zeroSwap).toBe(false);
+		expect(onSettle).toHaveBeenCalledTimes(1);
+	});
+
+	it('T1/T2 hook บนกอง complete-set เดิม → zero-skip คงเดิม 100% (P4 เฉพาะ T3)', async () => {
+		const { deps, swap, onSettle } = makeDeps([
+			makeProof(1),
+			makeProof(2),
+			makeProof(4)
+		]);
+		// T1-receive-online hook — ไม่มี force — zero-swap short-circuit เดิม:
+		const result = await runAutoNormalizeNow(deps, 'T1-receive-online');
 		expect(swap.calls.length).toBe(0);
 		expect(result?.zeroSwap).toBe(true);
 		expect(onSettle).toHaveBeenCalledTimes(1);
+		// T2-complete-mint hook — เช่นกัน:
+		const result2 = await runAutoNormalizeNow(deps, 'T2-complete-mint');
+		expect(swap.calls.length).toBe(0);
+		expect(result2?.zeroSwap).toBe(true);
 	});
 
 	it('cancelAutoNormalize → ยกเลิกก่อนครบ window → ไม่รัน', async () => {
