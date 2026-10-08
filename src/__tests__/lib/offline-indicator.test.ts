@@ -127,18 +127,22 @@ describe('TASK-1307 — flight-sim (probe verdicts)', () => {
 
 describe('TASK-1307 — coalesce (no probe stacking)', () => {
 	it('5 triggers while probing → exactly one probe; settles then probes again on next trigger', async () => {
-		let release!: (v: { ok: boolean }) => void;
+		// TASK-1401 COALESCING bond: triggers arriving while 'probing' are
+		// QUEUED (one slot — never dropped silently) and replayed exactly
+		// once after settle; probes still never stack. Every fetch parks
+		// until explicitly released (releases[] drains the whole run).
+		const releases: Array<(v: { ok: boolean }) => void> = [];
 		fetchMock.mockImplementation(
 			() =>
 				new Promise<{ ok: boolean }>(res => {
-					release = res;
+					releases.push(res);
 				})
 		);
 
 		window.dispatchEvent(new Event('online')); // trigger 1 — enters probing
 		await vi.waitFor(() => expect(mod.getDetectorStatus().probing).toBe(true));
 
-		// hammer 4 more triggers while probing — all must be skipped
+		// hammer 4 more triggers while probing — queued, never stacked
 		document.dispatchEvent(new Event('visibilitychange')); // 2
 		window.dispatchEvent(new Event('online')); // 3
 		mod.notifySuspectOffline(); // 4
@@ -146,8 +150,19 @@ describe('TASK-1307 — coalesce (no probe stacking)', () => {
 
 		expect(fetchMock).toHaveBeenCalledTimes(1); // probes never stack
 
-		release({ ok: false });
+		// release the first run (single target) → settles offline → the
+		// queued trigger replays EXACTLY once (one fetch PER TARGET —
+		// list is [mint.b, mint.a] now: 1 first run + 2 replay).
+		releases.splice(0).forEach(r => r({ ok: false }));
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+		// release the replay run (2 parked fetches) → settles offline.
+		releases.splice(0).forEach(r => r({ ok: false }));
 		await waitForState('offline');
+
+		// queue drained — state rests offline (no second replay, no ping loop).
+		await new Promise(resolve => setTimeout(resolve, 50));
+		expect(fetchMock).toHaveBeenCalledTimes(3);
+		expect(mod.getDetectorStatus().state).toBe('offline');
 
 		// after settling, a new trigger runs a fresh probe (not stuck).
 		// One probe run = one fetch PER TARGET (list is [mint.b, mint.a] now);

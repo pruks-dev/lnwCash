@@ -2,6 +2,14 @@
  * TASK-1307 (INTENT-013 wave 5 — FR-2 + D1 + D1-boot-probe)
  * Detector service — ONE connectivity state for the entire app.
  *
+ * TASK-1401 (INTENT-013 — F-049-001 recovery-chain): on top of the TASK-1307
+ * detector, four recovery bonds — BOOT-DRAIN / RETRY / OFFLINE-HEARTBEAT /
+ * COALESCING — plus the EVENT API onOnlineConfirmed. The 4 external triggers
+ * are UNTOUCHED (additive only); recovery reuses the same probe engine and
+ * introduces NO new trigger kind, NO ping loop, NO setInterval — and the
+ * detector NEVER fires a flush itself (it only emits onOnlineConfirmed; the
+ * drain binding is TASK-1402 scope).
+ *
  * Truth = probe results (raw GET `${mintUrl}/v1/info`).
  * navigator.onLine is NOT truth: window 'online' events are demoted to probe
  * TRIGGERS (must_do 7). The device hint (navigator.onLine) is read exactly
@@ -20,7 +28,7 @@
  *   - GET `${mintUrl}/v1/info`, cache: 'no-store', one AbortController per
  *     target, timeout 4s (D1 frame 3–5s).
  *
- * Triggers (exactly 4 — D1; no ping loop, no setInterval, no recursion):
+ * External triggers (exactly 4 — D1; no ping loop, no setInterval, no recursion):
  *   (boot) module init fires the first probe immediately — cold open ends in
  *          real state as soon as results arrive, never parked in 'probing'
  *          waiting for visibilitychange. When targets are not wired yet (the
@@ -30,19 +38,38 @@
  *   (b)    window 'online' event → probe
  *   (c)    notifySuspectOffline() — after an op fails with a network error —
  *          probe follows
+ * ('retry' below is NOT a 5th external trigger — it is the internal
+ *  continuation of the RETRY/OFFLINE-HEARTBEAT schedule: one offline-only
+ *  setTimeout re-entering the same gate. No setInterval, no ping loop.)
  *
- * Coalescing: requestProbe while 'probing' is skipped — probes never stack.
+ *   Recovery bonds (TASK-1401 — F-049-001; additive — triggers above are
+ *   untouched):
+ *   - BOOT-DRAIN: the first boot probe answering 'online' (trigger 'boot')
+ *     while the pending pile is non-empty fires onOnlineConfirmed
+ *     IMMEDIATELY (no flip wait — fires even when the verdict matches the
+ *     seed). The detector never flushes itself; it only signals.
+ *   - RETRY: a failed probe schedules a backoff re-probe 3s→6s→12s→24s→cap
+ *     60s — offline-state ONLY. Any confirmed 'online' verdict cancels every
+ *     pending retry timer. No setInterval, no ping loop (D1 holds).
+ *   - OFFLINE-HEARTBEAT: runs on the same RETRY schedule while state is
+ *     'offline' — the retry probe IS the heartbeat (GET `${mint}/v1/info`,
+ *     the boss quote: 'ตอน offline ไม่เห็นมีการยิง /v1/info เช็คเลย' —
+ *     now it fires). online = zero timers.
+ *   - COALESCING: a trigger arriving while 'probing' is queued (ONE slot)
+ *     and replayed exactly once when the in-flight run settles — never
+ *     dropped silently, never stacked.
  *
  * Usage in Svelte 5:
- *   import { isOnline, onConnectivityChange, wasOffline } from '$lib/offline-indicator';
+ *   import { isOnline, onConnectivityChange, onOnlineConfirmed, wasOffline } from '$lib/offline-indicator';
  *
  *   let online = $state(isOnline());
  *   $effect(() => onConnectivityChange(v => online = v));
+ *   $effect(() => onOnlineConfirmed(() => drainPending())); // TASK-1402 binding
  */
 
 export type DetectorState = 'online' | 'offline' | 'probing';
 
-type ProbeTrigger = 'boot' | 'visibility' | 'online-event' | 'op-fail';
+type ProbeTrigger = 'boot' | 'visibility' | 'online-event' | 'op-fail' | 'retry';
 type ProbeVerdict = 'online' | 'offline';
 
 /** D1 probe frame 3–5s → fixed 4s per target fetch. */
@@ -50,6 +77,12 @@ const PROBE_TIMEOUT_MS = 4000;
 
 /** Probe path appended to each mint URL. */
 const PROBE_PATH = '/v1/info';
+
+/** TASK-1401 RETRY bond — offline-only backoff ladder (ms): 3s→6s→12s→24s→cap 60s. */
+export const RETRY_BACKOFF_MS = [3000, 6000, 12000, 24000, 60000] as const;
+
+/** TASK-1401 COALESCING bond — queued trigger slot (ONE; latest wins). */
+let coalescedTrigger: ProbeTrigger | null = null;
 
 // ─── Internal state ──────────────────────────────────────────
 
@@ -85,6 +118,33 @@ const inflight = new Set<AbortController>();
 /** Definite-flip subscribers (onConnectivityChange). */
 const listeners = new Set<(online: boolean) => void>();
 
+/** TASK-1401 EVENT API — confirmed-online subscribers (onOnlineConfirmed).
+ *  Fires when a probe run CONFIRMS online (boot-drain: even without a flip;
+ *  steady-state: on the offline→online flip). The detector itself never
+ *  flushes — the pending-drain binding subscribes here (TASK-1402 scope). */
+const onlineConfirmedListeners = new Set<() => void>();
+
+/** TASK-1401 RETRY bond — pending backoff step + live timer handle.
+ *  Timers exist ONLY while state === 'offline' (offline-only; online
+ *  confirms cancel every timer → online = 0 timers, enforced by tests). */
+let retryStep = 0;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** TASK-1401 BOOT-DRAIN bond — true until the first boot probe answers. */
+let bootProbeAwaiting = false;
+
+/**
+ * TASK-1401 pending-pile reader — set by the wallet layer (TASK-1402) so
+ * the boot-drain bond can know whether a pending pile awaits draining.
+ * Default: no pile (detector never imports the wallet — import-cycle guard).
+ */
+let hasPendingPile: () => boolean = () => false;
+
+/** TASK-1401 — register the pending-pile reader (wallet layer, TASK-1402). */
+export function setPendingPileReader(reader: () => boolean): void {
+	hasPendingPile = reader;
+}
+
 // ─── Public API (legacy signatures kept — must_do 7) ─────────
 
 /**
@@ -107,6 +167,54 @@ export function onConnectivityChange(callback: (online: boolean) => void): () =>
 	return () => {
 		listeners.delete(callback);
 	};
+}
+
+/**
+ * TASK-1401 EVENT API — subscribe to CONFIRMED-online moments.
+ * Fires when a probe run confirms 'online':
+ *   - BOOT-DRAIN: the first boot probe answers online + pending pile
+ *     non-empty → fires immediately (no flip wait);
+ *   - steady-state: any probe run flips offline/probing → online.
+ * The detector NEVER flushes — the drain binding (TASK-1402) subscribes here.
+ * Returns an unsubscribe function.
+ */
+export function onOnlineConfirmed(callback: () => void): () => void {
+	if (typeof window === 'undefined') return () => {};
+	onlineConfirmedListeners.add(callback);
+	return () => {
+		onlineConfirmedListeners.delete(callback);
+	};
+}
+
+/** TASK-1401 — test/ops introspection: pending retry step + live timer count (online must be 0). */
+export function getRecoveryStatus(): { retryStep: number; liveTimers: number } {
+	return { retryStep, liveTimers: retryTimer === null ? 0 : 1 };
+}
+
+/** TASK-1401 — cancel every pending retry timer (online-confirm path). */
+function cancelRetryTimers(): void {
+	if (retryTimer !== null) {
+		clearTimeout(retryTimer);
+		retryTimer = null;
+	}
+}
+
+/**
+ * TASK-1401 RETRY + OFFLINE-HEARTBEAT bond — schedule the next backoff probe.
+ * Single setTimeout (NO setInterval, NO ping loop); armed ONLY while the
+ * settled state is 'offline'. The retry probe IS the heartbeat: it re-fires
+ * GET `${mint}/v1/info` on the ladder 3s→6s→12s→24s→cap 60s (boss quote:
+ * 'ตอน offline ไม่เห็นมีการยิง /v1/info เช็คเลย' — this schedule is the check).
+ */
+function scheduleRetry(): void {
+	if (state !== 'offline') return;
+	if (retryTimer !== null) return; // one timer at a time — never stack
+	const delay = RETRY_BACKOFF_MS[Math.min(retryStep, RETRY_BACKOFF_MS.length - 1)];
+	retryStep++;
+	retryTimer = setTimeout(() => {
+		retryTimer = null;
+		requestProbe('retry');
+	}, delay);
 }
 
 // ─── wasOffline session badge (legacy semantics kept) ────────
@@ -212,10 +320,17 @@ export function notifySuspectOffline(): void {
 
 /**
  * Central trigger gate — coalescing + zero-target guard + verdict apply.
+ *
+ * TASK-1401 COALESCING bond: a trigger arriving while 'probing' is queued
+ * into ONE slot (latest wins) and replayed exactly once when the in-flight
+ * run settles — never dropped silently, probes still never stack.
  */
 function requestProbe(trigger: ProbeTrigger): void {
-	// Coalesce: a probe is already running — skip (probes never stack).
-	if (state === 'probing') return;
+	// COALESCING: a probe is already running — queue ONE replay (never stack).
+	if (state === 'probing') {
+		coalescedTrigger = trigger;
+		return;
+	}
 
 	if (targets.length === 0) {
 		// Nothing to probe: never flip on a guess, never park in 'probing'.
@@ -223,22 +338,67 @@ function requestProbe(trigger: ProbeTrigger): void {
 		return;
 	}
 
+	if (trigger === 'boot') bootProbeAwaiting = true;
 	firstProbeStarted = true;
 	bootFollowUpPending = false;
+	// A fresh probe run supersedes any armed retry (the new verdict will
+	// schedule its own follow-up) — one timer at a time, never stacked.
+	cancelRetryTimers();
 	state = 'probing';
 
 	void runProbe().then(verdict => {
-		const flipped = verdict !== lastDefinite;
-		state = verdict;
-		lastDefinite = verdict;
-		probeCount++;
-		lastProbeAt = Date.now();
-		lastResult = verdict;
-		if (verdict === 'online') suspect = false; // probe is truth — suspicion disproven
-		if (flipped) {
-			for (const cb of listeners) cb(verdict === 'online');
-		}
+		applyVerdict(verdict, trigger);
+		// COALESCING replay: exactly one queued trigger runs after settle.
+		const replay = coalescedTrigger;
+		coalescedTrigger = null;
+		if (replay !== null) requestProbe(replay);
 	});
+}
+
+/**
+ * TASK-1401 verdict apply — single settlement point for every probe run:
+ * flip listeners (unchanged D1), onOnlineConfirmed event, retry schedule.
+ */
+function applyVerdict(verdict: ProbeVerdict, trigger: ProbeTrigger): void {
+	const flipped = verdict !== lastDefinite;
+	state = verdict;
+	lastDefinite = verdict;
+	probeCount++;
+	lastProbeAt = Date.now();
+	lastResult = verdict;
+	if (verdict === 'online') {
+		suspect = false; // probe is truth — suspicion disproven
+		cancelRetryTimers(); // online confirmed = cancel every timer
+		retryStep = 0;
+	} else {
+		scheduleRetry(); // offline → backoff retry (= OFFLINE-HEARTBEAT schedule)
+	}
+
+	// BOOT-DRAIN: the FIRST boot probe answered 'online' (trigger 'boot',
+	// the boss quote: 'แล้วตอนที่ผม รีเฟรช boot ใหม่ ไม่มีการเช็ค pending
+	// swap ให้ proof ใช้ได้เลย') — with a non-empty pending pile, fire
+	// onOnlineConfirmed IMMEDIATELY (no flip wait — the seed may already be
+	// 'online'). Detector only signals; the drain itself is TASK-1402.
+	const wasBootVerdict = bootProbeAwaiting && trigger === 'boot';
+	bootProbeAwaiting = false;
+
+	const confirmedOnline = verdict === 'online' && (flipped || wasBootVerdict);
+	if (confirmedOnline) {
+		const drainable = wasBootVerdict ? hasPendingPile() : true;
+		if (drainable) {
+			for (const cb of [...onlineConfirmedListeners]) {
+				try {
+					cb();
+				} catch {
+					// one bad subscriber must not break the rest of the chain
+				}
+			}
+		}
+	}
+
+	if (flipped) {
+		for (const cb of listeners) cb(verdict === 'online');
+	}
 }
 
 /**
