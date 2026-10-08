@@ -82,6 +82,11 @@ vi.mock('../../offline-indicator', () => ({
 	})),
 	isOnline: vi.fn(() => true),
 	onConnectivityChange: vi.fn(() => () => {}),
+	// TASK-1402: dual-rail binding (module-init) needs both EVENT API
+	// entries on the mocked detector surface (no-op stubs — the rail
+	// behavior itself is proven in flush-binding-1402.test.ts).
+	onOnlineConfirmed: vi.fn(() => () => {}),
+	setPendingPileReader: vi.fn(),
 	notifySuspectOffline: vi.fn(),
 	setProbeTargets: vi.fn(),
 	wasOffline: vi.fn(() => false),

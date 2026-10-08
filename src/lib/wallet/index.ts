@@ -24,6 +24,7 @@ export {
 } from './tokenStore';
 
 // TASK-1304 (INTENT-013): auto-normalize wiring (T1/T2/T3 + bound swap)
+// TASK-1402: runFlushDrain (dual-rail drain) + drain introspection.
 export {
 	isWalletOnline,
 	boundSwapFn,
@@ -31,6 +32,9 @@ export {
 	scheduleNormalizeAfterReceiveOnline,
 	scheduleNormalizeAfterMint,
 	flushPendingNormalizeOnBackOnline,
+	runFlushDrain,
+	isFlushDrainInFlight,
+	resetFlushDrainForTests,
 	normalizePileNow,
 	cancelScheduledNormalize
 } from './normalizeWiring';

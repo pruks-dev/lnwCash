@@ -54,7 +54,7 @@ import { isDoubleSpentFamilyError, QuarantineAppliedError } from './errors';
 import type { TokenProof } from '../types';
 import { getCounterK, incrementCounterK, withKeysetLock } from './counterK';
 import { deriveSecretAndR, getActiveSeed } from './nut13';
-import { getDetectorStatus, onConnectivityChange } from '../offline-indicator';
+import { getDetectorStatus, onConnectivityChange, onOnlineConfirmed, setPendingPileReader } from '../offline-indicator';
 
 // ─── Online detection ───────────────────────────────────────
 
@@ -422,8 +422,97 @@ export { completeSet };
 // 'online' — the one true "back online" moment. Engine semantics unchanged
 // (zero-swap short-circuit + running lock remain in proofs.ts); the binding
 // stays in this single wiring point (v4.1 heart).
+// TASK-1402 (F-049-001+F7, INTENT-013 v5.1): the T3 trigger rides on BOTH
+// detector online signals (acceptance: flush ยิงจาก flip + onOnlineConfirmed
+// ทั้งสองทาง):
+//   - onOnlineConfirmed (TASK-1401 EVENT API): fires on the steady-state
+//     offline→online flip AND on the BOOT-DRAIN path (first boot probe
+//     online + pending pile non-empty → fires immediately, NO flip wait —
+//     the boss quote: 'แล้วตอนที่ผม รีเฟรช boot ใหม่ ไม่มีการเช็ค pending
+//     swap ให้ proof ใช้ได้เลย');
+//   - onConnectivityChange flip (TASK-1308 legacy): KEPT — the pre-1401
+//     binding stays as the second rail (defense in depth for the
+//     flip-only moment).
+// Double-fire (both rails on one flip — boot-drain ชน flip) CANNOT
+// double-flush: `runAutoNormalizeNow`'s `autoNormalizeRunning` lock returns
+// null for the second concurrent call (engine-level dedupe, proofs.ts),
+// plus the module-level `flushDrainInFlight` promise gate below collapses
+// overlapping triggers into ONE run (mount-order: mount→DB→detector→probe
+// →flush, concurrent flip+boot safe). EVENT API only — no detector
+// internals touched (requestProbe/runProbe never imported or called).
+// T1/T2 wires ABOVE are byte-untouched by this task (v5.1 แตะ T3 เท่านั้น).
+//
+// The pending-pile reader (TASK-1401 `setPendingPileReader`) is registered
+// with the REAL proofsDb-backed reader: `getPendingNormalizeProofs().length
+// > 0` — the async DB read is collapsed to the sync bool the detector
+// contract needs via a cached mirror refreshed on every flush settlement
+// (`hasPendingNormalizePile`). The cache starts pessimistic (true) so a
+// boot probe landing before the first DB read still drains; after the first
+// completed flush consideration the mirror reflects reality. A stale-true
+// mirror is HARMLESS (worst case: one no-op flush that returns null on an
+// empty pile — never a missed flush); a stale-false would MISS boot-drain,
+// hence pessimistic start.
+let hasPendingNormalizePile = true;
+
+/** TASK-1402: refresh the boot-drain pile mirror — call after every flush consideration. */
+function refreshPendingPileMirror(pendingCount: number): void {
+	hasPendingNormalizePile = pendingCount > 0;
+}
+
+/**
+ * TASK-1402: the ONE shared T3 drain runner behind BOTH trigger rails.
+ * Collapses concurrent triggers (flip + onOnlineConfirmed on the same
+ * verdict, boot-drain racing a flip) into a single flush run: while a run
+ * is in flight every overlapping trigger awaits the SAME promise instead
+ * of starting a second swap. Sequential triggers (a later back-online
+ * after the first run settled) still run fresh — the gate clears in
+ * `finally`.
+ */
+let flushDrainInFlight: Promise<NormalizeResult | null> | null = null;
+
+export function runFlushDrain(): Promise<NormalizeResult | null> {
+	if (flushDrainInFlight) return flushDrainInFlight;
+	flushDrainInFlight = flushPendingNormalizeOnBackOnline()
+		.then(async (result) => {
+			try {
+				refreshPendingPileMirror((await getPendingNormalizeProofs()).length);
+			} catch {
+				refreshPendingPileMirror(0);
+			}
+			return result;
+		})
+		.catch(async (err) => {
+			try {
+				refreshPendingPileMirror((await getPendingNormalizeProofs()).length);
+			} catch {
+				refreshPendingPileMirror(0);
+			}
+			throw err;
+		})
+		.finally(() => {
+			flushDrainInFlight = null;
+		});
+	return flushDrainInFlight;
+}
+
+/** TASK-1402 (test/ops): true while a T3 drain run is in flight. */
+export function isFlushDrainInFlight(): boolean {
+	return flushDrainInFlight !== null;
+}
+
+/** TASK-1402 (test/ops): reset the drain gate + pile mirror to boot state. */
+export function resetFlushDrainForTests(): void {
+	flushDrainInFlight = null;
+	hasPendingNormalizePile = true;
+}
+
 if (typeof window !== 'undefined') {
+	setPendingPileReader(() => hasPendingNormalizePile);
 	onConnectivityChange((online) => {
-		if (online) void flushPendingNormalizeOnBackOnline();
+		if (online) void runFlushDrain();
+	});
+	onOnlineConfirmed(() => {
+		void runFlushDrain();
 	});
 }
+
