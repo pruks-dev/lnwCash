@@ -685,7 +685,8 @@
 		color: var(--color-secondary);
 	}
 	.tx-status-badge.status-failed {
-		background: var(--color-error);
+		background: rgba(239, 83, 80, 0.16);
+		color: #ff8a80;
 	}
 
 	/* TASK-149 (CV17-001): Pending indicator — Time icon + text */
