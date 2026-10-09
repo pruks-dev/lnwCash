@@ -35,15 +35,22 @@ export {
 	runFlushDrain,
 	isFlushDrainInFlight,
 	resetFlushDrainForTests,
+	drainFlushQuarantineCausesForTests,
 	normalizePileNow,
 	cancelScheduledNormalize
 } from './normalizeWiring';
 
 // TASK-1403 (F-049-002): tx pending semantics + mapping + migration fixup
+// TASK-1501 (F-050-001): flush-abort settle + taxonomy + diagnostic backfill
 export {
 	settleReceiveTxByProofs,
 	settlePendingReceiveTxs,
-	type ReceiveTxSettleOutcome
+	forceFailMappedTxsOnFlushAbort,
+	classifyFlushAbortError,
+	describeFlushError,
+	type ReceiveTxSettleOutcome,
+	type FlushAbortVerdict,
+	type FlushAbortFailResult
 } from './tokenStore';
 export {
 	runTxPendingMigrationOnce,

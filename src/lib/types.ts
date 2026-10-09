@@ -31,6 +31,17 @@ export interface Transaction {
 	 * as unmatched, never crashes).
 	 */
 	proofIds?: string[];
+	/**
+	 * TASK-1501 (F-050-001): flush-abort diagnostic — set when the T3 flush
+	 * force-fails this tx on the TERMINAL-FAIL abort path (mint evaluated
+	 * the inputs then rejected: double-spent family / mint-rule reject /
+	 * mint-anomaly / counter-guard, plus unknown-default-failed per boss).
+	 * OPTIONAL + backward-compat (walks the proofIds trail): absent means
+	 * "no diagnostic" (legacy records, retryable-pending, quarantine-
+	 * success backfilled separately). Record-only — never rendered.
+	 */
+	failCode?: number | string;
+	failName?: string;
 }
 
 export interface TransactionFilter {

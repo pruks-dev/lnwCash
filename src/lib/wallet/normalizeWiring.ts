@@ -244,6 +244,11 @@ async function swapGroup(
 		} catch (err) {
 			if (isDoubleSpentFamilyError(err)) {
 				const deadIds = inputs.map((p) => p.local_id);
+				// TASK-1501 (F-050-001): record the mint's reject alongside
+				// the quarantined ids so the flush SUCCESS leg can backfill
+				// the tx diagnostic (failCode/failName) — additive only,
+				// quarantine verdict/behavior unchanged (T1/T2 untouched).
+				recordFlushQuarantineCause(deadIds, err);
 				await markQuarantined(deadIds);
 				throw new QuarantineAppliedError(
 					`TASK-1316: quarantined ${deadIds.length} proofs of keyset ${keysetId} — ` +
@@ -361,6 +366,42 @@ export const boundSwapFn: SwapFn = async (proofs, outputs) => {
 
 // ─── Deps assembly + T1/T2/T3 wire functions ──────────────────
 
+/**
+ * TASK-1501 (F-050-001): quarantine-cause collector for the tx diagnostic
+ * backfill. The 11002/11005 leg quarantines DURING the swap and the flush
+ * run still returns SUCCESS (result non-null — groups completed) — so the
+ * abort hook never fires and the raw mint reject never reaches the settle.
+ * This module-level map (proof local_id → the mint reject error) carries
+ * the cause from swapGroup (quarantine site) to the SUCCESS-leg settle
+ * below. Drained once per flush run; quarantine verdict/behavior itself is
+ * untouched (markQuarantined still fires at the same site, T1/T2 no cause).
+ */
+const flushQuarantineCauses = new Map<string, unknown>();
+
+/** TASK-1501: record the mint reject that quarantined these proofs. */
+function recordFlushQuarantineCause(localIds: string[], err: unknown): void {
+	for (const id of localIds) flushQuarantineCauses.set(id, err);
+}
+
+/**
+ * TASK-1501: resolve the quarantine cause for ONE mapped tx (first mapped
+ * proof carrying a recorded cause, else undefined).
+ */
+function causeForMappedTx(proofIds: string[]): unknown {
+	for (const id of proofIds) {
+		const cause = flushQuarantineCauses.get(id);
+		if (cause !== undefined) return cause;
+	}
+	return undefined;
+}
+
+/** TASK-1501 (test/ops): drain the cause map (count of entries dropped). */
+export function drainFlushQuarantineCausesForTests(): number {
+	const n = flushQuarantineCauses.size;
+	flushQuarantineCauses.clear();
+	return n;
+}
+
 /** Shared AutoNormalizeDeps over the whole spendable pile. */
 export function createAutoNormalizeDeps(): AutoNormalizeDeps {
 	return {
@@ -400,21 +441,87 @@ export function scheduleNormalizeAfterMint(): void {
  * pending cashu_receive tx (flip confirmed / failed / keep pending via
  * settlePendingReceiveTxs) — the tx-flip caller binding (TASK-1402 caller
  * path: this function IS the non-test tx-flip caller).
+ *
+ * TASK-1501 (F-050-001): settle ALSO runs on the ABORT path — the flush
+ * caller passes the error context into the settle (never `if (result)`
+ * only). The engine's onSettle(null, err) hook is the capture point: a
+ * TERMINAL-FAIL abort (mint evaluated inputs then rejected — double-spent
+ * family / mint-rule reject / mint-anomaly / counter-guard, plus unknown
+ * default failed per the boss) force-fails the mapped txs of THIS round
+ * (flip 'failed' + diagnostic + clear pending_normalize); a RETRYABLE
+ * abort (transport-only + benign 11003/20002 idempotent) keeps everything
+ * pending for the next round. Abort-settle failures are swallowed —
+ * proof state stays the source of truth.
  */
 export async function flushPendingNormalizeOnBackOnline(): Promise<NormalizeResult | null> {
 	const pendingIds = (await getPendingNormalizeProofs()).map((p) => p.local_id);
-	const result = await autoNormalizeOnBackOnlineWithOrigin(createAutoNormalizeDeps());
+	// TASK-1501: capture the abort-path error context the engine would
+	// otherwise swallow (runAutoNormalizeNow returns null on failure).
+	let abortError: unknown;
+	let sawAbort = false;
+	const deps = createAutoNormalizeDeps();
+	deps.onSettle = (result, error) => {
+		if (result === null || result === undefined) {
+			sawAbort = true;
+			abortError = error;
+		}
+	};
+	const result = await autoNormalizeOnBackOnlineWithOrigin(deps);
 	if (result) {
 		// Consumed: pile was swapped (inputs marked spent inside swapGroup) or
 		// the pile was already a complete set (zero-swap short-circuit).
 		await clearPendingNormalize(pendingIds);
 		// TASK-1403: settle mapped txs against the now-settled proofs.
+		// TASK-1501: carry the quarantine cause (11002/11005 mint reject)
+		// into the settle so the failed leg backfills the diagnostic
+		// (failCode/failName). Cause map drains once per run.
 		try {
-			const { settlePendingReceiveTxs } = await import('./tokenStore');
+			const { settlePendingReceiveTxs, describeFlushError } =
+				await import('./tokenStore');
+			const { getTransactions } = await import('../storage/db');
+			const pendingTxs = await getTransactions({ status: 'pending' }).catch(() => []);
+			for (const tx of pendingTxs) {
+				if (tx.type !== 'cashu_receive') continue;
+				if (tx.status !== 'pending') continue;
+				const cause = tx.proofIds ? causeForMappedTx(tx.proofIds) : undefined;
+				if (cause !== undefined) {
+					const { settleReceiveTxByProofs } = await import('./tokenStore');
+					await settleReceiveTxByProofs(tx.id, cause);
+					const diag = describeFlushError(cause);
+					console.warn(
+						`[flush-abort] TASK-1501 quarantine-leg diagnostic: tx=${tx.id} ` +
+						`(failCode=${String(diag.failCode ?? '—')} failName=${diag.failName ?? '—'})`
+					);
+				}
+			}
 			await settlePendingReceiveTxs();
 		} catch {
 			// tx settle is best-effort — the proof state is already correct;
 			// the next flush (or boot sweep) retries the settle.
+		} finally {
+			flushQuarantineCauses.clear();
+		}
+		return result;
+	}
+	// TASK-1501 — ABORT path: route the captured error through the 3-way
+	// taxonomy (SUCCESS is above; this branch is TERMINAL-FAIL vs RETRYABLE).
+	if (sawAbort && abortError !== undefined) {
+		try {
+			const { classifyFlushAbortError, forceFailMappedTxsOnFlushAbort } =
+				await import('./tokenStore');
+			const verdict = classifyFlushAbortError(abortError);
+			if (verdict === 'terminal') {
+				await forceFailMappedTxsOnFlushAbort(pendingIds, abortError);
+			}
+			// retryable: keep pending (tx + proofs) — no settle, no clear —
+			// the next back-online flush retries. Deliberately nothing here.
+		} catch {
+			// abort-settle is best-effort — the pending pile stays for retry.
+		} finally {
+			// Either verdict: the cause map belongs to THIS run — a retryable
+			// abort carries no quarantine causes anyway, but drain so a LATER
+			// run never reads stale entries.
+			flushQuarantineCauses.clear();
 		}
 	}
 	return result;

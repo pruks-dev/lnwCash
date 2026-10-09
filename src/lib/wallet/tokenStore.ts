@@ -22,6 +22,7 @@ import {
 	getBalanceByMint,
 	getProofCount,
 	clearProofs,
+	clearPendingNormalize,
 	markPendingNormalizeByProof,
 	makeLocalId,
 	type StoredProof
@@ -41,6 +42,7 @@ import { completeSet } from './completeSet';
 import {
 	checkState,
 	swapProofs,
+	CashuError,
 	MintUnreachableError,
 	NetworkError
 } from '../cashu/client';
@@ -245,7 +247,81 @@ export type ReceiveTxSettleOutcome =
 	| 'unmapped'
 	| 'skipped';
 
-export async function settleReceiveTxByProofs(txId: string): Promise<ReceiveTxSettleOutcome> {
+/**
+ * TASK-1501 (F-050-001 / INTENT-013 v5.2): the abort-path 3-way taxonomy.
+ *
+ * Boss ruling (L-P008): 'pending transaction ถ้า swap ไม่ผ่าน ทำไมไม่
+ * failed' — 'คือ pending ถ้าถูก swap ตอนกลับมา ออนไลน์แล้วไม่ผ่านให้ถือว่า
+ * failed' — i.e. a pending-swap-fail IS failed, UNLESS the failure is pure
+ * transport (mint never evaluated our inputs → retry next round).
+ *
+ *   - TERMINAL-FAIL: the mint EVALUATED our inputs then rejected them
+ *     (double-spent family 11002/11005, any other mint-rule CashuError
+ *     reject, mint-anomaly / counter-guard after the mint answered), PLUS
+ *     every unknown error (boss default: unknown = failed).
+ *     → attempt-level force-fail of the mapped txs + clear their
+ *     pending_normalize + record the diagnostic.
+ *   - RETRYABLE: pure TRANSPORT only — MintUnreachableError / NetworkError /
+ *     raw TypeError / timeout (AbortError), PLUS the benign idempotent
+ *     family 11003 / 20002 (mint.ts benign-11003 retry owns that code path;
+ *     here it only means "not evidence of dead inputs"). ONLY these two
+ *     groups enumerate retryable — unknown is NEVER retryable.
+ *     → keep pending (tx + proofs), no settle, no clear, retry next round.
+ *
+ * Classification is by FLOW (this flush path), not by code reuse — mint.ts's
+ * benign-11003 retry loop is untouched and can never reach this predicate.
+ */
+export type FlushAbortVerdict = 'terminal' | 'retryable';
+
+/** The RETRYABLE transport group — the ONLY "keep pending" envelope. */
+function isFlushRetryableError(err: unknown): boolean {
+	// Group 1 — transport: the mint never evaluated the inputs.
+	if (
+		err instanceof MintUnreachableError ||
+		err instanceof NetworkError ||
+		err instanceof TypeError
+	) {
+		return true;
+	}
+	if (
+		err instanceof DOMException && (err as DOMException).name === 'AbortError'
+	) {
+		return true;
+	}
+	// Group 2 — benign idempotent family 11003/20002 (OUTPUT-side collision,
+	// NOT evidence of dead inputs). input proofs may be perfectly healthy —
+	// retry later under a fresh counter, never force-fail, never quarantine.
+	if (err instanceof CashuError && (err as CashuError).isBenign) {
+		return true;
+	}
+	return false;
+}
+
+/** TERMINAL-FAIL = everything the retryable predicate does NOT accept. */
+export function classifyFlushAbortError(err: unknown): FlushAbortVerdict {
+	return isFlushRetryableError(err) ? 'retryable' : 'terminal';
+}
+
+/** Extract the diagnostic (failCode/failName) from ANY abort error. */
+export function describeFlushError(err: unknown): { failCode?: number | string; failName?: string } {
+	const name = err instanceof Error ? err.name : typeof err;
+	if (err instanceof CashuError) {
+		const code = (err as CashuError).code;
+		return { failCode: code, failName: name || 'CashuError' };
+	}
+	if (err instanceof DOMException) {
+		return { failCode: (err as DOMException).name, failName: (err as DOMException).name };
+	}
+	if (err instanceof Error) {
+		return { failName: name };
+	}
+	return { failName: String(name) };
+}
+
+export async function settleReceiveTxByProofs(
+	txId: string,
+	err?: unknown
+): Promise<ReceiveTxSettleOutcome> {
 	const tx = await getTransactionById(txId).catch(() => undefined);
 	if (!tx) return 'unmapped';
 	if (!tx.proofIds || tx.proofIds.length === 0) return 'unmapped';
@@ -280,7 +356,16 @@ export async function settleReceiveTxByProofs(txId: string): Promise<ReceiveTxSe
 		return 'pending'; // ก้อนบางตายคง pending จนสรุปหมด
 	}
 	if (dead > 0 && alive === 0) {
-		await updateTransaction(txId, { status: 'failed' }).catch(() => {});
+		// TASK-1501 (F-050-001): backfill the diagnostic on the quarantine-
+		// success leg (the mint's double-spent family reject code/name —
+		// the `err` context). Quarantine stays the single owner of the dead
+		// verdict; this only records WHY on the tx for the boss's trace.
+		const diag = err !== undefined ? describeFlushError(err) : {};
+		await updateTransaction(txId, {
+			status: 'failed',
+			...(diag.failCode !== undefined ? { failCode: diag.failCode } : {}),
+			...(diag.failName !== undefined ? { failName: diag.failName } : {})
+		}).catch(() => {});
 		return 'failed';
 	}
 	if (alive > 0 && dead === 0) {
@@ -296,7 +381,9 @@ export async function settleReceiveTxByProofs(txId: string): Promise<ReceiveTxSe
  * Returns the per-tx outcomes. Called by the flush binding (TASK-1402);
  * pure record sweep otherwise.
  */
-export async function settlePendingReceiveTxs(): Promise<
+export async function settlePendingReceiveTxs(
+	err?: unknown
+): Promise<
 	Array<{ txId: string; outcome: ReceiveTxSettleOutcome }>
 > {
 	const { getTransactions } = await import('../storage/db');
@@ -304,10 +391,79 @@ export async function settlePendingReceiveTxs(): Promise<
 	const out: Array<{ txId: string; outcome: ReceiveTxSettleOutcome }> = [];
 	for (const tx of txs) {
 		if (tx.type !== 'cashu_receive') continue;
-		const outcome = await settleReceiveTxByProofs(tx.id);
+		const outcome = await settleReceiveTxByProofs(tx.id, err);
 		out.push({ txId: tx.id, outcome });
 	}
 	return out;
+}
+
+/**
+ * TASK-1501 (F-050-001): attempt-level force-fail on the T3 flush ABORT
+ * path — the TERMINAL-FAIL verdict hook (called by the flush binding with
+ * the error context the engine swallowed).
+ *
+ * Boss ruling (L-P008): 'pending transaction ถ้า swap ไม่ผ่าน ทำไมไม่
+ * failed' — a pending-swap-fail IS failed ( Ver a proposal adopted: unknown
+ * defaults to failed). This runs on the ABORT path (no result), not just
+ * the result path: every MAPPED pending cashu_receive whose proofIds
+ * intersect THIS round's consumed pile (the pendingIds snapshot the flush
+ * took before the run) flips 'failed' + records the diagnostic
+ * (failCode/failName, latest verdict wins) + clears ITS proofs'
+ * pending_normalize (the attempt is over — retrying spent coins is fraud).
+ *
+ * Boundary (must_do 7): legacy/unmapped txs (no proofIds) are NEVER
+ * force-flipped — migration owns them — reported as `unmatched`.
+ * RETRYABLE aborts never reach here (the flush binding checks the verdict
+ * first and returns them to the next round untouched).
+ */
+export interface FlushAbortFailResult {
+	/** mapped txs flipped 'failed' this attempt */
+	failed: string[];
+	/** legacy/unmapped pending txs seen but deliberately NOT flipped */
+	unmatched: string[];
+	/** mapped pending txs that do NOT intersect this round's pile */
+	outOfScope: string[];
+}
+
+export async function forceFailMappedTxsOnFlushAbort(
+	attemptProofLocalIds: string[],
+	err: unknown
+): Promise<FlushAbortFailResult> {
+	const diag = describeFlushError(err);
+	// Log BEFORE classification effects — the raw error is the evidence.
+	console.warn(
+		`[flush-abort] TASK-1501 TERMINAL-FAIL: ` +
+		`${err instanceof Error ? err.message : String(err)} ` +
+		`(failCode=${String(diag.failCode ?? '—')} failName=${diag.failName ?? '—'})`
+	);
+	const inAttempt = new Set(attemptProofLocalIds);
+	const { getTransactions } = await import('../storage/db');
+	const txs = await getTransactions({ status: 'pending' }).catch(() => []);
+	const res: FlushAbortFailResult = { failed: [], unmatched: [], outOfScope: [] };
+	for (const tx of txs) {
+		if (tx.type !== 'cashu_receive') continue;
+		if (tx.status !== 'pending') continue;
+		const ids = tx.proofIds;
+		if (!ids || ids.length === 0) {
+			res.unmatched.push(tx.id); // legacy/unmapped — migration owns
+			continue;
+		}
+		if (!ids.some((id) => inAttempt.has(id))) {
+			res.outOfScope.push(tx.id); // not part of THIS flush round
+			continue;
+		}
+		await updateTransaction(tx.id, {
+			status: 'failed',
+			failCode: diag.failCode,
+			failName: diag.failName
+		}).catch(() => {});
+		// The attempt is over for these proofs: flip them out of the pending
+		// pipeline (they are dead per the terminal verdict — retrying them
+		// would re-submit spent coins). Rows stay for audit (no markSpent).
+		await clearPendingNormalize(ids).catch(() => {});
+		res.failed.push(tx.id);
+	}
+	return res;
 }
 
 /**
