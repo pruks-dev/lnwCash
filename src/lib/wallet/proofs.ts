@@ -131,6 +131,24 @@ function isCompleteSetMultiset(amounts: number[], target: number[]): boolean {
  *  zero-skip semantics exactly as TASK-1303 ruled (self-minted coins). */
 export interface NormalizeOptions {
 	forceSwap?: boolean;
+	/**
+	 * TASK-1403 (F-049-002 / OI-v5-2 ทาง (2)): origin of the pile being
+	 * normalized — lets the flush split the rule per pile source:
+	 *   - 'mint-own': proofs WE minted ourselves (counter-derived, NUT-13 —
+	 *     counter เอง ตรวจแล้ว) → zero-skip / confirm allowed (T1/T2
+	 *     semantics; the coins were born inside our counter band).
+	 *   - 'outside': proofs received from OUTSIDE our mint (offline
+	 *     passthrough / P2P receives) → strict swap (P4 เคร่ง) — the mint
+	 *     itself must re-attest coins it never signed for us.
+	 * Absent = legacy behavior (forceSwap decides; T1/T2 zero-skip as before).
+	 */
+	origin?: 'mint-own' | 'outside';
+}
+
+/** Resolve the effective force-swap for a run: 'outside' piles ALWAYS swap. */
+export function resolveOriginForceSwap(opts?: NormalizeOptions): boolean {
+	if (opts?.origin === 'outside') return true; // P4 เคร่ง — outside บังคับ swap
+	return opts?.forceSwap ?? false;
 }
 
 /**
@@ -144,6 +162,9 @@ export interface NormalizeOptions {
  * TASK-1316 (P4): opts.forceSwap=true (T3 flush ONLY) bypasses this
  * short-circuit — the pending pile is swapped at the mint even when it is
  * already complete-set shaped, so the mint gets to attest every coin.
+ * TASK-1403 (OI-v5-2 ทาง (2)): opts.origin='outside' ALSO forces the swap
+ * (outside pile บังคับ swap เคร่ง) while opts.origin='mint-own' keeps the
+ * zero-skip for self-minted coins (counter เอง ตรวจแล้ว — confirm ได้).
  *
  * @param proofs the pile to consolidate
  * @param swapFn injected NUT-03 swap (see `SwapFn`)
@@ -165,8 +186,11 @@ export async function normalizeToCompleteSet(
 	const target = completeSet(sum);
 
 	// zero-swap short-circuit (ruling_2): pile already in complete-set shape —
-	// BYPASSED when forceSwap (P4: T3 flush must swap at the mint)
-	if (!opts?.forceSwap && isCompleteSetMultiset(proofs.map(p => p.amount), target)) {
+	// BYPASSED when forceSwap (P4: T3 flush must swap at the mint) or when the
+	// pile came from OUTSIDE our mint (TASK-1403 OI-v5-2 ทาง (2): outside
+	// บังคับ swap เคร่ง). mint-own piles (counter-derived, NUT-13) keep zero-skip.
+	const force = resolveOriginForceSwap(opts);
+	if (!force && isCompleteSetMultiset(proofs.map(p => p.amount), target)) {
 		return { swapped: false, zeroSwap: true, sum, target, proofs };
 	}
 
@@ -273,6 +297,21 @@ export function autoNormalizeOnBackOnline(deps: AutoNormalizeDeps): Promise<Norm
 		autoNormalizeTimer = null;
 	}
 	return runAutoNormalizeNow(deps, 'T3-back-online', { forceSwap: true });
+}
+
+/**
+ * TASK-1403 (F-049-002 / OI-v5-2 ทาง (2)): T3 with the origin-split rule —
+ * identical immediate path to autoNormalizeOnBackOnline, but the pending
+ * pile rides as origin:'outside' (outside บังคับ swap เคร่ง) alongside
+ * forceSwap:true. Mint-own piles keep zero-skip on T1/T2 (no origin passed
+ * there). Pure engine — no I/O beyond deps.
+ */
+export function autoNormalizeOnBackOnlineWithOrigin(deps: AutoNormalizeDeps): Promise<NormalizeResult | null> {
+	if (autoNormalizeTimer !== null) {
+		clearTimeout(autoNormalizeTimer);
+		autoNormalizeTimer = null;
+	}
+	return runAutoNormalizeNow(deps, 'T3-back-online', { forceSwap: true, origin: 'outside' });
 }
 
 /**

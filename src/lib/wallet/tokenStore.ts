@@ -23,9 +23,10 @@ import {
 	getProofCount,
 	clearProofs,
 	markPendingNormalizeByProof,
+	makeLocalId,
 	type StoredProof
 } from './proofsDb';
-import { addTransaction } from '../storage/db';
+import { addTransaction, getTransactionById, updateTransaction } from '../storage/db';
 import { selectProofs, sumProofs } from './proofs';
 import { encodeToken, decodeToken, getTokenAmount } from '../cashu/token';
 import { decomposeAmount } from './mint';
@@ -159,6 +160,13 @@ function dleqReceiveGate(decoded: DecodedToken, mintUrl: string): void {
  * extracted from the old offline-gate branch and reused verbatim by BOTH
  * the offline gate and the D3 network-error fallback, so the two paths
  * CANNOT drift apart.
+ *
+ * TASK-1403 (F-049-002): the tx record is written with status 'pending'
+ * (boss L-P008: 'transaction ที่รับมาแบบ offline ควรอยู่ใน history โดยขึ้น
+ * สถานะว่า pending ไม่ใช่ confirm') + the proofIds mapping (tx_id ↔ proof
+ * local_ids) so the T3 flush can settle it (flip confirmed / failed) via
+ * `settleReceiveTxByProofs()`. Field is optional backward-compat — legacy
+ * records without it are treated as absent (never force-flipped).
  */
 async function receiveProofsPassthrough(
 	decoded: DecodedToken,
@@ -175,19 +183,26 @@ async function receiveProofsPassthrough(
 	await addProofs(offlineProofs, mintUrl, offlineProofs[0].id); // 1:1 — mark as-is
 	await markPendingNormalizeByProof(offlineProofs);
 	const dleqCount = offlineProofs.filter(p => p.dleq).length;
+	// Local proof IDs for the tx ↔ proof mapping (deterministic local_id —
+	// same function addProofs used to stamp the rows above).
+	const proofIds = offlineProofs.map((p) => makeLocalId(p));
 
-	// Record transaction (F-088) — best-effort
+	// Record transaction (F-088) — best-effort — TASK-1403: status 'pending'
+	// (NOT confirmed — the mint never saw these coins; the T3 flush flips
+	// them to confirmed once every mapped proof leaves pending).
+	const txId = `cashu-recv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 	try {
 		await addTransaction({
-			id: `cashu-recv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+			id: txId,
 			type: 'cashu_receive',
 			protocol: 'cashu',
 			amount: totalAmount,
 			mint_url: mintUrl,
 			timestamp: Date.now(),
 			token_hash: tokenString,
-			status: 'confirmed',
-			fee: 0
+			status: 'pending',
+			fee: 0,
+			proofIds
 		});
 	} catch {
 		// IndexedDB may be unavailable
@@ -200,6 +215,99 @@ async function receiveProofsPassthrough(
 		proofCount: offlineProofs.length,
 		dleqCount: dleqCount > 0 ? dleqCount : undefined
 	};
+}
+
+// ─── TASK-1403 (F-049-002): tx ↔ proof settlement ─────────────
+
+/**
+ * TASK-1403 (F-049-002) — settle ONE offline-receive tx after a T3 flush
+ * run, comparing the proofs named in its `proofIds` mapping:
+ *
+ *   - every mapped proof settled (pending_normalize cleared AND not
+ *     quarantined — i.e. re-signed at the mint or zero-skipped per the
+ *     OI-v5-2 mint-own pile)          → flip tx status 'confirmed'
+ *   - every mapped proof dead (quarantined) → flip tx status 'failed'
+ *     (OI-v5-3 ทาง (1) — record อย่างเดียว, ไม่แตะ .svelte)
+ *   - mixed / some still pending        → keep 'pending' (คง pending จน
+ *     สรุปหมด — ก้อนบางตายไม่ flip)
+ *   - tx missing / no proofIds (legacy) → return 'unmapped' (never
+ *     force-flipped — migration owns that case)
+ *   - tx not pending                    → return 'skipped' (already settled)
+ *
+ * Record-level only: reads proofsDb rows, updates the tx status via
+ * updateTransaction. Never derives, never touches the counter, never
+ * renders.
+ */
+export type ReceiveTxSettleOutcome =
+	| 'confirmed'
+	| 'failed'
+	| 'pending'
+	| 'unmapped'
+	| 'skipped';
+
+export async function settleReceiveTxByProofs(txId: string): Promise<ReceiveTxSettleOutcome> {
+	const tx = await getTransactionById(txId).catch(() => undefined);
+	if (!tx) return 'unmapped';
+	if (!tx.proofIds || tx.proofIds.length === 0) return 'unmapped';
+	if (tx.status !== 'pending') return 'skipped';
+	const ids = tx.proofIds;
+
+	const all = await getAllProofs().catch(() => []);
+	const byId = new Map(all.map((p) => [p.local_id, p]));
+	let alive = 0;
+	let dead = 0;
+	let stillPending = 0;
+	for (const id of ids) {
+		const p = byId.get(id);
+		if (!p) {
+			// Proof row gone (wiped / removed) — we CANNOT prove settlement,
+			// so stay conservative: keep pending (never force-flip on
+			// missing evidence). The swap path keeps consumed rows
+			// (markSpent) so a normal flush always finds them.
+			stillPending++;
+			continue;
+		}
+		if (p.quarantined) {
+			dead++;
+		} else if (p.pending_normalize) {
+			stillPending++;
+		} else {
+			alive++;
+		}
+	}
+
+	if (stillPending > 0 || (alive > 0 && dead > 0)) {
+		return 'pending'; // ก้อนบางตายคง pending จนสรุปหมด
+	}
+	if (dead > 0 && alive === 0) {
+		await updateTransaction(txId, { status: 'failed' }).catch(() => {});
+		return 'failed';
+	}
+	if (alive > 0 && dead === 0) {
+		await updateTransaction(txId, { status: 'confirmed' }).catch(() => {});
+		return 'confirmed';
+	}
+	return 'pending';
+}
+
+/**
+ * TASK-1403 (F-049-002) — settle EVERY pending cashu_receive tx that
+ * carries a proofIds mapping (the T3 flush's post-run settle pass).
+ * Returns the per-tx outcomes. Called by the flush binding (TASK-1402);
+ * pure record sweep otherwise.
+ */
+export async function settlePendingReceiveTxs(): Promise<
+	Array<{ txId: string; outcome: ReceiveTxSettleOutcome }>
+> {
+	const { getTransactions } = await import('../storage/db');
+	const txs = await getTransactions({ status: 'pending' }).catch(() => []);
+	const out: Array<{ txId: string; outcome: ReceiveTxSettleOutcome }> = [];
+	for (const tx of txs) {
+		if (tx.type !== 'cashu_receive') continue;
+		const outcome = await settleReceiveTxByProofs(tx.id);
+		out.push({ txId: tx.id, outcome });
+	}
+	return out;
 }
 
 /**

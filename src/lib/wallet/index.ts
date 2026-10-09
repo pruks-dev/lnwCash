@@ -39,6 +39,21 @@ export {
 	cancelScheduledNormalize
 } from './normalizeWiring';
 
+// TASK-1403 (F-049-002): tx pending semantics + mapping + migration fixup
+export {
+	settleReceiveTxByProofs,
+	settlePendingReceiveTxs,
+	type ReceiveTxSettleOutcome
+} from './tokenStore';
+export {
+	runTxPendingMigrationOnce,
+	rollbackTxPendingMigration,
+	TX_PENDING_MIGRATION_FLAG,
+	MIGRATION_MATCH_WINDOW_MS,
+	type TxMigrationSweepResult
+} from './txMigration';
+export { resolveOriginForceSwap } from './proofs';
+
 // proofs and proofsDb have overlapping names, export selectively:
 export { selectProofs, sumProofs, groupByKeyset, groupByMint } from './proofs';
 export {

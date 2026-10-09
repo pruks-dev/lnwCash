@@ -257,12 +257,19 @@ describe('TASK-1309: receiveTokens D3 boundary — transport vs rules-reject', (
 		expect(fetchMock.mock.calls.length - fetchCallsAtStart).toBe(1);
 
 		// transaction record (F-088 same-shape as the offline branch):
+		// TASK-1403 (F-049-002 / OI-v5): fallback receive writes 'pending'
+		// (boss L-P008: 'transaction ที่รับมาแบบ offline ควรอยู่ใน history
+		// โดยขึ้นสถานะว่า pending ไม่ใช่ confirm') + proofIds mapping —
+		// the T3 flush flips it to confirmed via settleReceiveTxByProofs.
 		const txs = await getTransactions();
 		expect(txs).toHaveLength(1);
 		expect(txs[0].type).toBe('cashu_receive');
 		expect(txs[0].amount).toBe(5);
 		expect(txs[0].mint_url).toBe(MINT_URL);
-		expect(txs[0].status).toBe('confirmed');
+		expect(txs[0].status).toBe('pending');
+		expect([...(txs[0].proofIds ?? [])].sort()).toEqual(
+			stored.map((p) => p.local_id).sort()
+		);
 	}, 15000);
 
 	it('a2) NetworkError → fallback as well (boundary case 2 — same passthrough)', async () => {

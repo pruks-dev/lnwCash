@@ -22,6 +22,15 @@ export interface Transaction {
 	protocol?: TransactionProtocol;
 	fee?: number;  // sats fee paid (mint melt only; cashu = 0)
 	actual_fee?: number;  // TASK-314 (NUT-08): true fee paid after mint overpaid return — equals fee when no overpaid, less when NUT-08 mint returned fee sats
+	/**
+	 * TASK-1403 (F-049-002): tx_id ↔ proof local_ids mapping for offline /
+	 * network-error fallback receives — lets the T3 flush settle this tx
+	 * (flip confirmed / failed) by comparing the mapped proofs' pending
+	 * state. OPTIONAL + backward-compat: legacy records (v4.4/v4.5) carry
+	 * no field — absent means "no mapping" (never force-flipped, reported
+	 * as unmatched, never crashes).
+	 */
+	proofIds?: string[];
 }
 
 export interface TransactionFilter {

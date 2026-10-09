@@ -30,7 +30,7 @@
 import {
 	autoNormalizeAfterReceiveOnline,
 	autoNormalizeAfterCompleteMint,
-	autoNormalizeOnBackOnline,
+	autoNormalizeOnBackOnlineWithOrigin,
 	runAutoNormalizeNow,
 	cancelAutoNormalize,
 	type AutoNormalizeDeps,
@@ -388,14 +388,34 @@ export function scheduleNormalizeAfterMint(): void {
  * T3 — back online: consolidate immediately (no debounce) and clear the
  * pending-normalize flags on success (swapped or zero-swap short-circuit).
  * On failure the flags stay — the next back-online flush retries.
+ *
+ * TASK-1403 (F-049-002 / OI-v5-2 ทาง (2)): the pending pile is ALWAYS an
+ * 'outside' pile (offline passthrough / network-error fallback receives —
+ * coins the mint never signed for us) → origin:'outside' rides alongside
+ * forceSwap:true so the outside-pile strict rule (P4 เคร่ง) applies even if
+ * forceSwap is ever relaxed. Mint-own piles (T1/T2: completeMint + online
+ * swap receive) keep zero-skip — those wires pass no origin.
+ *
+ * TASK-1403 (F-049-002): after a successful run, settles every mapped
+ * pending cashu_receive tx (flip confirmed / failed / keep pending via
+ * settlePendingReceiveTxs) — the tx-flip caller binding (TASK-1402 caller
+ * path: this function IS the non-test tx-flip caller).
  */
 export async function flushPendingNormalizeOnBackOnline(): Promise<NormalizeResult | null> {
 	const pendingIds = (await getPendingNormalizeProofs()).map((p) => p.local_id);
-	const result = await autoNormalizeOnBackOnline(createAutoNormalizeDeps());
+	const result = await autoNormalizeOnBackOnlineWithOrigin(createAutoNormalizeDeps());
 	if (result) {
 		// Consumed: pile was swapped (inputs marked spent inside swapGroup) or
 		// the pile was already a complete set (zero-swap short-circuit).
 		await clearPendingNormalize(pendingIds);
+		// TASK-1403: settle mapped txs against the now-settled proofs.
+		try {
+			const { settlePendingReceiveTxs } = await import('./tokenStore');
+			await settlePendingReceiveTxs();
+		} catch {
+			// tx settle is best-effort — the proof state is already correct;
+			// the next flush (or boot sweep) retries the settle.
+		}
 	}
 	return result;
 }
@@ -422,6 +442,7 @@ export { completeSet };
 // 'online' — the one true "back online" moment. Engine semantics unchanged
 // (zero-swap short-circuit + running lock remain in proofs.ts); the binding
 // stays in this single wiring point (v4.1 heart).
+//
 // TASK-1402 (F-049-001+F7, INTENT-013 v5.1): the T3 trigger rides on BOTH
 // detector online signals (acceptance: flush ยิงจาก flip + onOnlineConfirmed
 // ทั้งสองทาง):
@@ -515,4 +536,3 @@ if (typeof window !== 'undefined') {
 		void runFlushDrain();
 	});
 }
-
