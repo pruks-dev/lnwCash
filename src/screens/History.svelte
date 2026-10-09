@@ -709,12 +709,13 @@
 		white-space: nowrap;
 	}
 
-	/* Light theme — muted backgrounds */
-	@media (prefers-color-scheme: light) {
-		.tx-status-badge.status-failed {
-			background: rgba(239, 68, 68, 0.12);
-			color: var(--color-error);
-		}
+	/* Light theme variant — :global() escapes Svelte scoped-CSS analyzer
+	   (which otherwise tree-shakes [data-theme='light'] as 'unused' because
+	   data-theme is set on documentElement, not detectable statically).
+	   TASK-1512: failed badge ฟัง app theme (ไม่ตาม OS) — light = จาง+แดง, dark/default = base ทึบ. */
+	:global([data-theme='light']) .tx-status-badge.status-failed {
+		background: rgba(239, 68, 68, 0.12);
+		color: var(--color-error);
 	}
 
 	.bottom-spacer {
