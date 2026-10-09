@@ -837,15 +837,14 @@
 		color: #fff;
 	}
 
-	@media (prefers-color-scheme: light) {
-		.icon-send {
-			background: rgba(0, 188, 212, 0.12);
-			color: #00bcd4;
-		}
-		.icon-receive {
-			background: rgba(20, 184, 166, 0.12);
-			color: #14b8a6;
-		}
+	/* TASK-1520: icon ฟัง app theme (ไม่ตาม OS) — :global() กัน tree-shake (pattern TASK-1512). */
+	:global([data-theme='light']) .icon-send {
+		background: rgba(0, 188, 212, 0.12);
+		color: #00bcd4;
+	}
+	:global([data-theme='light']) .icon-receive {
+		background: rgba(20, 184, 166, 0.12);
+		color: #14b8a6;
 	}
 
 	/* ─── Badges ──────────────────────────────────────── */
@@ -869,15 +868,14 @@
 		background: #8b5cf6;
 	}
 
-	@media (prefers-color-scheme: light) {
-		.protocol-lightning {
-			background: rgba(0, 188, 212, 0.12);
-			color: #00bcd4;
-		}
-		.protocol-cashu {
-			background: rgba(139, 92, 246, 0.12);
-			color: #8b5cf6;
-		}
+	/* TASK-1520: protocol ฟัง app theme (ไม่ตาม OS) — :global() กัน tree-shake (pattern TASK-1512). */
+	:global([data-theme='light']) .protocol-lightning {
+		background: rgba(0, 188, 212, 0.12);
+		color: #00bcd4;
+	}
+	:global([data-theme='light']) .protocol-cashu {
+		background: rgba(139, 92, 246, 0.12);
+		color: #8b5cf6;
 	}
 
 	/* Status colors */
@@ -893,19 +891,18 @@
 		background: #ef4444;
 	}
 
-	@media (prefers-color-scheme: light) {
-		.status-confirmed {
-			background: rgba(20, 184, 166, 0.12);
-			color: #14b8a6;
-		}
-		.status-pending {
-			background: rgba(148, 163, 184, 0.15);
-			color: #64748b;
-		}
-		.status-failed {
-			background: rgba(239, 68, 68, 0.12);
-			color: #ef4444;
-		}
+	/* TASK-1520: status ฟัง app theme (ไม่ตาม OS) — :global() กัน tree-shake (pattern TASK-1512). */
+	:global([data-theme='light']) .status-confirmed {
+		background: rgba(20, 184, 166, 0.12);
+		color: #14b8a6;
+	}
+	:global([data-theme='light']) .status-pending {
+		background: rgba(148, 163, 184, 0.15);
+		color: #64748b;
+	}
+	:global([data-theme='light']) .status-failed {
+		background: rgba(239, 68, 68, 0.12);
+		color: #ef4444;
 	}
 
 	/* ─── Mono text ───────────────────────────────────── */
