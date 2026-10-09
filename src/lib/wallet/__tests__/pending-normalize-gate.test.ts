@@ -157,8 +157,8 @@ describe('TASK-1315: P3 pending-spendability gate + P8 restore immunity', () => 
 		expect(() => selectProofs(pends, 1)).toThrow(ProofSelectionError);
 	}, 15000);
 
-	// ── Balance never quietly missing ──
-	it('g3) balance counts pending ALWAYS: getTotalBalance / getBalanceByMint / getProofBalance / balance.getBalance', async () => {
+	// ── Balance: SPENDABLE ONLY (INTENT-015 flip — see g3-flip-note) ──
+	it('g3) INTENT-015: balance counts SPENDABLE ONLY — pending excluded: getTotalBalance / getBalanceByMint / getProofBalance / balance.getBalance', async () => {
 		const chains = [chainProof(3, 'free1'), chainProof(2, 'free2')];
 		await addProofs(chains, MINT_URL, KEYSET_ID);
 		await addProofs([pendingProof(4, 'pend1'), pendingProof(1, 'pend2')], MINT_URL, KEYSET_ID);
@@ -167,18 +167,21 @@ describe('TASK-1315: P3 pending-spendability gate + P8 restore immunity', () => 
 			pendingProof(1, 'pend2')
 		]);
 
-		// spendable = 5; balance = 5 + 5 = 10 (pending = money):
-		expect(await getTotalBalance()).toBe(10);
+		// INTENT-015 (TASK-1510): spendable = 5; balance = 5 (pending 5 NOT
+		// counted — 'pending และ failed proof ไม่ควรเอามานับเป็น balance
+		// ด้วย'). FLIPPED from TASK-1315 ('balance = 10, pending = money') —
+		// intended breakage, verbatim deviation in g3-flip-note.md (TASK-1511).
+		expect(await getTotalBalance()).toBe(5);
 		const byMint = await getBalanceByMint();
-		expect(byMint[MINT_URL]).toBe(10);
+		expect(byMint[MINT_URL]).toBe(5);
 
 		const proofBalance = await getProofBalance();
-		expect(proofBalance.total).toBe(10);
-		expect(proofBalance.proofCount).toBe(4);
+		expect(proofBalance.total).toBe(5);
+		expect(proofBalance.proofCount).toBe(2);
 
 		const badge = await getBalance(); // the UI badge source (F003/Receive/Send)
-		expect(badge.total).toBe(10);
-		expect(badge.proofCount).toBe(4);
+		expect(badge.total).toBe(5);
+		expect(badge.proofCount).toBe(2);
 	}, 15000);
 
 	// ── P8 — NUT-9 restore immunity ──

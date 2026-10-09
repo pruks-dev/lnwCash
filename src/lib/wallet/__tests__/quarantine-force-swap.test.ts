@@ -258,12 +258,15 @@ describe('TASK-1316: P4 force-swap + P5 quarantine boundary', () => {
 		const flush = await flushPendingNormalizeOnBackOnline();
 		expect(flush).toBeNull(); // engine swallowed the error (flags stay — retry)
 
-		// NOT quarantined — the coins remain unspent, pending (flags stay) and
-		// still counted in the balance (nothing seized, nothing quietly lost):
+		// NOT quarantined — the coins remain unspent, pending (flags stay).
+		// INTENT-015 (TASK-1510/1511 flip): pending is NOT counted in the
+		// balance — 'pending และ failed proof ไม่ควรเอามานับเป็น balance
+		// ด้วย'. Balance = spendable only = 0 here (both coins pending);
+		// the flush pile (IncludingPending) still sees 2 for retry:
 		const all = await getAllProofs();
 		expect(all.every((p) => !p.quarantined)).toBe(true);
 		expect(await getUnspentProofsIncludingPending()).toHaveLength(2);
-		expect(await getTotalBalance()).toBe(3);
+		expect(await getTotalBalance()).toBe(0); // FLIPPED from 3 (TASK-1315 contract) — intended breakage, see g3-flip-note.md
 		// flags STAY — the next back-online flush retries:
 		expect(await getPendingNormalizeProofs()).toHaveLength(2);
 	}, 15000);
