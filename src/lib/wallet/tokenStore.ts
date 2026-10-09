@@ -13,7 +13,6 @@ import {
 	addProofs,
 	getAllProofs,
 	getUnspentProofs,
-	getUnspentProofsIncludingPending,
 	getProofsByMint,
 	getUnspentProofsByMint,
 	removeProofs,
@@ -23,6 +22,7 @@ import {
 	getProofCount,
 	clearProofs,
 	clearPendingNormalize,
+	markQuarantined,
 	markPendingNormalizeByProof,
 	makeLocalId,
 	type StoredProof
@@ -460,7 +460,15 @@ export async function forceFailMappedTxsOnFlushAbort(
 		// The attempt is over for these proofs: flip them out of the pending
 		// pipeline (they are dead per the terminal verdict — retrying them
 		// would re-submit spent coins). Rows stay for audit (no markSpent).
+		// INTENT-015 (TASK-1510): TERMINAL-failed proofs are dead coins of ANY
+		// kind — 'failed แบบไหนก็ไม่ควรเอามาใช้ได้' — so quarantine them
+		// alongside the pending-clear (drops them from the spendable pool AND
+		// from every balance). Runs ONLY on the TERMINAL verdict path — the
+		// flush binding filters retryable (transport/benign) BEFORE calling
+		// here, so the classification boundary is untouched. Settle read path
+		// (settleReceiveTxByProofs) unchanged.
 		await clearPendingNormalize(ids).catch(() => {});
+		await markQuarantined(ids).catch(() => {});
 		res.failed.push(tx.id);
 	}
 	return res;
@@ -491,11 +499,10 @@ export async function storeTokens(
 
 /**
  * Get comprehensive balance including by-keyset breakdown.
+ * INTENT-015 (TASK-1510): SPENDABLE ONLY — sources getUnspentProofs.
  */
 export async function getProofBalance(): Promise<ProofBalance> {
-	// TASK-1315: include pending-normalize proofs — balance counts the user's
-	// money; spending is gated by getUnspentProofs/selectProofs (P3).
-	const proofs = await getUnspentProofsIncludingPending();
+	const proofs = await getUnspentProofs();
 
 	const byMint: Record<string, number> = {};
 	const byKeyset: Record<string, number> = {};

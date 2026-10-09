@@ -39,7 +39,13 @@ export function selectProofs(proofs: StoredProof[], amount: number): StoredProof
 	// NEVER spendable regardless of what the caller supplied. Layer 1 (DB:
 	// getUnspentProofs) already excludes them; this second line makes the
 	// guarantee hold even for raw pools.
-	const unspent = proofs.filter(p => !p.spent && !p.pending_normalize);
+	// INTENT-015 (TASK-1510): failed proofs of ANY kind are never spendable
+	// either — 'failed แบบไหนก็ไม่ควรเอามาใช้ได้'. Layer 2 mirrors layer 1
+	// (proofsDb.ts:148 getUnspentProofs: !spent && !orphaned &&
+	// !pending_normalize && !quarantined) — quarantined (mint double-spent
+	// family reject, dead coins) and orphaned (keyset-unknown) are excluded
+	// here even for raw pools.
+	const unspent = proofs.filter(p => !p.spent && !p.pending_normalize && !p.quarantined && !p.orphaned);
 
 	// Check total balance
 	const totalAvailable = unspent.reduce((sum, p) => sum + p.amount, 0);

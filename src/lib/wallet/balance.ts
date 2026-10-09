@@ -7,7 +7,7 @@
  */
 import {
 	getUnspentProofs,
-	getUnspentProofsIncludingPending,
+	getUnspentProofsByMint,
 	getBalanceByMint as getBreakdownByMint
 } from './proofsDb';
 
@@ -31,12 +31,12 @@ export interface MintBalance {
 /**
  * Get total balance across ALL mints.
  * Reads from IndexedDB — no network needed.
- * TASK-1315: includes pending-normalize proofs — pending is the user's money
- * (the badge must never quietly shrink while a pending pile waits for the T3
- * consolidate; selection/spending uses the separate getUnspentProofs pool).
+ * INTENT-015 (TASK-1510): SPENDABLE ONLY — 'pending และ failed proof ไม่ควร
+ * เอามานับเป็น balance ด้วย'. Sources getUnspentProofs (the gated spendable
+ * pool); the badge shows only coins that can actually fund a spend.
  */
 export async function getBalance(): Promise<Balance> {
-	const proofs = await getUnspentProofsIncludingPending();
+	const proofs = await getUnspentProofs();
 
 	const byMint: Record<string, number> = {};
 	for (const p of proofs) {
@@ -55,16 +55,19 @@ export async function getBalance(): Promise<Balance> {
 
 /**
  * Get balance for a specific mint only.
+ * INTENT-015 (TASK-1510): SPENDABLE ONLY for this mint.
  *
  * @param mintUrl - The mint URL to query
  */
 export async function getBalanceByMint(mintUrl: string): Promise<number> {
-	const breakdown = await getBreakdownByMint();
-	return breakdown[mintUrl] ?? 0;
+	const proofs = await getUnspentProofsByMint(mintUrl);
+	return proofs.reduce((sum, p) => sum + p.amount, 0);
 }
 
 /**
  * Get detailed breakdown per mint.
+ * INTENT-015 (TASK-1510): SPENDABLE ONLY — via proofsDb getBalanceByMint
+ * (now sourced from getUnspentProofs).
  */
 export async function getMintBalances(): Promise<MintBalance[]> {
 	const breakdown = await getBreakdownByMint();

@@ -144,7 +144,9 @@ export async function getUnspentProofs(): Promise<StoredProof[]> {
 	// TASK-1316 (P5): quarantined proofs are dead coins (double-spent family
 	// reject at the mint) — never spendable either.
 	// This is the SPENDABLE pool (send/melt/swap/normalize pick from here);
-	// balance queries must use getUnspentProofsIncludingPending instead.
+	// INTENT-015 (TASK-1510): balance queries ALSO read this pool (spendable
+	// only — pending/failed excluded). getUnspentProofsIncludingPending stays
+	// as the T3 FLUSH-pile API only (normalizeWiring.ts:413).
 	return all.filter(p => !p.spent && !p.orphaned && !p.pending_normalize && !p.quarantined);
 }
 
@@ -169,7 +171,12 @@ export async function getProofsByMint(mintUrl: string): Promise<StoredProof[]> {
 
 export async function getUnspentProofsByMint(mintUrl: string): Promise<StoredProof[]> {
 	const proofs = await getProofsByMint(mintUrl);
-	return proofs.filter(p => !p.spent && !p.orphaned);
+	// INTENT-015 (TASK-1510): spendable-per-mint pool — mirrors getUnspentProofs
+	// layer 1. Pending-normalize (awaits T3 consolidate) and quarantined
+	// (mint double-spent family reject — dead coins, 'failed แบบไหนก็ไม่ควร
+	// เอามาใช้ได้') are NEVER spendable. Callers: melt.ts:284, transfer.ts:61,
+	// tokenStore.ts:617 sendTokens — all gated at once by this filter.
+	return proofs.filter(p => !p.spent && !p.orphaned && !p.pending_normalize && !p.quarantined);
 }
 
 export async function getProofById(localId: string): Promise<StoredProof | undefined> {
@@ -216,22 +223,26 @@ export async function getProofCount(): Promise<number> {
 
 /**
  * Get total balance across all stored proofs.
- * Counts unspent, non-orphaned proofs INCLUDING pending-normalize ones
- * (TASK-1315: pending = the user's money — the total never goes quiet-missing;
- * the SPENDABLE selection is getUnspentProofs, the BALANCE is this).
+ * INTENT-015 (TASK-1510): SPENDABLE ONLY — 'pending และ failed proof ไม่ควร
+ * เอามานับเป็น balance ด้วย'. Sources getUnspentProofs (spent/orphaned/
+ * pending_normalize/quarantined all excluded). The flush-pile API
+ * getUnspentProofsIncludingPending is KEPT for the T3 flush engine
+ * (normalizeWiring.ts:413 — คงเดิมโดยตั้งใจ, sweep-listed) — balance no
+ * longer reads it.
  */
 export async function getTotalBalance(): Promise<number> {
-	const unspent = await getUnspentProofsIncludingPending();
+	const unspent = await getUnspentProofs();
 	return unspent.reduce((sum, p) => sum + p.amount, 0);
 }
 
 /**
  * Get balance breakdown by mint.
- * Includes pending-normalize proofs (TASK-1315 — the user's money is counted
- * per mint even while pending; selection uses getUnspentProofs).
+ * INTENT-015 (TASK-1510): SPENDABLE ONLY per mint — same source as
+ * getTotalBalance (getUnspentProofs). Pending/quarantined are the flush
+ * pipeline's concern, not the user's spendable money.
  */
 export async function getBalanceByMint(): Promise<Record<string, number>> {
-	const unspent = await getUnspentProofsIncludingPending();
+	const unspent = await getUnspentProofs();
 	const breakdown: Record<string, number> = {};
 
 	for (const p of unspent) {
