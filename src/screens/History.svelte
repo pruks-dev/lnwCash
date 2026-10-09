@@ -22,6 +22,13 @@
 	// TASK-150 Transaction Detail Bottom Sheet
 	import TransactionDetailSheet from '$lib/components/TransactionDetailSheet.svelte';
 
+	// TASK-1407 (INTENT-013 rev19 ทาง ข): reactive flip — History เดิมโหลดครั้ง
+	// เดียวตอน mount; subscribe confirmed-online event แล้ว reload หลัง flush
+	// settle (flush สำเร็จยิง event → History reload) — event-driven ล้วน ห้าม
+	// polling/interval. dynamic import เพื่อไม่เพิ่ม static edge เข้า wallet
+	// graph (ห้ามแตะ detector/store logic — UI แค่อ่าน status จาก record).
+	import { onOnlineConfirmed } from '$lib/offline-indicator';
+
 	interface Props {
 		maxItems?: number;
 	}
@@ -55,6 +62,27 @@
 	// ─── Load transactions on mount & filter change ───────
 	$effect(() => {
 		loadTransactions();
+	});
+
+	// TASK-1407 (INTENT-013 rev19 ทาง ข): reload-on-flush — subscribe
+	// confirmed-online event; เมื่อ event ยิง ให้รอ flush drain ตัวจริงจบ
+	// (runFlushDrain รวม concurrent trigger เป็น run เดียว — await จึงการันตี
+	// settle เสร็จก่อน reload) แล้วค่อย reload — flip pending→confirmed
+	// ปรากฏบน UI โดยไม่ต้องรีเฟรชเอง. event-driven ล้วน ห้าม polling/interval.
+	$effect(() => {
+		const unsubscribe = onOnlineConfirmed(() => {
+			void (async () => {
+				try {
+					const { runFlushDrain } = await import('$lib/wallet/normalizeWiring');
+					await runFlushDrain();
+				} catch {
+					// flush drain ล้มเหลว — ยัง reload เพื่อแสดง state ล่าสุด
+				} finally {
+					await loadTransactions();
+				}
+			})();
+		});
+		return unsubscribe;
 	});
 
 	async function loadTransactions() {
@@ -356,20 +384,18 @@
 										</div>
 										<div class="tx-meta">
 											<Body size="sm" color="secondary">{formatDate(tx.timestamp)}</Body>
-											{#if tx.status === 'pending'}
-												<span class="tx-pending-indicator" aria-label={$_('screen.history.pending_text')}>
-													<Iconly name="Time" size={14} />
-													<span class="pending-text">{$_('screen.history.pending_text')}</span>
-												</span>
-											{:else}
-												<span
-													class="tx-status-badge"
-													class:status-confirmed={tx.status === 'confirmed'}
-													class:status-failed={tx.status === 'failed'}
-												>
-													{statusLabel(tx.status)}
-												</span>
-											{/if}
+											<!-- TASK-1407 (INTENT-013 rev19 ทาง ข): pending เป็น badge เต็มตัว
+											     reuse tx-status-badge + variant status-pending (กรอบเหมือน
+											     confirmed/failed — แบรนด์ #00bcd4 ผ่าน token var ตาม mockup
+											     rev2) — data-driven จาก record status ล้วน ไม่ hardcode -->
+											<span
+												class="tx-status-badge"
+												class:status-pending={tx.status === 'pending'}
+												class:status-confirmed={tx.status === 'confirmed'}
+												class:status-failed={tx.status === 'failed'}
+											>
+												{statusLabel(tx.status)}
+											</span>
 										</div>
 									</div>
 								</div>
@@ -634,49 +660,56 @@
 		align-items: center;
 	}
 
+	/* TASK-1407 (INTENT-013 rev19 ทาง ข): badge zone — 3 สถานะ pill เต็มตัว
+	   reuse โครง tx-status-badge (กรอบ 1px ทุกสถานะ) — แบรนด์ #00bcd4 ผ่าน
+	   token var (light/dark ตาม mockup rev2 ที่ approve) — class/CSS ล้วน
+	   ห้าม inline style attr (precedent TASK-1203). dark variant ใช้
+	   :global() escape ตาม pattern เดิมของไฟล์ (data-theme อยู่บน
+	   documentElement — scoped analyzer มองไม่เห็น). */
 	.tx-status-badge {
-		font-size: var(--font-size-xs);
-		font-weight: var(--font-weight-semibold);
-		color: #fff;
-		padding: 1px 6px;
-		border-radius: var(--radius-sm);
-		white-space: nowrap;
-	}
-	.tx-status-badge.status-confirmed {
-		background: rgba(20, 184, 166, 0.22);
-		color: var(--color-secondary);
-	}
-	.tx-status-badge.status-failed {
-		background: var(--color-error);
-	}
-
-	/* TASK-149 (CV17-001): Pending indicator — Time icon + text */
-	.tx-pending-indicator {
 		display: inline-flex;
 		align-items: center;
-		gap: 4px;
-		color: var(--color-accent);
-		animation: pending-pulse 2s ease-in-out infinite;
-	}
-
-	@keyframes pending-pulse {
-		0%, 100% { opacity: 1; }
-		50% { opacity: 0.5; }
-	}
-
-	.pending-text {
-		font-size: var(--font-size-xs);
-		font-weight: var(--font-weight-medium);
-		color: var(--color-accent);
+		gap: 6px;
+		font-size: 12px;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		padding: 4px 12px;
+		min-height: 24px;
+		border-radius: 999px;
+		border: 1px solid transparent;
 		white-space: nowrap;
+		line-height: 1.5;
 	}
-
-	/* Light theme — muted backgrounds */
-	@media (prefers-color-scheme: light) {
-		.tx-status-badge.status-failed {
-			background: rgba(239, 68, 68, 0.12);
-			color: var(--color-error);
-		}
+	.tx-status-badge.status-pending {
+		background: var(--color-info-light);
+		color: var(--color-primary-dark);
+		border-color: var(--color-primary);
+	}
+	.tx-status-badge.status-confirmed {
+		background: var(--color-primary);
+		color: var(--color-primary-contrast);
+		border-color: var(--color-primary);
+	}
+	.tx-status-badge.status-failed {
+		background: var(--color-surface);
+		color: var(--color-primary-dark);
+		border-color: var(--color-primary);
+	}
+	:global([data-theme='dark']) .tx-status-badge.status-pending {
+		background: var(--color-info-light);
+		color: var(--color-primary-dark);
+		border-color: var(--color-primary);
+	}
+	:global([data-theme='dark']) .tx-status-badge.status-confirmed {
+		background: var(--color-primary);
+		color: var(--color-primary-contrast);
+		border-color: var(--color-primary);
+	}
+	:global([data-theme='dark']) .tx-status-badge.status-failed {
+		background: var(--color-surface);
+		color: var(--color-primary-dark);
+		border-color: var(--color-primary);
 	}
 
 	.bottom-spacer {
