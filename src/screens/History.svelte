@@ -384,18 +384,26 @@
 										</div>
 										<div class="tx-meta">
 											<Body size="sm" color="secondary">{formatDate(tx.timestamp)}</Body>
-											<!-- TASK-1407 (INTENT-013 rev19 ทาง ข): pending เป็น badge เต็มตัว
-											     reuse tx-status-badge + variant status-pending (กรอบเหมือน
-											     confirmed/failed — แบรนด์ #00bcd4 ผ่าน token var ตาม mockup
-											     rev2) — data-driven จาก record status ล้วน ไม่ hardcode -->
-											<span
-												class="tx-status-badge"
-												class:status-pending={tx.status === 'pending'}
-												class:status-confirmed={tx.status === 'confirmed'}
-												class:status-failed={tx.status === 'failed'}
-											>
-												{statusLabel(tx.status)}
-											</span>
+											<!-- TASK-1502 (INTENT-013 v5.2 F-050-003, BOSS-APPROVED mockup
+											     rev-locale-split): badge zone revert display ตรง
+											     bdfad63 — confirmed เขียวจางทรงเล็ก / failed แดงทึบทรงเล็ก / pending
+											     กลับ tx-pending-indicator (icon Time + ส้ม accent + pulse +
+											     pending-text) — ห้ามลาม list/filter/detail — ห้าม inline style.
+											     คำบอส L-P008 verbatim: 'badge ที่ transaction ไม่เหมือนเดิม ใหญ่เกินไป' -->
+											{#if tx.status === 'pending'}
+												<span class="tx-pending-indicator" aria-label={$_('screen.history.pending_text')}>
+													<Iconly name="Time" size={14} />
+													<span class="pending-text">{$_('screen.history.pending_text')}</span>
+												</span>
+											{:else}
+												<span
+													class="tx-status-badge"
+													class:status-confirmed={tx.status === 'confirmed'}
+													class:status-failed={tx.status === 'failed'}
+												>
+													{statusLabel(tx.status)}
+												</span>
+											{/if}
 										</div>
 									</div>
 								</div>
@@ -660,56 +668,53 @@
 		align-items: center;
 	}
 
-	/* TASK-1407 (INTENT-013 rev19 ทาง ข): badge zone — 3 สถานะ pill เต็มตัว
-	   reuse โครง tx-status-badge (กรอบ 1px ทุกสถานะ) — แบรนด์ #00bcd4 ผ่าน
-	   token var (light/dark ตาม mockup rev2 ที่ approve) — class/CSS ล้วน
-	   ห้าม inline style attr (precedent TASK-1203). dark variant ใช้
-	   :global() escape ตาม pattern เดิมของไฟล์ (data-theme อยู่บน
-	   documentElement — scoped analyzer มองไม่เห็น). */
+	/* TASK-1502 (INTENT-013 v5.2 F-050-003): badge zone revert display ตรง bdfad63 —
+	   confirmed เขียวจางทรงเล็ก / failed แดงทึบทรงเล็ก / pending กลับ
+	   tx-pending-indicator (icon Time + ส้ม accent + pulse) — class/CSS ล้วน
+	   ห้าม inline style attr (precedent TASK-1203). */
 	.tx-status-badge {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		font-size: 12px;
-		font-weight: 700;
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
-		padding: 4px 12px;
-		min-height: 24px;
-		border-radius: 999px;
-		border: 1px solid transparent;
+		font-size: var(--font-size-xs);
+		font-weight: var(--font-weight-semibold);
+		color: #fff;
+		padding: 1px 6px;
+		border-radius: var(--radius-sm);
 		white-space: nowrap;
-		line-height: 1.5;
-	}
-	.tx-status-badge.status-pending {
-		background: var(--color-info-light);
-		color: var(--color-primary-dark);
-		border-color: var(--color-primary);
 	}
 	.tx-status-badge.status-confirmed {
-		background: var(--color-primary);
-		color: var(--color-primary-contrast);
-		border-color: var(--color-primary);
+		background: rgba(20, 184, 166, 0.22);
+		color: var(--color-secondary);
 	}
 	.tx-status-badge.status-failed {
-		background: var(--color-surface);
-		color: var(--color-primary-dark);
-		border-color: var(--color-primary);
+		background: var(--color-error);
 	}
-	:global([data-theme='dark']) .tx-status-badge.status-pending {
-		background: var(--color-info-light);
-		color: var(--color-primary-dark);
-		border-color: var(--color-primary);
+
+	/* TASK-149 (CV17-001): Pending indicator — Time icon + text */
+	.tx-pending-indicator {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		color: var(--color-accent);
+		animation: pending-pulse 2s ease-in-out infinite;
 	}
-	:global([data-theme='dark']) .tx-status-badge.status-confirmed {
-		background: var(--color-primary);
-		color: var(--color-primary-contrast);
-		border-color: var(--color-primary);
+
+	@keyframes pending-pulse {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.5; }
 	}
-	:global([data-theme='dark']) .tx-status-badge.status-failed {
-		background: var(--color-surface);
-		color: var(--color-primary-dark);
-		border-color: var(--color-primary);
+
+	.pending-text {
+		font-size: var(--font-size-xs);
+		font-weight: var(--font-weight-medium);
+		color: var(--color-accent);
+		white-space: nowrap;
+	}
+
+	/* Light theme — muted backgrounds */
+	@media (prefers-color-scheme: light) {
+		.tx-status-badge.status-failed {
+			background: rgba(239, 68, 68, 0.12);
+			color: var(--color-error);
+		}
 	}
 
 	.bottom-spacer {

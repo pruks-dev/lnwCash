@@ -1,19 +1,21 @@
 /**
- * TASK-1407 (INTENT-013 rev19 ทาง ข) — History badge + reactive.
+ * TASK-1502 (INTENT-013 v5.2 F-050-003, BOSS-APPROVED mockup rev-locale-split)
+ * — History badge zone revert display ตรง bdfad63 (classic).
  *
- * WHAT THIS PROVES (dispatch must_do 1-3 + acceptance 1/2/4-part):
- *   1. pending เป็น badge เต็มตัว: `.tx-status-badge.status-pending`
- *      (reuse โครง tx-status-badge — กรอบเหมือน confirmed/failed) และ
- *      `.tx-pending-indicator` เดิมหายจาก DOM (ตัด icon+text เดิม).
- *   2. flip pending→confirmed บน UI โดยไม่รีเฟรช: confirmed-online event
+ * WHAT THIS PROVES (dispatch must_do 2 + acceptance 1/3/4-part):
+ *   1. pending กลับ tx-pending-indicator (icon Time + ส้ม accent + pulse +
+ *      pending-text) — ไม่ใช่ pill เต็มตัว: `.tx-status-badge.status-pending`
+ *      ต้องว่างจาก DOM.
+ *   2. confirmed เขียวจางทรงเล็ก / failed แดงทึบทรงเล็ก ตาม bdfad63.
+ *   3. flip pending→confirmed บน UI โดยไม่รีเฟรช: confirmed-online event
  *      ยิง → History รอ flush drain (mock จำลอง settle จริงของ
- *      TASK-1402/1403: flip record ใน DB) → reload → badge เปลี่ยน
- *      pending→confirmed — data-driven จาก record status ล้วน ไม่ hardcode.
- *   3. ห้าม polling/interval: History.svelte ไม่มี setInterval/setTimeout
+ *      TASK-1402/1403: flip record ใน DB) → reload → indicator เปลี่ยน
+ *      pending→confirmed badge — data-driven จาก record status ล้วน ไม่ hardcode.
+ *   4. ห้าม polling/interval: History.svelte ไม่มี setInterval/setTimeout
  *      เพิ่มเติม (ตรวจผ่าน grep ใน proof) — ทางนี้เป็น event-driven ล้วน.
  *
- * Boss quote (L-P008 verbatim — must_do 5):
- *   'คือผมอยากให้มีการแสดงผ่าน badge ของ tx ได้มั้ย'
+ * Boss quote (L-P008 verbatim — must_do 4):
+ *   'badge ที่ transaction ไม่เหมือนเดิม ใหญ่เกินไป'
  *
  * Scope: อ่าน status จาก record อย่างเดียว — ไม่แตะ detector/store
  * logic/client.ts (mock แค่ขอบ event + drain เพื่อจำลอง flush settle).
@@ -93,29 +95,28 @@ describe('TASK-1407 — History badge + reactive (INTENT-013 rev19 ทาง ข
 		await clearTransactions();
 	});
 
-	it("pending เป็น badge เต็มตัว (status-pending) — ตัด tx-pending-indicator เดิม — 'คือผมอยากให้มีการแสดงผ่าน badge ของ tx ได้มั้ย' (L-P008)", async () => {
+	it("pending กลับ tx-pending-indicator classic (icon Time + pending-text) — pill ใหม่ว่าง — 'badge ที่ transaction ไม่เหมือนเดิม ใหญ่เกินไป' (L-P008)", async () => {
 		const { container } = render(History);
 
 		await vi.waitFor(() => {
-			const badge = container.querySelector('.tx-status-badge.status-pending');
-			expect(badge).not.toBeNull();
+			const ind = container.querySelector('.tx-pending-indicator');
+			expect(ind).not.toBeNull();
 		});
 
-		const badge = container.querySelector('.tx-status-badge.status-pending');
-		// data-driven จาก record: label มาจาก status 'pending' ผ่าน statusLabel
+		const ind = container.querySelector('.tx-pending-indicator');
+		// data-driven จาก record: label มาจาก pending ผ่าน pending-text
 		// (i18n mock คืน key ตรง ๆ)
-		expect(badge?.textContent).toContain('screen.history.status_pending');
-		// icon+text เดิมถูกตัด — ต้องไม่มีใน DOM
-		expect(container.querySelector('.tx-pending-indicator')).toBeNull();
-		expect(container.querySelector('.pending-text')).toBeNull();
+		expect(ind?.querySelector('.pending-text')?.textContent).toContain('screen.history.pending_text');
+		// pill ใหม่ TASK-1407 ถูกลบ — ต้องว่างจาก DOM
+		expect(container.querySelector('.tx-status-badge.status-pending')).toBeNull();
 	});
 
 	it('flip pending→confirmed บน UI โดยไม่รีเฟรช (event → drain → reload)', async () => {
 		const { container } = render(History);
 
-		// เริ่ม: pending badge เต็มตัว
+		// เริ่ม: pending indicator classic
 		await vi.waitFor(() => {
-			expect(container.querySelector('.tx-status-badge.status-pending')).not.toBeNull();
+			expect(container.querySelector('.tx-pending-indicator')).not.toBeNull();
 		});
 		expect(onlineConfirmedCbs.length).toBeGreaterThan(0);
 
@@ -129,7 +130,7 @@ describe('TASK-1407 — History badge + reactive (INTENT-013 rev19 ทาง ข
 		// record ต้นทาง flip จริง + UI ตาม (data-driven ไม่ hardcode)
 		const record = await getTransactionById('tx-1407-pending');
 		expect(record?.status).toBe('confirmed');
-		expect(container.querySelector('.tx-status-badge.status-pending')).toBeNull();
+		expect(container.querySelector('.tx-pending-indicator')).toBeNull();
 		const badge = container.querySelector('.tx-status-badge.status-confirmed');
 		expect(badge?.textContent).toContain('screen.history.status_confirmed');
 	});

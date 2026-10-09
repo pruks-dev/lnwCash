@@ -60,10 +60,13 @@
 </script>
 
 <!--
-  TASK-1404 — Banner copy is the mockup rev2 Thai text verbatim (BOSS-APPROVED).
-  NOTE: the legacy `offline.banner` / `offline.back_online` locale strings still
-  carry the old emoji and are out of scope (single-file touch) — i18n keying of
-  the new copy is a follow-up, not this task.
+  TASK-1502 (INTENT-013 v5.2 rev-locale-split F-050-002, BOSS-APPROVED mockup
+  rev-locale-split): banner บรรทัดเดียวแยกตาม locale ผ่าน $_() + locales
+  th/en (เครื่องไทยเห็นไทย / เครื่องอังกฤษเห็นอังกฤษ — ไม่ปน TH+EN) —
+  keys ใหม่ไร้ emoji: offline.banner_offline / offline.banner_online
+  (โละ offline.banner / back_online เก่าที่มี emoji พร้อมกัน) — ไม่มี sub —
+  สี var ล้วน dark ใช้ var ตาม mockup — ไม่มี hex ตายตัว — ห้าม inline style.
+  คำบอส L-P008 verbatim: 'banner ทำไมมีไทยปนอังกฤษ ไม่แยกตามการตั้งค่าของผู้ใช้'
 -->
 {#if variant === 'banner'}
 	{#if !online}
@@ -88,9 +91,7 @@
 					/>
 				</svg>
 			</span>
-			<div class="banner-text">
-				ออฟไลน์ — กำลังรอการเชื่อมต่อ<small>ธุรกรรมจะซิงก์อัตโนมัติเมื่อกลับออนไลน์</small>
-			</div>
+			<div class="banner-text">{$_('offline.banner_offline')}</div>
 		</div>
 	{:else if showOnlineBanner}
 		<div class="offline-banner offline-banner--online" role="status" aria-live="polite" transition:fade={{ duration: 300 }}>
@@ -105,9 +106,7 @@
 					/>
 				</svg>
 			</span>
-			<div class="banner-text">
-				กลับออนไลน์แล้ว<small>ซิงก์ธุรกรรมอัตโนมัติ — แบนเนอร์นี้จะหายเองใน ~3 วินาที</small>
-			</div>
+			<div class="banner-text">{$_('offline.banner_online')}</div>
 		</div>
 	{/if}
 {:else}
@@ -128,15 +127,8 @@
 		font-size: 14px;
 		font-weight: 600;
 		letter-spacing: 0.01em;
-		line-height: 1.4;
+		line-height: 1.5;
 		transition: opacity 300ms ease;
-	}
-
-	.offline-banner small {
-		display: block;
-		font-size: 12px;
-		font-weight: 500;
-		letter-spacing: 0.01em;
 	}
 
 	/* สถานะ A — offline: พื้น surface + เส้นซ้าย 4px ฟ้าแบรนด์ (dark = พื้นมืดอัตโนมัติผ่าน var) */
@@ -147,19 +139,11 @@
 		color: var(--color-text);
 	}
 
-	.offline-banner--offline small {
-		color: var(--color-text-secondary);
-	}
-
 	/* สถานะ B — online: แถบฟ้าแบรนด์ทึบ, auto-dismiss ~3s */
 	.offline-banner--online {
 		background: var(--color-primary);
 		border: 1px solid var(--color-primary);
 		color: var(--color-primary-contrast);
-	}
-
-	.offline-banner--online small {
-		opacity: 0.85;
 	}
 
 	/* ไอคอนวงกลมแบรนด์ 28px — เส้น SVG currentColor */
