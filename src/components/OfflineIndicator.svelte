@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { fade } from 'svelte/transition';
 	import { _ } from 'svelte-i18n';
 	import { isOnline, onConnectivityChange, trackWasOffline } from '$lib/offline-indicator';
 
@@ -10,24 +11,103 @@
 	let { variant = 'banner' }: Props = $props();
 
 	let online: boolean = $state(isOnline());
+	// Online banner shows ONLY on an observed offline→online reconnect while
+	// mounted, then auto-dismisses (~3s). Mounting already-online shows nothing.
+	let showOnlineBanner: boolean = $state(false);
+	let dismissTimer: ReturnType<typeof setTimeout> | null = null;
+
+	/** TASK-1404 (INTENT-013 F-049-003, mockup rev2 BOSS-APPROVED): reconnect auto-dismiss window. */
+	const ONLINE_DISMISS_MS = 3000;
+
+	function clearDismissTimer(): void {
+		if (dismissTimer !== null) {
+			clearTimeout(dismissTimer);
+			dismissTimer = null;
+		}
+	}
+
+	function scheduleOnlineDismiss(): void {
+		clearDismissTimer();
+		showOnlineBanner = true;
+		dismissTimer = setTimeout(() => {
+			showOnlineBanner = false;
+			dismissTimer = null;
+		}, ONLINE_DISMISS_MS);
+	}
 
 	$effect(() => {
 		const cleanup1 = onConnectivityChange((status: boolean) => {
+			const wasOfflineShown = !online;
 			online = status;
+			if (variant === 'banner') {
+				if (!status) {
+					// Went offline — persistent banner until reconnect.
+					clearDismissTimer();
+					showOnlineBanner = false;
+				} else if (wasOfflineShown) {
+					// Reconnect transition — brand banner, auto-dismiss ~3s.
+					scheduleOnlineDismiss();
+				}
+			}
 		});
 		const cleanup2 = trackWasOffline();
 		return () => {
 			cleanup1();
 			cleanup2();
+			clearDismissTimer();
 		};
 	});
 </script>
 
+<!--
+  TASK-1404 — Banner copy is the mockup rev2 Thai text verbatim (BOSS-APPROVED).
+  NOTE: the legacy `offline.banner` / `offline.back_online` locale strings still
+  carry the old emoji and are out of scope (single-file touch) — i18n keying of
+  the new copy is a follow-up, not this task.
+-->
 {#if variant === 'banner'}
 	{#if !online}
-		<div class="offline-banner" role="alert" aria-live="assertive">
-			<span class="offline-icon">&#128308;</span>
-			<span class="offline-text">{$_('offline.banner')}</span>
+		<div class="offline-banner offline-banner--offline" role="alert" aria-live="assertive">
+			<span class="bicon bicon--off" aria-hidden="true">
+				<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+					<path
+						d="M2 5.5C4.5 3.5 9.5 3.5 12 5.5M4.5 8c1.5-1.2 4.5-1.2 6 0"
+						stroke="currentColor"
+						stroke-width="1.6"
+						stroke-linecap="round"
+					/>
+					<circle cx="7" cy="10.5" r="1.2" fill="currentColor" />
+					<line
+						x1="2"
+						y1="2"
+						x2="12"
+						y2="12"
+						stroke="currentColor"
+						stroke-width="1.6"
+						stroke-linecap="round"
+					/>
+				</svg>
+			</span>
+			<div class="banner-text">
+				ออฟไลน์ — กำลังรอการเชื่อมต่อ<small>ธุรกรรมจะซิงก์อัตโนมัติเมื่อกลับออนไลน์</small>
+			</div>
+		</div>
+	{:else if showOnlineBanner}
+		<div class="offline-banner offline-banner--online" role="status" aria-live="polite" transition:fade={{ duration: 300 }}>
+			<span class="bicon bicon--on" aria-hidden="true">
+				<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+					<path
+						d="M2.5 7.5l3.2 3.2L11.5 4.5"
+						stroke="currentColor"
+						stroke-width="1.8"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					/>
+				</svg>
+			</span>
+			<div class="banner-text">
+				กลับออนไลน์แล้ว<small>ซิงก์ธุรกรรมอัตโนมัติ — แบนเนอร์นี้จะหายเองใน ~3 วินาที</small>
+			</div>
 		</div>
 	{/if}
 {:else}
@@ -37,44 +117,101 @@
 {/if}
 
 <style>
+	/* ===== TASK-1404 mockup rev2 (BOSS-APPROVED) — var ล้วน, ไม่มี hex ตายตัว, ไม่มี emoji ===== */
 	.offline-banner {
 		display: flex;
 		align-items: center;
+		gap: 12px;
+		min-height: 48px;
+		padding: 12px 16px;
+		border-radius: 12px;
+		font-size: 14px;
+		font-weight: 600;
+		letter-spacing: 0.01em;
+		line-height: 1.4;
+		transition: opacity 300ms ease;
+	}
+
+	.offline-banner small {
+		display: block;
+		font-size: 12px;
+		font-weight: 500;
+		letter-spacing: 0.01em;
+	}
+
+	/* สถานะ A — offline: พื้น surface + เส้นซ้าย 4px ฟ้าแบรนด์ (dark = พื้นมืดอัตโนมัติผ่าน var) */
+	.offline-banner--offline {
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-left: 4px solid var(--color-primary);
+		color: var(--color-text);
+	}
+
+	.offline-banner--offline small {
+		color: var(--color-text-secondary);
+	}
+
+	/* สถานะ B — online: แถบฟ้าแบรนด์ทึบ, auto-dismiss ~3s */
+	.offline-banner--online {
+		background: var(--color-primary);
+		border: 1px solid var(--color-primary);
+		color: var(--color-primary-contrast);
+	}
+
+	.offline-banner--online small {
+		opacity: 0.85;
+	}
+
+	/* ไอคอนวงกลมแบรนด์ 28px — เส้น SVG currentColor */
+	.bicon {
+		flex: none;
+		width: 28px;
+		height: 28px;
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
 		justify-content: center;
-		gap: 0.5rem;
-		padding: 0.5rem 1rem;
-		background: linear-gradient(135deg, #fff3cd 0%, #ffeeba 100%);
-		border-bottom: 2px solid #ffc107;
-		color: #856404;
-		font-weight: 600;
-		font-size: 0.85rem;
-		z-index: 150;
-		position: relative;
 	}
 
-	.offline-icon {
-		font-size: 0.9rem;
+	.bicon--off {
+		background: var(--color-info-light);
+		border: 1.5px solid var(--color-primary);
 	}
 
-	.offline-text {
-		letter-spacing: 0.02em;
+	.bicon--on {
+		background: rgba(128, 128, 128, 0.25);
+		border: 1.5px solid currentColor;
 	}
 
+	.banner-text {
+		letter-spacing: 0.01em;
+	}
+
+	/* badge variant — แบรนด์ฟ้า (เก็บ class hook + i18n key เดิมให้เทสเดิมผ่าน) */
 	.offline-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
 		font-size: 0.75rem;
-		font-weight: 600;
-		padding: 0.25rem 0.75rem;
-		border-radius: 20px;
-		display: inline-block;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		padding: 4px 12px;
+		min-height: 24px;
+		border-radius: 999px;
+		border: 1px solid var(--color-primary);
+		white-space: nowrap;
 	}
 
 	.offline-badge.online {
-		background: #d4edda;
-		color: #155724;
+		background: var(--color-primary);
+		color: var(--color-primary-contrast);
+		border-color: var(--color-primary);
 	}
 
 	.offline-badge.offline {
-		background: #fff3cd;
-		color: #856404;
+		background: var(--color-surface);
+		color: var(--color-primary-dark);
+		border-color: var(--color-primary);
 	}
 </style>
