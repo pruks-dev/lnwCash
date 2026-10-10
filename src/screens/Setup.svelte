@@ -219,6 +219,40 @@
 			: []
 	);
 
+	// TASK-2105 (INTENT-021 rev8): dynamic last-2-rows flip-up — measure the real
+	// .seed-import grid width at runtime (grid: repeat(auto-fill, minmax(9rem,1fr)),
+	// gap var(--space-sm)=8px). columns = floor((w+gap)/(144+gap));
+	// flip iff i >= 12 - columns*2 → 1col:11-12 / 2col:9-12 / 3col:7-12 /
+	// 4col:5-12 (5col:3-12, 6col+:all). Measured via clientWidth reads on focus +
+	// window resize (no ResizeObserver: Svelte dimensional bindings crash jsdom).
+	// Width 0 / SSR / jsdom falls back to 2 columns (= old fixed threshold 8).
+	let seedImportWidth = $state(0);
+	const SEED_CELL_MIN = 144; // 9rem
+	const SEED_GRID_GAP = 8; // var(--space-sm)
+	function measureSeedImportWidth() {
+		if (typeof document === 'undefined') return;
+		const el = document.querySelector('.seed-import');
+		const w = el instanceof HTMLElement ? el.clientWidth : 0;
+		if (w > 0) seedImportWidth = w;
+	}
+	const seedGridColumns = $derived(
+		seedImportWidth <= 0
+			? 2
+			: Math.max(1, Math.floor((seedImportWidth + SEED_GRID_GAP) / (SEED_CELL_MIN + SEED_GRID_GAP)))
+	);
+	const seedFlipThreshold = $derived(Math.max(0, RECOVER_WORD_COUNT - seedGridColumns * 2));
+	// Re-measure whenever a suggest list may open (focus) + on viewport resize.
+	$effect(() => {
+		if (activeWordIndex >= 0) measureSeedImportWidth();
+	});
+	$effect(() => {
+		if (typeof window === 'undefined') return;
+		measureSeedImportWidth();
+		const onResize = () => measureSeedImportWidth();
+		window.addEventListener('resize', onResize);
+		return () => window.removeEventListener('resize', onResize);
+	});
+
 	// ─── Mount: detect existing wallet + resume + language ────
 	$effect(() => {
 		// Language + PIN-shuffle preference from persisted settings
@@ -1087,7 +1121,11 @@
 							<Body size="sm" color="secondary" align="center">
 								{$_('screen.setup.seed_recover_prompt')}
 							</Body>
-							<!-- TASK-208: BIP39 per-word autocomplete import (Recover path) -->
+							<!-- TASK-2105 (INTENT-021 rev8, rework TASK-2102 fixed last-4): dynamic last-2-rows
+								flip-up so Card (overflow:hidden, Card.svelte:56) never clips the list on ANY
+								layout. columns measured runtime from .seed-import clientWidth
+								(seedGridColumns); flip iff i >= 12 - columns*2 → 1col:11-12 /
+								2col:9-12 / 3col:7-12 / 4col:5-12. Cells above keep opening downward. -->
 							<div class="seed-import" role="group" aria-label={$_('screen.setup.seed_title')}>
 								{#each recoverWords as word, i (i)}
 									<div class="seed-word-cell">
@@ -1109,7 +1147,16 @@
 											onkeydown={(e) => onRecoverWordKeydown(i, e)}
 										/>
 										{#if activeWordIndex === i && seedSuggestions.length > 0}
-											<ul class="seed-suggestions" role="listbox" aria-label={$_('recovery.import.placeholder')}>
+											<!-- TASK-2105 (INTENT-021 rev8): dynamic columns = f(width); flip iff
+											i >= 12 - columns*2 (seedFlipThreshold) - last 2 rows every layout
+											(1col:11-12 / 2col:9-12 / 3col:7-12 / 4col:5-12) open upward so Card
+											(overflow:hidden) never clips them; cells above open downward. -->
+											<ul
+												class="seed-suggestions"
+												class:flip-up={i >= seedFlipThreshold}
+												role="listbox"
+												aria-label={$_('recovery.import.placeholder')}
+											>
 												{#each seedSuggestions as s (s)}
 													<li role="option" aria-selected="false">
 														<button
@@ -1697,6 +1744,15 @@
 		box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.12));
 		max-height: 220px;
 		overflow-y: auto;
+	}
+
+	/* TASK-2102 (INTENT-021, mockup flip-up APPROVED): last-row cells open upward
+	   (bottom:100%) so the list stays inside Card instead of being clipped below.
+	   Card.svelte overflow:hidden is intentionally untouched. */
+	.seed-suggestions.flip-up {
+		top: auto;
+		bottom: 100%;
+		margin: 0 0 4px;
 	}
 
 	.suggestion {
