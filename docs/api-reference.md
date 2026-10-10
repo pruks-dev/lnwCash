@@ -2,9 +2,9 @@
 
 Endpoints used by LNWCASH Wallet to communicate with Cashu mints. All endpoints follow the [Cashu NUT (Notation, Usage, and Terminology) specification](https://github.com/cashubtc/nuts).
 
-**Base URL**: `{MINT_URL}` — replace with your mint URL (e.g., `https://mint-dev.inw.cash`).
+**Base URL**: `{MINT_URL}` — replace with your mint URL (e.g., `https://mint.lnw.cash`).
 
-> **Multi-mint note**: LNWCASH supports multiple mints simultaneously. The mint URL is passed as a parameter on every call — no URL is hardcoded. See `src/lib/cashu/client.ts` for the implementation.
+> **Multi-mint note**: LNWCASH supports multiple mints simultaneously. The mint URL is passed as a parameter on every call — the default mint ships as `DEFAULT_MINT_CONFIG` (`https://mint.lnw.cash`). See `src/lib/cashu/client.ts` and `src/lib/wallet/config.ts` for the implementation.
 
 ---
 
@@ -39,7 +39,7 @@ Returns basic information about the mint, including supported NUT versions and c
 ### curl Example
 
 ```bash
-curl -s https://mint-dev.inw.cash/v1/info | jq
+curl -s https://mint.lnw.cash/v1/info | jq
 ```
 
 ---
@@ -68,7 +68,7 @@ Returns all keysets available at this mint. A keyset represents a set of public 
 ### curl Example
 
 ```bash
-curl -s https://mint-dev.inw.cash/v1/keysets | jq
+curl -s https://mint.lnw.cash/v1/keysets | jq
 ```
 
 ---
@@ -119,7 +119,7 @@ Some mints return the keys directly without the `keysets` wrapper:
 
 ```bash
 KEYSET_ID="00ad268c4d..."
-curl -s "https://mint-dev.inw.cash/v1/keys/${KEYSET_ID}" | jq
+curl -s "https://mint.lnw.cash/v1/keys/${KEYSET_ID}" | jq
 ```
 
 ---
@@ -167,7 +167,7 @@ Request a quote for minting ecash. The mint generates a Lightning invoice that y
 ### curl Example
 
 ```bash
-curl -s -X POST https://mint-dev.inw.cash/v1/mint/quote/bolt11 \
+curl -s -X POST https://mint.lnw.cash/v1/mint/quote/bolt11 \
   -H "Content-Type: application/json" \
   -d '{"amount": 1000}' | jq
 ```
@@ -239,7 +239,7 @@ After paying the Lightning invoice from the mint quote, submit your blinded outp
 ### curl Example
 
 ```bash
-curl -s -X POST https://mint-dev.inw.cash/v1/mint/bolt11 \
+curl -s -X POST https://mint.lnw.cash/v1/mint/bolt11 \
   -H "Content-Type: application/json" \
   -d '{
     "quote": "<quote-id>",
@@ -298,7 +298,7 @@ Request a quote for melting (burning) ecash to pay a Lightning invoice. The mint
 ### curl Example
 
 ```bash
-curl -s -X POST https://mint-dev.inw.cash/v1/melt/quote/bolt11 \
+curl -s -X POST https://mint.lnw.cash/v1/melt/quote/bolt11 \
   -H "Content-Type: application/json" \
   -d '{"request": "lnbc...", "amount": 5000}' | jq
 ```
@@ -374,7 +374,7 @@ Submit ecash proofs to be burned (spent) in exchange for paying the Lightning in
 ### curl Example
 
 ```bash
-curl -s -X POST https://mint-dev.inw.cash/v1/melt/bolt11 \
+curl -s -X POST https://mint.lnw.cash/v1/melt/bolt11 \
   -H "Content-Type: application/json" \
   -d '{
     "quote": "<quote-id>",
@@ -411,5 +411,5 @@ HTTP status codes:
 
 - **Timeout**: The LNWCASH client uses a 15-second timeout on all mint requests (`AbortController`).
 - **Rate limiting**: Mints may impose rate limits. The client does not retry automatically — the user must trigger a retry.
-- **Mint discovery**: LNWCASH does not ship with a default mint URL. Users must provide their own mint URLs.
+- **Mint discovery**: LNWCASH ships with a default mint (`DEFAULT_MINT_CONFIG`, `https://mint.lnw.cash`). Users can add their own mint URLs on top.
 - **All amounts are in satoshis (sats)** — no other units are currently supported in MVP.

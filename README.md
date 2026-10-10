@@ -45,7 +45,7 @@ Key properties:
 
 ## Getting Started
 
-1. **Set your PIN** (6+ digits) — encrypts your private key and unlocks the wallet
+1. **Set your PIN** (4 digits) — encrypts your private key and unlocks the wallet
 2. **Back up your seed phrase** — Settings → Backup. Without it, clearing browser data means permanent loss of funds
 3. **Add mints** — mints issue and redeem your ecash. Only add mints you trust
 
@@ -107,7 +107,7 @@ pnpm dev
 
 ### Architecture
 
-The app is a hash-routed single-page application (`#/balance`, `#/receive`, `#/pay`, `#/history`) with a layered wallet core:
+The app is a hash-routed single-page application (`#/`, `#/receive`, `#/send`, `#/history`, `#/settings`, `#/setup`) with a layered wallet core:
 
 ```
 src/

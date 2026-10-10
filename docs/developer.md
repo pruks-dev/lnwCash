@@ -31,10 +31,10 @@ src/
 │   ├── F009-LanguageSwitch.svelte   # Thai/English toggle
 │   └── Navigation.svelte            # Bottom nav bar
 ├── locales/
-│   ├── th.json                      # 121 Thai i18n strings
-│   └── en.json                      # 121 English i18n strings
+│   ├── th.json                      # 428 Thai i18n strings
+│   └── en.json                      # 428 English i18n strings
 └── lib/
-    ├── router.ts                    # Hash-based router (#/balance, #/receive, …)
+    ├── router.ts                    # Hash-based router (#/home, #/receive, #/send, #/history, #/settings, #/setup)
     ├── i18n.ts                      # svelte-i18n setup + locale loader
     ├── types.ts                     # All TypeScript types
     ├── platform.ts                  # Platform detection (Android/iOS/Web)
@@ -57,7 +57,7 @@ src/
         ├── index.ts                 # Barrel export
         ├── state.ts                 # Wallet state machine (UNINITIALIZED→LOCKED→UNLOCKED)
         ├── keys.ts                  # secp256k1 key generation (@noble/curves)
-        ├── seed.ts                  # BIP-39 24-word seed export/import
+        ├── seed.ts                  # BIP-39 12-word seed export/import (24-word legacy supported)
         ├── balance.ts               # Multi-mint balance aggregation
         ├── mint.ts                  # Mint flow (quote→blind signatures→store)
         ├── melt.ts                  # Melt flow (proof selection→burn→change)
@@ -74,7 +74,7 @@ src/
 
 ## Prerequisites
 
-- **Node.js 18+**
+- **Node.js 22** (matches CI — `.github/workflows/pages-deploy.yml`)
 - **npm** (bundled with Node.js)
 - **Android Studio** (for APK builds only)
 
@@ -121,17 +121,17 @@ npm run cap:apk:release    # Assemble release APK
 
 ## Development Mint
 
-Use `https://mint-dev.inw.cash` for development and testing. This runs a Nutshell instance (Cashu mint implementation).
+Use `https://mint.lnw.cash` for development and testing. This runs a Nutshell instance (Cashu mint implementation).
 
 ### Testing the Mint Flow
 1. Start the app in dev mode (`npm run dev`)
 2. Create a wallet and add the dev mint URL
 3. Use `#/receive` to mint ecash (the mint pays your Lightning invoice)
-4. Use `#/pay` to melt ecash (burn proofs to pay a Lightning invoice)
+4. Use `#/send` to melt ecash (burn proofs to pay a Lightning invoice)
 
 ### Checking Mint Info Directly
 ```bash
-curl https://mint-dev.inw.cash/v1/info | jq
+curl https://mint.lnw.cash/v1/info | jq
 ```
 
 ---
@@ -162,7 +162,7 @@ curl https://mint-dev.inw.cash/v1/info | jq
 - See `src/lib/crypto/encrypt.ts` and `src/lib/wallet/state.ts`.
 
 #### 2. Multi-Mint
-- No hardcoded mint URLs. Every `fetchFromMint()` call receives the mint URL as a parameter.
+- Default mint ships as `DEFAULT_MINT_CONFIG` (`https://mint.lnw.cash`, see `src/lib/wallet/config.ts`). Every `fetchFromMint()` call still receives the mint URL as a parameter.
 - Wallet manages proofs per-mint via `mint_url` index in IndexedDB.
 - Balance aggregation sums across all mints.
 - See `src/lib/cashu/client.ts` and `src/lib/wallet/balance.ts`.
@@ -177,14 +177,14 @@ curl https://mint-dev.inw.cash/v1/info | jq
 #### 4. Bearer Instrument Risk (Accepted for MVP)
 - Ecash proofs are bearer instruments: whoever holds the proof data can spend it.
 - Clearing browser data = permanent loss of funds.
-- MVP accepts this risk. Mitigation: seed phrase backup (24-word BIP-39).
+- MVP accepts this risk. Mitigation: seed phrase backup (12-word BIP-39; 24-word legacy wallets still supported).
 - Warning is displayed in the UI during seed export.
 - See `src/lib/wallet/seed.ts` and `src/lib/wallet/keys.ts`.
 
 #### 5. Hash-Based Router
 - Simple `#/screen` routing via `hashchange` events.
 - No external router library. No page reloads.
-- Routes: `#/balance`, `#/receive`, `#/pay`, `#/transfer`, `#/history`.
+- Routes: `#/`, `#/receive`, `#/send`, `#/history`, `#/settings`, `#/setup` (legacy aliases `#/balance`, `#/pay`, `#/transfer` still resolve).
 - Default: `#/` → balance.
 - See `src/lib/router.ts`.
 
@@ -195,7 +195,7 @@ curl https://mint-dev.inw.cash/v1/info | jq
 ### Framework
 - **Vitest** with JSDOM environment
 - Test files co-located: `src/**/__tests__/*.test.ts`
-- 37 test files covering wallet domain, crypto, cashu client, storage, and UI components
+- 173 test files covering wallet domain, crypto, cashu client, storage, and UI components
 
 ### Running Tests
 

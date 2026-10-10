@@ -43,14 +43,14 @@ First public release of LNWCASH Wallet — a client-side Lightning Network walle
 ### Included Features
 
 - **PIN-based wallet creation and unlock**
-  - 6+ digit PIN setup
+  - 4-digit PIN setup
   - PBKDF2 (600k iterations) → AES-GCM private key encryption
   - Plaintext private key never stored — exists only in memory when unlocked
   - Wallet lifecycle: UNINITIALIZED → LOCKED → UNLOCKED
 
 - **Multi-mint support**
   - Add, remove, and manage multiple Cashu mint URLs
-  - No hardcoded mint URL — user configures their own mints
+  - Default mint ships as `DEFAULT_MINT_CONFIG` (`https://mint.lnw.cash`) — user can add their own mints
   - Balance aggregated across all mints, with per-mint breakdown
   - Proofs tracked per-mint in IndexedDB
 
@@ -81,8 +81,8 @@ First public release of LNWCASH Wallet — a client-side Lightning Network walle
   - Viewable offline
 
 - **Internationalization (i18n)**
-  - Thai (th) — 121 strings
-  - English (en) — 121 strings
+  - Thai (th) — 428 strings
+  - English (en) — 428 strings
   - Language switch screen, preference persisted in localStorage
 
 - **Progressive Web App (PWA)**
@@ -104,7 +104,7 @@ First public release of LNWCASH Wallet — a client-side Lightning Network walle
   - Secure storage plugin for Android keystore
 
 - **Seed Phrase Backup**
-  - 24-word BIP-39 compatible seed phrase (256-bit private key + checksum)
+  - 12-word BIP-39 seed phrase for new wallets (24-word legacy wallets still supported)
   - Export requires PIN re-verification
   - Import restores full wallet from seed with new PIN
   - Risk warnings displayed during export flow
@@ -114,8 +114,8 @@ First public release of LNWCASH Wallet — a client-side Lightning Network walle
 - **Framework**: Svelte 5 + TypeScript 6 + Vite 8
 - **Crypto**: @noble/curves (secp256k1), @noble/hashes (SHA-256), Web Crypto API (PBKDF2, AES-GCM, HMAC)
 - **Storage**: IndexedDB via idb (proofs + transactions), localStorage (settings, encrypted key, PIN hash)
-- **Routing**: Hash-based client-side router (#/balance, #/receive, #/pay, #/transfer, #/history)
-- **Testing**: Vitest with JSDOM environment, 37 test files
+- **Routing**: Hash-based client-side router (#/, #/receive, #/send, #/history, #/settings, #/setup)
+- **Testing**: Vitest with JSDOM environment, 173 test files
 - **Mobile**: Capacitor 8 with Android platform, barcode scanner, and secure storage plugins
 
 ### Known Limitations (MVP)

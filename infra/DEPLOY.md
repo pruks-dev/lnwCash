@@ -62,7 +62,7 @@ Web Crypto API ต้องการ Secure Context — ต้อง HTTPS เ�
 ## 🔧 Prerequisites
 
 ### บนเครื่องคุณ (สำหรับ deploy manual):
-- **Node.js** >= 20 (ดู `.nvmrc` หรือ `package.json`)
+- **Node.js** >= 22 (matches CI — `.github/workflows/pages-deploy.yml` uses Node 22)
 - **npm** >= 10
 - **Git**
 - **SSH client** (`ssh`, `scp`, `rsync`)
@@ -272,13 +272,13 @@ cat ~/.ssh/lnw_cash_deploy
 
 ```bash
 # ตรวจสอบว่า Nginx ตอบ 200
-curl -I https://lnw.cash/
+curl -I https://wallet.lnw.cash/
 
 # ตรวจสอบ health endpoint (static file)
-curl -I https://lnw.cash/health
+curl -I https://wallet.lnw.cash/health
 
 # เช็คว่า SPA routing ทำงาน (fallback to index.html)
-curl -I https://lnw.cash/wallet/send
+curl -I https://wallet.lnw.cash/wallet/send
 # ควรตอบ 200 (ไม่ใช่ 404) เพราะ SPA fallback
 ```
 

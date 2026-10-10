@@ -8,15 +8,15 @@ LNWCASH Wallet is a Lightning Network wallet built on the Cashu protocol. It let
 
 ### 1. Install
 - **Android**: Download the APK and sideload it (not on the Play Store yet)
-- **iOS / Desktop**: Open `https://lnw.cash` in your browser, or run as a PWA from your home screen
+- **iOS / Desktop**: Open `https://wallet.lnw.cash` in your browser, or run as a PWA from your home screen
 
 ### 2. Set Your PIN
-When you open the app for the first time, you'll be asked to set a PIN (6+ digits). This PIN both unlocks the wallet and encrypts your private key. **Memorize it** — if you forget your PIN and haven't backed up your seed phrase, recovery is impossible.
+When you open the app for the first time, you'll be asked to set a PIN (4 digits). This PIN both unlocks the wallet and encrypts your private key. **Memorize it** — if you forget your PIN and haven't backed up your seed phrase, recovery is impossible.
 
 ### 3. Name Your Wallet & Add Mints
 - Give your wallet a name (e.g., "Daily spending")
 - Add at least 2 Mint URLs. Mints are the servers that issue and redeem ecash.
-- Dev/testing mint: `https://mint-dev.inw.cash`
+- Dev/testing mint: `https://mint.lnw.cash`
 - Choose a keyset (typically `sat` for bitcoin)
 
 ### 4. Unlock
@@ -59,14 +59,16 @@ On subsequent visits, enter your PIN to unlock the wallet.
 
 ---
 
-## Backing Up Your Seed Phrase (24 Words)
+## Backing Up Your Seed Phrase (12 Words)
 
 The seed phrase is your recovery key. **Guard it with your life.** If you lose your device or clear browser data without a seed backup, your funds are gone permanently.
+
+> **Note:** new wallets use a 12-word BIP39 seed phrase. Older (legacy) wallets used 24 words — those still work for recovery.
 
 ### How to Export
 1. Go to Settings → Export Seed
 2. Re-enter your PIN for confirmation
-3. The app shows 24 English words (BIP-39)
+3. The app shows 12 English words (BIP-39)
 4. **Write them down on paper** and store securely. Do not screenshot. Do not take a photo. Never share with anyone.
 
 ### ⚠️ Warnings
@@ -96,7 +98,7 @@ Different mints have different fee structures, liquidity, and uptime. Having mul
 
 ### Where can I find mint URLs?
 - The Cashu community maintains lists of public mints
-- `https://mint-dev.inw.cash` for development and testing
+- `https://mint.lnw.cash` for development and testing
 - Private mints, or mints run by friends
 
 ---
