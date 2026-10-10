@@ -44,3 +44,40 @@ describe('SeedGrid (TASK-208 D4)', () => {
 		expect(container.querySelectorAll('.seed-cell').length).toBe(0);
 	});
 });
+
+describe('SeedGrid (TASK-1801 — seed เต็มคำ, mockup ชุด A APPROVED)', () => {
+	const src = () =>
+		readFileSync(resolve(__dirname, '../SeedGrid.svelte'), 'utf-8');
+
+	// ดึงเฉพาะ seed zone (บล็อก <style>) มาตรวจ — ห้ามมี nowrap/ellipsis ตัดคำ
+	const seedZone = () => {
+		const m = src().match(/<style>([\s\S]*)<\/style>/);
+		return m ? m[1] : '';
+	};
+
+	it('seed zone ไม่มี nowrap/ellipsis — คำบอส: “ควรหาวิธียังไงก็ได้ให้สามารถแสดงได้เต็มคำ”', () => {
+		const zone = seedZone();
+		expect(zone).not.toContain('nowrap');
+		expect(zone).not.toContain('text-overflow');
+		expect(zone).not.toContain('ellipsis');
+	});
+
+	it('word ใช้ wrap+break+min-width:0 (white-space normal + overflow-wrap anywhere)', () => {
+		const zone = seedZone();
+		expect(zone).toContain('white-space: normal');
+		expect(zone).toContain('overflow-wrap: anywhere');
+		expect(zone).toContain('word-break: break-word');
+		expect(zone).toContain('min-width: 0');
+	});
+
+	it('@media (max-width:400px) ลดเหลือ 2 คอลัมน์ — columns prop default 3 ไม่เปลี่ยน', () => {
+		const zone = seedZone();
+		expect(zone).toContain('@media (max-width: 400px)');
+		expect(zone).toContain('repeat(2, minmax(0, 1fr))');
+		// prop default ยัง 3 — CSS คุมจอแคบเท่านั้น
+		expect(src()).toContain('columns = 3');
+		const { container } = render(SeedGrid, { words: WORDS });
+		const grid = container.querySelector('.seed-grid') as HTMLElement;
+		expect(grid.style.gridTemplateColumns).toContain('repeat(3');
+	});
+});
