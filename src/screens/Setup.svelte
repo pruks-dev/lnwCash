@@ -1109,7 +1109,16 @@
 											onkeydown={(e) => onRecoverWordKeydown(i, e)}
 										/>
 										{#if activeWordIndex === i && seedSuggestions.length > 0}
-											<ul class="seed-suggestions" role="listbox" aria-label={$_('recovery.import.placeholder')}>
+											<!-- TASK-2102 (INTENT-021): last-row cells open the suggest list upward
+												so Card (overflow:hidden, Card.svelte:56) never clips it. Last 4 covers
+												every grid width (2-col: 11-12, 3-col: 10-12, 4-col: 9-12); cells 1-8
+												keep opening downward (no regression). -->
+											<ul
+												class="seed-suggestions"
+												class:flip-up={i >= RECOVER_WORD_COUNT - 4}
+												role="listbox"
+												aria-label={$_('recovery.import.placeholder')}
+											>
 												{#each seedSuggestions as s (s)}
 													<li role="option" aria-selected="false">
 														<button
@@ -1697,6 +1706,15 @@
 		box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.12));
 		max-height: 220px;
 		overflow-y: auto;
+	}
+
+	/* TASK-2102 (INTENT-021, mockup flip-up APPROVED): last-row cells open upward
+	   (bottom:100%) so the list stays inside Card instead of being clipped below.
+	   Card.svelte overflow:hidden is intentionally untouched. */
+	.seed-suggestions.flip-up {
+		top: auto;
+		bottom: 100%;
+		margin: 0 0 4px;
 	}
 
 	.suggestion {
