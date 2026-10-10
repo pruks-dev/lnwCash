@@ -49,6 +49,7 @@
 		border-radius: var(--radius-md);
 		font-family: var(--font-family-mono, ui-monospace, 'SF Mono', Menlo, monospace);
 		overflow: hidden;
+		min-width: 0;
 	}
 
 	.seed-cell-index {
@@ -65,9 +66,20 @@
 		font-size: 0.78rem;
 		font-weight: 600;
 		letter-spacing: 0.02em;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
+		white-space: normal;
+		overflow-wrap: anywhere;
+		word-break: break-word;
+		min-width: 0;
 		font-family: inherit;
+	}
+
+	/* TASK-1801 (mockup ชุด A APPROVED — wrap+break+2-col): จอแคบ ≤400px
+	 * ลดเหลือ 2 คอลัมน์ผ่าน CSS อย่างเดียว — columns prop default 3 ไม่เปลี่ยน.
+	 * !important จำเป็นเพราะ grid-template-columns ถูก set ผ่าน inline style
+	 * (style:grid-template-columns="repeat({columns}, ...)") ซึ่งชนะ stylesheet ปกติ. */
+	@media (max-width: 400px) {
+		.seed-grid {
+			grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+		}
 	}
 </style>
