@@ -54,6 +54,38 @@ vi.mock('../../cashu/keyset', () => ({
 	resolveKeysetId: vi.fn((_url: string, id: string) => id)
 }));
 
+// TASK-1315 flake-lock: this suite pins the ONLINE counter-0 guard — the
+// detector singleton must read 'online' deterministically here (a real
+// jsdom/worker probe race previously let it settle 'offline' occasionally,
+// which routed receiveTokens into the offline passthrough BEFORE the guard
+// could fire — see 1314/1315 flaky notes). Controllable fake detector,
+// mirroring the auto-normalize-wiring pattern; no real probes run here.
+vi.mock('../../offline-indicator', () => ({
+	getDetectorStatus: vi.fn(() => ({
+		state: 'online',
+		online: true,
+		suspect: false,
+		probing: false,
+		bootWired: true,
+		targets: [],
+		probeCount: 0,
+		lastProbeAt: 0,
+		lastResult: 'online'
+	})),
+	isOnline: vi.fn(() => true),
+	onConnectivityChange: vi.fn(() => () => {}),
+	// TASK-1402: dual-rail binding (module-init) needs both EVENT API
+	// entries on the mocked detector surface (no-op stubs — the rail
+	// behavior itself is proven in flush-binding-1402.test.ts).
+	onOnlineConfirmed: vi.fn(() => () => {}),
+	setPendingPileReader: vi.fn(),
+	notifySuspectOffline: vi.fn(),
+	setProbeTargets: vi.fn(),
+	wasOffline: vi.fn(() => false),
+	resetWasOffline: vi.fn(),
+	trackWasOffline: vi.fn(() => () => {})
+}));
+
 import * as client from '../../cashu/client';
 import { createWallet, unlockWallet } from '../state';
 import { clearAllWalletData } from '../storage';

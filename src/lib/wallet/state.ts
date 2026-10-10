@@ -151,6 +151,19 @@ export async function unlockWallet(pin: string): Promise<WalletState> {
 
 	setWalletState('UNLOCKED');
 
+	// TASK-1403 (F-049-002 / OI-v5-4 ทาง (1)): one-time boot migration sweep —
+	// legacy 'confirmed' cashu_receive records whose proofs are still pending
+	// get fixed back to 'pending' (+ mapping attached). Best-effort, never
+	// blocks unlock; strict scope inside txMigration (mapped + truly-settled
+	// records untouched). This call site IS the non-test migration-sweep
+	// caller (dispatch must_do 6).
+	try {
+		const { runTxPendingMigrationOnce } = await import('./txMigration');
+		await runTxPendingMigrationOnce();
+	} catch {
+		// migration failure must never block unlock
+	}
+
 	return getWalletStatus();
 }
 

@@ -67,6 +67,43 @@ vi.mock('../../cashu/token', () => ({
 	decodeToken: vi.fn()
 }));
 
+/**
+ * TASK-1308 (F-048-001): isWalletOnline() reads the DETECTOR state
+ * (getDetectorStatus) — not navigator.onLine. This suite adapts with a
+ * CONTROLLABLE FAKE detector (per-suite module mock); the real
+ * probe→flip→flush flight is proven in `detector-flush-flight.test.ts`
+ * against the real offline-indicator module.
+ */
+const detectorMock = vi.hoisted(() => ({
+	state: 'online' as 'online' | 'offline' | 'probing'
+}));
+
+vi.mock('../../offline-indicator', () => ({
+	getDetectorStatus: vi.fn(() => ({
+		state: detectorMock.state,
+		online: detectorMock.state === 'online',
+		suspect: false,
+		probing: detectorMock.state === 'probing',
+		bootWired: true,
+		targets: [],
+		probeCount: 0,
+		lastProbeAt: 0,
+		lastResult: detectorMock.state === 'probing' ? null : detectorMock.state
+	})),
+	isOnline: vi.fn(() => detectorMock.state === 'online'),
+	onConnectivityChange: vi.fn(() => () => {}),
+	// TASK-1402: dual-rail binding (module-init) needs both EVENT API
+	// entries on the mocked detector surface (no-op stubs — the rail
+	// behavior itself is proven in flush-binding-1402.test.ts).
+	onOnlineConfirmed: vi.fn(() => () => {}),
+	setPendingPileReader: vi.fn(),
+	notifySuspectOffline: vi.fn(),
+	setProbeTargets: vi.fn(),
+	wasOffline: vi.fn(() => false),
+	resetWasOffline: vi.fn(),
+	trackWasOffline: vi.fn(() => () => {})
+}));
+
 vi.mock('../../cashu/keyset', () => ({
 	fetchAndCacheKeysets: vi.fn().mockResolvedValue([
 		{
@@ -110,6 +147,16 @@ import {
 import { completeSet } from '../completeSet';
 import { setActiveSeed, clearActiveSeed } from '../nut13';
 import { mnemonicToSeed } from '../keys';
+import { createTestMint, buildCarolChain } from './dleq-harness';
+import type { TokenProof } from '../../types';
+
+const TEST_MINT = createTestMint('autonorm');
+/** Real Carol-verifyable chains (S4/P1 gate requires complete {e,s,r} — TASK-1314). */
+function dleqChains(amounts: number[]): TokenProof[] {
+	return amounts.map((amount, i) =>
+		buildCarolChain(TEST_MINT, amount, KEYSET_ID, `ofs${i + 1}`).proof
+	);
+}
 import {
 	getCounterK,
 	setCounterK,
@@ -132,13 +179,12 @@ function bytesToBigInt(bytes: Uint8Array): bigint {
 }
 
 function setOnline(online: boolean): void {
-	Object.defineProperty(window.navigator, 'onLine', {
-		value: online,
-		configurable: true
-	});
+	// TASK-1308: the wallet's online truth is the detector state — the
+	// navigator.onLine pin is history (FR-2).
+	detectorMock.state = online ? 'online' : 'offline';
 }
 
-const ONLINE_DEFAULT = typeof navigator !== 'undefined' && navigator.onLine;
+const ONLINE_DEFAULT = true;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -293,14 +339,14 @@ describe('TASK-1304: T1/T2/T3 auto-normalize wiring', () => {
 		setCounterK(KEYSET_ID, 4);
 
 		setOnline(false);
+		// TASK-1314 (S4/P1): the offline passthrough requires a complete dleq
+		// {e,s,r} verifying against the keyset cache's A — real chains here:
 		vi.mocked(decodeToken).mockReturnValue({
 			mint: MINT_URL,
 			unit: 'sat',
-			proofs: [
-				{ id: KEYSET_ID, amount: 3, secret: 'ofs1', C: 'C-of1' },
-				{ id: KEYSET_ID, amount: 2, secret: 'ofs2', C: 'C-of2' }
-			]
+			proofs: dleqChains([3, 2])
 		} as never);
+		vi.mocked(getMintPubkey).mockReturnValue(TEST_MINT.A);
 
 		const offline = await receiveTokens('cashuAdummy');
 		// Passthrough 1:1 — the proofs are stored EXACTLY as decoded:
@@ -335,6 +381,8 @@ describe('TASK-1304: T1/T2/T3 auto-normalize wiring', () => {
 	});
 
 	it('T3 cancels a lurking T1 timer — no double normalize run', async () => {
+		// TASK-1314 (S4/P1): the OFFLINE leg below requires a complete dleq chain:
+		vi.mocked(getMintPubkey).mockReturnValue(TEST_MINT.A);
 		vi.mocked(decodeToken).mockReturnValue({
 			mint: MINT_URL,
 			unit: 'sat',
@@ -347,18 +395,23 @@ describe('TASK-1304: T1/T2/T3 auto-normalize wiring', () => {
 		vi.mocked(decodeToken).mockReturnValue({
 			mint: MINT_URL,
 			unit: 'sat',
-			proofs: [{ id: KEYSET_ID, amount: 2, secret: 'ot2', C: 'C-ot2' }]
+			proofs: [buildCarolChain(TEST_MINT, 2, KEYSET_ID, 'ot2').proof]
 		} as never);
 		await receiveTokens('cashuAdummy'); // offline passthrough + pending flag
 		expect(await getPendingNormalizeProofs()).toHaveLength(1);
 
 		// Back online — T3 must consume the pending pile AND the lurking T1
-		// timer. The pile ([received 1] + [passthrough 2]) ALREADY equals
-		// completeSet(3): zero-swap → no mint round-trip, flags still cleared.
+		// timer. TASK-1316 (P4): T3 now FORCE-SWAPS — the pile ([received 1] +
+		// [passthrough 2]) already equals completeSet(3), but the zero-swap
+		// short-circuit is bypassed on this path: the mint itself re-verifies
+		// the pending coins were never spent. swapCalls must be ≥1 and the
+		// flags cleared by the flush.
 		setOnline(true);
 		const flush = (await flushPendingNormalizeOnBackOnline()) as
 			{ swapped: boolean; zeroSwap: boolean } | null;
-		expect(flush && flush.zeroSwap).toBe(true);
+		expect(flush && flush.swapped).toBe(true);
+		expect(flush && flush.zeroSwap).toBe(false);
+		expect(swapCalls().mock.calls.length).toBeGreaterThanOrEqual(1);
 		expect(await getPendingNormalizeProofs()).toHaveLength(0);
 		expect(isAutoNormalizePending()).toBe(false);
 

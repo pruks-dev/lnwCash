@@ -22,6 +22,26 @@ export interface Transaction {
 	protocol?: TransactionProtocol;
 	fee?: number;  // sats fee paid (mint melt only; cashu = 0)
 	actual_fee?: number;  // TASK-314 (NUT-08): true fee paid after mint overpaid return — equals fee when no overpaid, less when NUT-08 mint returned fee sats
+	/**
+	 * TASK-1403 (F-049-002): tx_id ↔ proof local_ids mapping for offline /
+	 * network-error fallback receives — lets the T3 flush settle this tx
+	 * (flip confirmed / failed) by comparing the mapped proofs' pending
+	 * state. OPTIONAL + backward-compat: legacy records (v4.4/v4.5) carry
+	 * no field — absent means "no mapping" (never force-flipped, reported
+	 * as unmatched, never crashes).
+	 */
+	proofIds?: string[];
+	/**
+	 * TASK-1501 (F-050-001): flush-abort diagnostic — set when the T3 flush
+	 * force-fails this tx on the TERMINAL-FAIL abort path (mint evaluated
+	 * the inputs then rejected: double-spent family / mint-rule reject /
+	 * mint-anomaly / counter-guard, plus unknown-default-failed per boss).
+	 * OPTIONAL + backward-compat (walks the proofIds trail): absent means
+	 * "no diagnostic" (legacy records, retryable-pending, quarantine-
+	 * success backfilled separately). Record-only — never rendered.
+	 */
+	failCode?: number | string;
+	failName?: string;
 }
 
 export interface TransactionFilter {

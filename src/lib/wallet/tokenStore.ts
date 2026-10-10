@@ -21,21 +21,39 @@ import {
 	getBalanceByMint,
 	getProofCount,
 	clearProofs,
+	clearPendingNormalize,
+	markQuarantined,
 	markPendingNormalizeByProof,
+	makeLocalId,
 	type StoredProof
 } from './proofsDb';
-import { addTransaction } from '../storage/db';
+import { addTransaction, getTransactionById, updateTransaction } from '../storage/db';
 import { selectProofs, sumProofs } from './proofs';
 import { encodeToken, decodeToken, getTokenAmount } from '../cashu/token';
 import { decomposeAmount } from './mint';
 import { completeSet } from './completeSet';
-import { checkState, swapProofs } from '../cashu/client';
+// TASK-1309: the transport error classes are part of the D3 boundary —
+// client.ts classes ONLY (wallet/errors.ts MintUnreachableError is a
+// DIFFERENT class in a different graph; the receive swap throws the ones
+// mapped inside client.ts fetchFromMint). The RETHROW group (CashuError with
+// HTTP code/status incl. BENIGN 11003/20002 + InvalidResponseError) needs no
+// import here: anything that is NOT a transport error rethrows via the tail
+// below.
+import {
+	checkState,
+	swapProofs,
+	CashuError,
+	MintUnreachableError,
+	NetworkError
+} from '../cashu/client';
 import { blindMessage, unblindSignature, blindingFactorToHex } from '../cashu/blind';
 import { fetchAndCacheKeysets, getMintPubkey, resolveKeysetId } from '../cashu/keyset';
+import { verifyDleqCarol } from '../cashu/dleq';
 import { getPrivateKey } from './state';
 import { deriveSecretAndR, getActiveSeed } from './nut13';
 import { getCounterK, incrementCounterK, withKeysetLock } from './counterK';
 import { isWalletOnline, scheduleNormalizeAfterReceiveOnline } from './normalizeWiring';
+import { notifySuspectOffline } from '../offline-indicator';
 import type { TokenProof, DecodedToken } from '../types';
 import { TokenValidationError } from './errors';
 
@@ -55,6 +73,406 @@ export interface ProofBalance {
 }
 
 // ─── Token Store Operations ──────────────────────────────────
+
+/**
+ * TASK-1309 (D3, risk HIGH) — THE receive-fallback boundary predicate.
+ *
+ * Fallback group (pure TRANSPORT failures — nothing ever reached the mint's
+ * rules engine): client.ts throws these BEFORE any HTTP-driven CashuError
+ * exists:
+ *   - MintUnreachableError — fetch threw TypeError (network/DNS), mapped at
+ *     client.ts:360 (inside the catch of fetchFromMint:before-HTTP path);
+ *   - NetworkError — AbortError timeout (client.ts:356), generic wrapping
+ *     (client.ts:363), or the post-retries guarantee (client.ts:368).
+ *   - TypeError — the raw WHATWG fetch network failure class (kept per the
+ *     dispatch grouping; client.ts normally maps it, but a raw transport
+ *     TypeError across the same wire carries the same semantics).
+ *
+ * RETHROW group (mint saw the request and answered — rethrow เสมอ, ห้าม
+ * passthrough — storing them would bank mint-rejected proofs incl.
+ * double-spent): ANY remaining CashuError bearing HTTP code/status (incl.
+ * BENIGN 11003/20002) and InvalidResponseError — and, unchanged, everything
+ * else (plain errors keep the pre-D3 catch shape).
+ *
+ * NOTE: MintUnreachableError/NetworkError/InvalidResponseError all extend
+ * CashuError — the transport tests MUST come first; anything left CashuError
+ * is a rules-reject (proving the transport group is NOT a catch-all).
+ */
+function isTransportNetworkError(err: unknown): boolean {
+	return (
+		err instanceof MintUnreachableError ||
+		err instanceof NetworkError ||
+		err instanceof TypeError
+	);
+}
+
+/**
+ * TASK-1314 (P1/S4 — NUT-12) — THE offline/fallback DLEQ receive gate.
+ *
+ * Carol's rule (NUT-12 §Carol): a received proof's DLEQ proof MUST be verified
+ * with the mint's public key `A` for the amount. There is no mint state check
+ * available while offline, so the DLEQ chain is the ONLY counterfeit defense
+ * the passthrough has — hence fail-closed:
+ *   - proof without a complete dleq {e, s, r}  → REJECT (S4: dleq-less = ปฏิเสธรับ)
+ *   - no A accessible from the keyset cache    → REJECT (fallback — cannot verify offline)
+ *   - verifyDleqCarol fails (tampered e/s/C)   → REJECT
+ * The whole token is rejected (all-or-nothing): the caller stores NOTHING and
+ * records NOTHING when any proof fails — reject BEFORE addProofs below.
+ *
+ * Covers BOTH 1309 wires on the single choke point: the offline gate branch
+ * and the D3 network-error fallback both call receiveProofsPassthrough.
+ * The ONLINE swap receive path is NOT here (P2 — untouched).
+ */
+function dleqReceiveGate(decoded: DecodedToken, mintUrl: string): void {
+	for (let i = 0; i < decoded.proofs.length; i++) {
+		const proof = decoded.proofs[i];
+		const where = `proof #${i} (amount ${proof.amount}, keyset ${proof.id})`;
+		if (
+			!proof.dleq ||
+			typeof proof.dleq.e !== 'string' || proof.dleq.e.length === 0 ||
+			typeof proof.dleq.s !== 'string' || proof.dleq.s.length === 0 ||
+			typeof proof.dleq.r !== 'string' || proof.dleq.r.length === 0
+		) {
+			throw new TokenValidationError(
+				`TASK-1314 (S4): received proof ${where} carries no complete DLEQ proof {e, s, r} — ` +
+				`refusing dleq-less coins on offline/fallback receive (NUT-12). No proof was stored.`
+			);
+		}
+		// A from the keyset cache (offline-safe: getMintPubkey works purely from
+		// localStorage cache; getMintPubkey resolves short/long IDs internally).
+		const A = getMintPubkey(mintUrl, proof.id, proof.amount);
+		if (!A) {
+			throw new TokenValidationError(
+				`TASK-1314: received proof ${where} — no denomination key in the keyset cache ` +
+				`(cache empty or stale while offline) — cannot verify DLEQ, refusing receive. No proof was stored.`
+			);
+		}
+		if (!verifyDleqCarol(proof.dleq, proof.secret, proof.C, A)) {
+			throw new TokenValidationError(
+				`TASK-1314: DLEQ Carol-verification FAILED for received proof ${where} — ` +
+				`counterfeit or tampered token; rejecting the WHOLE token. No proof was stored.`
+			);
+		}
+	}
+}
+
+/**
+ * TASK-1309 — the offline PASSTHROUGH mechanism (1:1 addProofs, counter_k
+ * untouched, pending_normalize flag, same-shape transaction + result) —
+ * extracted from the old offline-gate branch and reused verbatim by BOTH
+ * the offline gate and the D3 network-error fallback, so the two paths
+ * CANNOT drift apart.
+ *
+ * TASK-1403 (F-049-002): the tx record is written with status 'pending'
+ * (boss L-P008: 'transaction ที่รับมาแบบ offline ควรอยู่ใน history โดยขึ้น
+ * สถานะว่า pending ไม่ใช่ confirm') + the proofIds mapping (tx_id ↔ proof
+ * local_ids) so the T3 flush can settle it (flip confirmed / failed) via
+ * `settleReceiveTxByProofs()`. Field is optional backward-compat — legacy
+ * records without it are treated as absent (never force-flipped).
+ */
+async function receiveProofsPassthrough(
+	decoded: DecodedToken,
+	mintUrl: string,
+	tokenString: string
+): Promise<ReceiveResult> {
+	// TASK-1314 (P1/S4): Carol-verify the DLEQ chain of every proof BEFORE
+	// anything is stored — a tampered/dleq-less token throws here and the
+	// passthrough below never runs (no addProofs, no record).
+	dleqReceiveGate(decoded, mintUrl);
+
+	const offlineProofs = decoded.proofs; // 1:1 — stored EXACTLY as decoded
+	const totalAmount = offlineProofs.reduce((sum, p) => sum + p.amount, 0);
+	await addProofs(offlineProofs, mintUrl, offlineProofs[0].id); // 1:1 — mark as-is
+	await markPendingNormalizeByProof(offlineProofs);
+	const dleqCount = offlineProofs.filter(p => p.dleq).length;
+	// Local proof IDs for the tx ↔ proof mapping (deterministic local_id —
+	// same function addProofs used to stamp the rows above).
+	const proofIds = offlineProofs.map((p) => makeLocalId(p));
+
+	// Record transaction (F-088) — best-effort — TASK-1403: status 'pending'
+	// (NOT confirmed — the mint never saw these coins; the T3 flush flips
+	// them to confirmed once every mapped proof leaves pending).
+	const txId = `cashu-recv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+	try {
+		await addTransaction({
+			id: txId,
+			type: 'cashu_receive',
+			protocol: 'cashu',
+			amount: totalAmount,
+			mint_url: mintUrl,
+			timestamp: Date.now(),
+			token_hash: tokenString,
+			status: 'pending',
+			fee: 0,
+			proofIds
+		});
+	} catch {
+		// IndexedDB may be unavailable
+	}
+
+	return {
+		amount: totalAmount,
+		mint: mintUrl,
+		unit: decoded.unit,
+		proofCount: offlineProofs.length,
+		dleqCount: dleqCount > 0 ? dleqCount : undefined
+	};
+}
+
+// ─── TASK-1403 (F-049-002): tx ↔ proof settlement ─────────────
+
+/**
+ * TASK-1403 (F-049-002) — settle ONE offline-receive tx after a T3 flush
+ * run, comparing the proofs named in its `proofIds` mapping:
+ *
+ *   - every mapped proof settled (pending_normalize cleared AND not
+ *     quarantined — i.e. re-signed at the mint or zero-skipped per the
+ *     OI-v5-2 mint-own pile)          → flip tx status 'confirmed'
+ *   - every mapped proof dead (quarantined) → flip tx status 'failed'
+ *     (OI-v5-3 ทาง (1) — record อย่างเดียว, ไม่แตะ .svelte)
+ *   - mixed / some still pending        → keep 'pending' (คง pending จน
+ *     สรุปหมด — ก้อนบางตายไม่ flip)
+ *   - tx missing / no proofIds (legacy) → return 'unmapped' (never
+ *     force-flipped — migration owns that case)
+ *   - tx not pending                    → return 'skipped' (already settled)
+ *
+ * Record-level only: reads proofsDb rows, updates the tx status via
+ * updateTransaction. Never derives, never touches the counter, never
+ * renders.
+ */
+export type ReceiveTxSettleOutcome =
+	| 'confirmed'
+	| 'failed'
+	| 'pending'
+	| 'unmapped'
+	| 'skipped';
+
+/**
+ * TASK-1501 (F-050-001 / INTENT-013 v5.2): the abort-path 3-way taxonomy.
+ *
+ * Boss ruling (L-P008): 'pending transaction ถ้า swap ไม่ผ่าน ทำไมไม่
+ * failed' — 'คือ pending ถ้าถูก swap ตอนกลับมา ออนไลน์แล้วไม่ผ่านให้ถือว่า
+ * failed' — i.e. a pending-swap-fail IS failed, UNLESS the failure is pure
+ * transport (mint never evaluated our inputs → retry next round).
+ *
+ *   - TERMINAL-FAIL: the mint EVALUATED our inputs then rejected them
+ *     (double-spent family 11002/11005, any other mint-rule CashuError
+ *     reject, mint-anomaly / counter-guard after the mint answered), PLUS
+ *     every unknown error (boss default: unknown = failed).
+ *     → attempt-level force-fail of the mapped txs + clear their
+ *     pending_normalize + record the diagnostic.
+ *   - RETRYABLE: pure TRANSPORT only — MintUnreachableError / NetworkError /
+ *     raw TypeError / timeout (AbortError), PLUS the benign idempotent
+ *     family 11003 / 20002 (mint.ts benign-11003 retry owns that code path;
+ *     here it only means "not evidence of dead inputs"). ONLY these two
+ *     groups enumerate retryable — unknown is NEVER retryable.
+ *     → keep pending (tx + proofs), no settle, no clear, retry next round.
+ *
+ * Classification is by FLOW (this flush path), not by code reuse — mint.ts's
+ * benign-11003 retry loop is untouched and can never reach this predicate.
+ */
+export type FlushAbortVerdict = 'terminal' | 'retryable';
+
+/** The RETRYABLE transport group — the ONLY "keep pending" envelope. */
+function isFlushRetryableError(err: unknown): boolean {
+	// Group 1 — transport: the mint never evaluated the inputs.
+	if (
+		err instanceof MintUnreachableError ||
+		err instanceof NetworkError ||
+		err instanceof TypeError
+	) {
+		return true;
+	}
+	if (
+		err instanceof DOMException && (err as DOMException).name === 'AbortError'
+	) {
+		return true;
+	}
+	// Group 2 — benign idempotent family 11003/20002 (OUTPUT-side collision,
+	// NOT evidence of dead inputs). input proofs may be perfectly healthy —
+	// retry later under a fresh counter, never force-fail, never quarantine.
+	if (err instanceof CashuError && (err as CashuError).isBenign) {
+		return true;
+	}
+	return false;
+}
+
+/** TERMINAL-FAIL = everything the retryable predicate does NOT accept. */
+export function classifyFlushAbortError(err: unknown): FlushAbortVerdict {
+	return isFlushRetryableError(err) ? 'retryable' : 'terminal';
+}
+
+/** Extract the diagnostic (failCode/failName) from ANY abort error. */
+export function describeFlushError(err: unknown): { failCode?: number | string; failName?: string } {
+	const name = err instanceof Error ? err.name : typeof err;
+	if (err instanceof CashuError) {
+		const code = (err as CashuError).code;
+		return { failCode: code, failName: name || 'CashuError' };
+	}
+	if (err instanceof DOMException) {
+		return { failCode: (err as DOMException).name, failName: (err as DOMException).name };
+	}
+	if (err instanceof Error) {
+		return { failName: name };
+	}
+	return { failName: String(name) };
+}
+
+export async function settleReceiveTxByProofs(
+	txId: string,
+	err?: unknown
+): Promise<ReceiveTxSettleOutcome> {
+	const tx = await getTransactionById(txId).catch(() => undefined);
+	if (!tx) return 'unmapped';
+	if (!tx.proofIds || tx.proofIds.length === 0) return 'unmapped';
+	if (tx.status !== 'pending') return 'skipped';
+	const ids = tx.proofIds;
+
+	const all = await getAllProofs().catch(() => []);
+	const byId = new Map(all.map((p) => [p.local_id, p]));
+	let alive = 0;
+	let dead = 0;
+	let stillPending = 0;
+	for (const id of ids) {
+		const p = byId.get(id);
+		if (!p) {
+			// Proof row gone (wiped / removed) — we CANNOT prove settlement,
+			// so stay conservative: keep pending (never force-flip on
+			// missing evidence). The swap path keeps consumed rows
+			// (markSpent) so a normal flush always finds them.
+			stillPending++;
+			continue;
+		}
+		if (p.quarantined) {
+			dead++;
+		} else if (p.pending_normalize) {
+			stillPending++;
+		} else {
+			alive++;
+		}
+	}
+
+	if (stillPending > 0 || (alive > 0 && dead > 0)) {
+		return 'pending'; // ก้อนบางตายคง pending จนสรุปหมด
+	}
+	if (dead > 0 && alive === 0) {
+		// TASK-1501 (F-050-001): backfill the diagnostic on the quarantine-
+		// success leg (the mint's double-spent family reject code/name —
+		// the `err` context). Quarantine stays the single owner of the dead
+		// verdict; this only records WHY on the tx for the boss's trace.
+		const diag = err !== undefined ? describeFlushError(err) : {};
+		await updateTransaction(txId, {
+			status: 'failed',
+			...(diag.failCode !== undefined ? { failCode: diag.failCode } : {}),
+			...(diag.failName !== undefined ? { failName: diag.failName } : {})
+		}).catch(() => {});
+		return 'failed';
+	}
+	if (alive > 0 && dead === 0) {
+		await updateTransaction(txId, { status: 'confirmed' }).catch(() => {});
+		return 'confirmed';
+	}
+	return 'pending';
+}
+
+/**
+ * TASK-1403 (F-049-002) — settle EVERY pending cashu_receive tx that
+ * carries a proofIds mapping (the T3 flush's post-run settle pass).
+ * Returns the per-tx outcomes. Called by the flush binding (TASK-1402);
+ * pure record sweep otherwise.
+ */
+export async function settlePendingReceiveTxs(
+	err?: unknown
+): Promise<
+	Array<{ txId: string; outcome: ReceiveTxSettleOutcome }>
+> {
+	const { getTransactions } = await import('../storage/db');
+	const txs = await getTransactions({ status: 'pending' }).catch(() => []);
+	const out: Array<{ txId: string; outcome: ReceiveTxSettleOutcome }> = [];
+	for (const tx of txs) {
+		if (tx.type !== 'cashu_receive') continue;
+		const outcome = await settleReceiveTxByProofs(tx.id, err);
+		out.push({ txId: tx.id, outcome });
+	}
+	return out;
+}
+
+/**
+ * TASK-1501 (F-050-001): attempt-level force-fail on the T3 flush ABORT
+ * path — the TERMINAL-FAIL verdict hook (called by the flush binding with
+ * the error context the engine swallowed).
+ *
+ * Boss ruling (L-P008): 'pending transaction ถ้า swap ไม่ผ่าน ทำไมไม่
+ * failed' — a pending-swap-fail IS failed ( Ver a proposal adopted: unknown
+ * defaults to failed). This runs on the ABORT path (no result), not just
+ * the result path: every MAPPED pending cashu_receive whose proofIds
+ * intersect THIS round's consumed pile (the pendingIds snapshot the flush
+ * took before the run) flips 'failed' + records the diagnostic
+ * (failCode/failName, latest verdict wins) + clears ITS proofs'
+ * pending_normalize (the attempt is over — retrying spent coins is fraud).
+ *
+ * Boundary (must_do 7): legacy/unmapped txs (no proofIds) are NEVER
+ * force-flipped — migration owns them — reported as `unmatched`.
+ * RETRYABLE aborts never reach here (the flush binding checks the verdict
+ * first and returns them to the next round untouched).
+ */
+export interface FlushAbortFailResult {
+	/** mapped txs flipped 'failed' this attempt */
+	failed: string[];
+	/** legacy/unmapped pending txs seen but deliberately NOT flipped */
+	unmatched: string[];
+	/** mapped pending txs that do NOT intersect this round's pile */
+	outOfScope: string[];
+}
+
+export async function forceFailMappedTxsOnFlushAbort(
+	attemptProofLocalIds: string[],
+	err: unknown
+): Promise<FlushAbortFailResult> {
+	const diag = describeFlushError(err);
+	// Log BEFORE classification effects — the raw error is the evidence.
+	console.warn(
+		`[flush-abort] TASK-1501 TERMINAL-FAIL: ` +
+		`${err instanceof Error ? err.message : String(err)} ` +
+		`(failCode=${String(diag.failCode ?? '—')} failName=${diag.failName ?? '—'})`
+	);
+	const inAttempt = new Set(attemptProofLocalIds);
+	const { getTransactions } = await import('../storage/db');
+	const txs = await getTransactions({ status: 'pending' }).catch(() => []);
+	const res: FlushAbortFailResult = { failed: [], unmatched: [], outOfScope: [] };
+	for (const tx of txs) {
+		if (tx.type !== 'cashu_receive') continue;
+		if (tx.status !== 'pending') continue;
+		const ids = tx.proofIds;
+		if (!ids || ids.length === 0) {
+			res.unmatched.push(tx.id); // legacy/unmapped — migration owns
+			continue;
+		}
+		if (!ids.some((id) => inAttempt.has(id))) {
+			res.outOfScope.push(tx.id); // not part of THIS flush round
+			continue;
+		}
+		await updateTransaction(tx.id, {
+			status: 'failed',
+			failCode: diag.failCode,
+			failName: diag.failName
+		}).catch(() => {});
+		// The attempt is over for these proofs: flip them out of the pending
+		// pipeline (they are dead per the terminal verdict — retrying them
+		// would re-submit spent coins). Rows stay for audit (no markSpent).
+		// INTENT-015 (TASK-1510): TERMINAL-failed proofs are dead coins of ANY
+		// kind — 'failed แบบไหนก็ไม่ควรเอามาใช้ได้' — so quarantine them
+		// alongside the pending-clear (drops them from the spendable pool AND
+		// from every balance). Runs ONLY on the TERMINAL verdict path — the
+		// flush binding filters retryable (transport/benign) BEFORE calling
+		// here, so the classification boundary is untouched. Settle read path
+		// (settleReceiveTxByProofs) unchanged.
+		await clearPendingNormalize(ids).catch(() => {});
+		await markQuarantined(ids).catch(() => {});
+		res.failed.push(tx.id);
+	}
+	return res;
+}
 
 /**
  * Store newly minted tokens.
@@ -81,6 +499,7 @@ export async function storeTokens(
 
 /**
  * Get comprehensive balance including by-keyset breakdown.
+ * INTENT-015 (TASK-1510): SPENDABLE ONLY — sources getUnspentProofs.
  */
 export async function getProofBalance(): Promise<ProofBalance> {
 	const proofs = await getUnspentProofs();
@@ -321,36 +740,10 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 	// pending_normalize แทน แล้ว T3 (flushPendingNormalizeOnBackOnline) เคลียร์
 	// เมื่อกลับ online. Derivation ไม่ถูกใช้ → legacy wallet (ไม่มี seed) ยัง
 	// รับ offline ได้ปกติ.
+	// TASK-1309: the mechanism itself lives in receiveProofsPassthrough() —
+	// the D3 network-error fallback reuses THIS SAME mechanism (no drift).
 	if (!isWalletOnline()) {
-		const totalAmount = decoded.proofs.reduce((sum, p) => sum + p.amount, 0);
-		await addProofs(decoded.proofs, mintUrl, keysetId); // 1:1 — mark as-is
-		await markPendingNormalizeByProof(decoded.proofs);
-		const dleqCount = decoded.proofs.filter(p => p.dleq).length;
-
-		// Record transaction (F-088) — best-effort
-		try {
-			await addTransaction({
-				id: `cashu-recv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-				type: 'cashu_receive',
-				protocol: 'cashu',
-				amount: totalAmount,
-				mint_url: mintUrl,
-				timestamp: Date.now(),
-				token_hash: tokenString,
-				status: 'confirmed',
-				fee: 0
-			});
-		} catch {
-			// IndexedDB may be unavailable
-		}
-
-		return {
-			amount: totalAmount,
-			mint: mintUrl,
-			unit: decoded.unit,
-			proofCount: decoded.proofs.length,
-			dleqCount: dleqCount > 0 ? dleqCount : undefined
-		};
+		return await receiveProofsPassthrough(decoded, mintUrl, tokenString);
 	}
 
 	// ONLINE swap receive — deterministic derivation REQUIRES a seed.
@@ -498,11 +891,27 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 			dleqCount: dleqCount > 0 ? dleqCount : undefined
 		};
 	} catch (err) {
+		// ─── TASK-1309 (D3): FIRST — pure transport failure → fallback ────────
+		// Nothing reached the mint's rules engine (wire-level error only) →
+		// keep the proofs: same offline-passthrough mechanism (addProofs 1:1 +
+		// pending_normalize + same-shape record, counter_k untouched) — plus
+		// notifySuspectOffline() so the detector's badge is real state
+		// immediately (D1 trigger (c) → probe follows → verdict is truth).
+		// Mint-rejected-rules errors (CashuError code/status incl.
+		// double-spent / BENIGN 11003,20002 + InvalidResponseError) NEVER hit
+		// this branch — isTransportNetworkError does not accept them — they
+		// fall to the rethrow tail below (token rejected เชิง rules ห้ามเก็บ).
+		if (isTransportNetworkError(err)) {
+			notifySuspectOffline();
+			return await receiveProofsPassthrough(decoded, mintUrl, tokenString);
+		}
+
+		// ── OLD rethrow tail (คงเดิม 100%): mint-reject / validation → throw ──
 		if (err instanceof TokenValidationError) throw err;
 		throw new TokenValidationError(
 			err instanceof Error ? err.message : 'Swap failed — token may be spent or invalid'
 		);
 	}
 
-	// Not reached — swap or throw above
+	// Not reached — swap, fallback or throw above
 }

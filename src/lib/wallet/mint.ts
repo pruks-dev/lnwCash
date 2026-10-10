@@ -16,6 +16,7 @@ import {
 } from '../cashu/client';
 import { fetchAndCacheKeysets, getAllKeysets, getMintPubkey } from '../cashu/keyset';
 import { blindMessage, unblindSignature, blindingFactorToHex } from '../cashu/blind';
+import { verifyDleqAlice, DleqVerifyFailedError } from '../cashu/dleq';
 import { getPrivateKey } from './state';
 import { deriveSecretAndR, getActiveSeed } from './nut13';
 import { getCounterK, incrementCounterK, withKeysetLock } from './counterK';
@@ -361,6 +362,29 @@ export async function completeMint(
 					}
 					return proof;
 				});
+
+				// ── TASK-1314 (NUT-12 — Alice MUST-verify) ──────────────────
+				// Every BlindSignature that arrived WITH a DLEQ proof {e,s} MUST be
+				// verified (NUT-12) BEFORE anything is stored — skipping the check
+				// here would let a counterfeit mint's fake outputs into the wallet.
+				// dleq-less signatures continue unverified (spec: verify iff included).
+				// Missing A (keyset fetch failed this attempt) fails CLOSED —
+				// aborting stores nothing; the NUT-13 counter is NOT advanced here
+				// (the 11003 benign path recovers the same retryed outputs later).
+				// The 11003-retry loop below is untouched: this throw is not an
+				// "already signed" collision.
+				for (let i = 0; i < response.signatures.length; i++) {
+					const sig = response.signatures[i];
+					if (!sig.dleq) continue;
+					const A = getMintPubkey(mintUrl, keysetId, sig.amount);
+					if (!A || !verifyDleqAlice(sig.dleq, outputs[i].B_, sig.C_, A)) {
+						throw new DleqVerifyFailedError(
+							`TASK-1314: DLEQ verification FAILED for mint signature #${i} (amount ${sig.amount})` +
+							`${A ? '' : ' — mint public key unavailable from keyset cache'}` +
+							` — aborting before storing anything (possible counterfeit mint). Mint URL: ${mintUrl}`
+						);
+					}
+				}
 
 				// Step 6: Store proofs, then advance counter_k in `finally`.
 				// TASK-240 (F-V27-001): the mint has already signed these outputs (postMint

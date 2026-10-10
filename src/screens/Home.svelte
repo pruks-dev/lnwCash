@@ -337,6 +337,13 @@
 		color: var(--color-warning);
 	}
 
+	/* TASK-1521 เฉด ก (L-P008): light theme offline badge — ส้มจาง+น้ำตาลส้มเข้มให้เข้าธีมสว่าง
+	   base token-driven คง (dark ใช้ต่อ) — rule เดียว ไม่แตะ dark/online/token กลาง */
+	:global([data-theme='light']) .offline-badge {
+		background: rgba(245, 127, 23, 0.18);
+		color: #bf360c;
+	}
+
 	/* B — Quick Actions */
 	.quick-actions {
 		display: flex;

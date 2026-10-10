@@ -22,6 +22,13 @@
 	// TASK-150 Transaction Detail Bottom Sheet
 	import TransactionDetailSheet from '$lib/components/TransactionDetailSheet.svelte';
 
+	// TASK-1407 (INTENT-013 rev19 ทาง ข): reactive flip — History เดิมโหลดครั้ง
+	// เดียวตอน mount; subscribe confirmed-online event แล้ว reload หลัง flush
+	// settle (flush สำเร็จยิง event → History reload) — event-driven ล้วน ห้าม
+	// polling/interval. dynamic import เพื่อไม่เพิ่ม static edge เข้า wallet
+	// graph (ห้ามแตะ detector/store logic — UI แค่อ่าน status จาก record).
+	import { onOnlineConfirmed } from '$lib/offline-indicator';
+
 	interface Props {
 		maxItems?: number;
 	}
@@ -55,6 +62,27 @@
 	// ─── Load transactions on mount & filter change ───────
 	$effect(() => {
 		loadTransactions();
+	});
+
+	// TASK-1407 (INTENT-013 rev19 ทาง ข): reload-on-flush — subscribe
+	// confirmed-online event; เมื่อ event ยิง ให้รอ flush drain ตัวจริงจบ
+	// (runFlushDrain รวม concurrent trigger เป็น run เดียว — await จึงการันตี
+	// settle เสร็จก่อน reload) แล้วค่อย reload — flip pending→confirmed
+	// ปรากฏบน UI โดยไม่ต้องรีเฟรชเอง. event-driven ล้วน ห้าม polling/interval.
+	$effect(() => {
+		const unsubscribe = onOnlineConfirmed(() => {
+			void (async () => {
+				try {
+					const { runFlushDrain } = await import('$lib/wallet/normalizeWiring');
+					await runFlushDrain();
+				} catch {
+					// flush drain ล้มเหลว — ยัง reload เพื่อแสดง state ล่าสุด
+				} finally {
+					await loadTransactions();
+				}
+			})();
+		});
+		return unsubscribe;
 	});
 
 	async function loadTransactions() {
@@ -356,6 +384,12 @@
 										</div>
 										<div class="tx-meta">
 											<Body size="sm" color="secondary">{formatDate(tx.timestamp)}</Body>
+											<!-- TASK-1502 (INTENT-013 v5.2 F-050-003, BOSS-APPROVED mockup
+											     rev-locale-split): badge zone revert display ตรง
+											     bdfad63 — confirmed เขียวจางทรงเล็ก / failed แดงทึบทรงเล็ก / pending
+											     กลับ tx-pending-indicator (icon Time + ส้ม accent + pulse +
+											     pending-text) — ห้ามลาม list/filter/detail — ห้าม inline style.
+											     คำบอส L-P008 verbatim: 'badge ที่ transaction ไม่เหมือนเดิม ใหญ่เกินไป' -->
 											{#if tx.status === 'pending'}
 												<span class="tx-pending-indicator" aria-label={$_('screen.history.pending_text')}>
 													<Iconly name="Time" size={14} />
@@ -634,6 +668,10 @@
 		align-items: center;
 	}
 
+	/* TASK-1502 (INTENT-013 v5.2 F-050-003): badge zone revert display ตรง bdfad63 —
+	   confirmed เขียวจางทรงเล็ก / failed แดงทึบทรงเล็ก / pending กลับ
+	   tx-pending-indicator (icon Time + ส้ม accent + pulse) — class/CSS ล้วน
+	   ห้าม inline style attr (precedent TASK-1203). */
 	.tx-status-badge {
 		font-size: var(--font-size-xs);
 		font-weight: var(--font-weight-semibold);
@@ -647,7 +685,8 @@
 		color: var(--color-secondary);
 	}
 	.tx-status-badge.status-failed {
-		background: var(--color-error);
+		background: rgba(239, 83, 80, 0.16);
+		color: #ff8a80;
 	}
 
 	/* TASK-149 (CV17-001): Pending indicator — Time icon + text */
@@ -671,12 +710,13 @@
 		white-space: nowrap;
 	}
 
-	/* Light theme — muted backgrounds */
-	@media (prefers-color-scheme: light) {
-		.tx-status-badge.status-failed {
-			background: rgba(239, 68, 68, 0.12);
-			color: var(--color-error);
-		}
+	/* Light theme variant — :global() escapes Svelte scoped-CSS analyzer
+	   (which otherwise tree-shakes [data-theme='light'] as 'unused' because
+	   data-theme is set on documentElement, not detectable statically).
+	   TASK-1512: failed badge ฟัง app theme (ไม่ตาม OS) — light = จาง+แดง, dark/default = base ทึบ. */
+	:global([data-theme='light']) .tx-status-badge.status-failed {
+		background: rgba(239, 68, 68, 0.12);
+		color: var(--color-error);
 	}
 
 	.bottom-spacer {

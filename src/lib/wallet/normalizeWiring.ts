@@ -30,7 +30,7 @@
 import {
 	autoNormalizeAfterReceiveOnline,
 	autoNormalizeAfterCompleteMint,
-	autoNormalizeOnBackOnline,
+	autoNormalizeOnBackOnlineWithOrigin,
 	runAutoNormalizeNow,
 	cancelAutoNormalize,
 	type AutoNormalizeDeps,
@@ -42,26 +42,37 @@ import {
 	addProofs,
 	getAllProofs,
 	getUnspentProofs,
+	getUnspentProofsIncludingPending,
 	getPendingNormalizeProofs,
 	clearPendingNormalize,
 	markSpent,
+	markQuarantined,
 	makeLocalId,
 	type StoredProof
 } from './proofsDb';
+import { isDoubleSpentFamilyError, QuarantineAppliedError } from './errors';
 import type { TokenProof } from '../types';
 import { getCounterK, incrementCounterK, withKeysetLock } from './counterK';
 import { deriveSecretAndR, getActiveSeed } from './nut13';
+import { getDetectorStatus, onConnectivityChange, onOnlineConfirmed, setPendingPileReader } from '../offline-indicator';
 
 // ─── Online detection ───────────────────────────────────────
 
 /**
- * Deliberate inline copy of `offline.ts isOnline()` semantics — NOT imported
- * from there to keep this module's import graph free of `transfer.ts`
- * (TASK-1305 lane) and the `cashu/token` prefixes that would break the mock
- * surface of existing test files.
+ * TASK-1308 (F-048-001, layer 3): truth = the probe-based detector service
+ * (`$lib/offline-indicator`) — the ONE connectivity state for the app.
+ * `navigator.onLine` is NOT truth anymore (FR-2): it only seeds the detector
+ * and demotes window events to probe TRIGGERS.
+ *
+ * Reads the detector state directly (NOT isOnline()): while 'probing' there
+ * is no completed verdict yet → false → the wallet takes the offline
+ * passthrough path (risk-6 safe); 'online' only after a probe run succeeded
+ * (probe-success). This module's import graph stays free of transfer.ts /
+ * cashu/token — offline-indicator imports nothing, so the mock surfaces of
+ * existing test suites are unchanged.
  */
 export function isWalletOnline(): boolean {
-	return typeof navigator !== 'undefined' && navigator.onLine;
+	return getDetectorStatus().state === 'online';
 }
 
 // ─── SwapFn binding (TASK-1304 must_do 7) ─────────────────────
@@ -221,7 +232,33 @@ async function swapGroup(
 			secret: p.secret,
 			C: p.C
 		}));
-		const swapResult = await clientMod.swapProofs(mintUrl, swapInputs, outputs);
+
+		// TASK-1316 (P5): the DOUBLE-SPENT family reject (11002/11005 — hard
+		// evidence the coins are dead) quarantines the group and lets the flush
+		// continue with the remaining groups. Network errors / the benign
+		// idempotent family (11003/20002) / unknown errors are NOT evidence of
+		// dead coins — they propagate untouched (boundary tests both ways).
+		let swapResult: Awaited<ReturnType<typeof clientMod.swapProofs>>;
+		try {
+			swapResult = await clientMod.swapProofs(mintUrl, swapInputs, outputs);
+		} catch (err) {
+			if (isDoubleSpentFamilyError(err)) {
+				const deadIds = inputs.map((p) => p.local_id);
+				// TASK-1501 (F-050-001): record the mint's reject alongside
+				// the quarantined ids so the flush SUCCESS leg can backfill
+				// the tx diagnostic (failCode/failName) — additive only,
+				// quarantine verdict/behavior unchanged (T1/T2 untouched).
+				recordFlushQuarantineCause(deadIds, err);
+				await markQuarantined(deadIds);
+				throw new QuarantineAppliedError(
+					`TASK-1316: quarantined ${deadIds.length} proofs of keyset ${keysetId} — ` +
+					`mint double-spent family reject: ${err instanceof Error ? err.message : String(err)}`,
+					deadIds,
+					err
+				);
+			}
+			throw err;
+		}
 
 		// ── TASK-313 guard (melt.ts:624 pattern — TASK-1304) ────────────────
 		// The mint may not sign MORE outputs than we derived (counter cannot
@@ -305,7 +342,17 @@ export const boundSwapFn: SwapFn = async (proofs, outputs) => {
 	for (const g of groups) {
 		const { share, rest } = extractShare(remaining, g.sum);
 		remaining = rest;
-		newProofs.push(...await swapGroup(g.mintUrl, g.keysetId, g.proofs, share));
+		try {
+			newProofs.push(...await swapGroup(g.mintUrl, g.keysetId, g.proofs, share));
+		} catch (err) {
+			// TASK-1316 (P5): a quarantined group is already handled (marked in
+			// proofsDb) — the flush CONTINUES with the remaining groups. Anything
+			// else (network, benign, unknown) aborts the run untouched.
+			if (err instanceof QuarantineAppliedError) {
+				continue;
+			}
+			throw err;
+		}
 	}
 
 	if (remaining.length > 0) {
@@ -319,10 +366,51 @@ export const boundSwapFn: SwapFn = async (proofs, outputs) => {
 
 // ─── Deps assembly + T1/T2/T3 wire functions ──────────────────
 
+/**
+ * TASK-1501 (F-050-001): quarantine-cause collector for the tx diagnostic
+ * backfill. The 11002/11005 leg quarantines DURING the swap and the flush
+ * run still returns SUCCESS (result non-null — groups completed) — so the
+ * abort hook never fires and the raw mint reject never reaches the settle.
+ * This module-level map (proof local_id → the mint reject error) carries
+ * the cause from swapGroup (quarantine site) to the SUCCESS-leg settle
+ * below. Drained once per flush run; quarantine verdict/behavior itself is
+ * untouched (markQuarantined still fires at the same site, T1/T2 no cause).
+ */
+const flushQuarantineCauses = new Map<string, unknown>();
+
+/** TASK-1501: record the mint reject that quarantined these proofs. */
+function recordFlushQuarantineCause(localIds: string[], err: unknown): void {
+	for (const id of localIds) flushQuarantineCauses.set(id, err);
+}
+
+/**
+ * TASK-1501: resolve the quarantine cause for ONE mapped tx (first mapped
+ * proof carrying a recorded cause, else undefined).
+ */
+function causeForMappedTx(proofIds: string[]): unknown {
+	for (const id of proofIds) {
+		const cause = flushQuarantineCauses.get(id);
+		if (cause !== undefined) return cause;
+	}
+	return undefined;
+}
+
+/** TASK-1501 (test/ops): drain the cause map (count of entries dropped). */
+export function drainFlushQuarantineCausesForTests(): number {
+	const n = flushQuarantineCauses.size;
+	flushQuarantineCauses.clear();
+	return n;
+}
+
 /** Shared AutoNormalizeDeps over the whole spendable pile. */
 export function createAutoNormalizeDeps(): AutoNormalizeDeps {
 	return {
-		getProofs: () => getUnspentProofs(),
+		// TASK-1315 (P3/balance): the normalize engine works on ALL unspent
+		// money INCLUDING the pending pile — the T3 flush exists precisely to
+		// consolidate it; T1/T2 treat pending as money too (if a pending pile
+		// lingers, an auto run consolidates it). Spending itself remains gated
+		// by selectProofs/getUnspentProofs (P3 layer 1+2).
+		getProofs: () => getUnspentProofsIncludingPending(),
 		swapFn: boundSwapFn
 	};
 }
@@ -341,14 +429,100 @@ export function scheduleNormalizeAfterMint(): void {
  * T3 — back online: consolidate immediately (no debounce) and clear the
  * pending-normalize flags on success (swapped or zero-swap short-circuit).
  * On failure the flags stay — the next back-online flush retries.
+ *
+ * TASK-1403 (F-049-002 / OI-v5-2 ทาง (2)): the pending pile is ALWAYS an
+ * 'outside' pile (offline passthrough / network-error fallback receives —
+ * coins the mint never signed for us) → origin:'outside' rides alongside
+ * forceSwap:true so the outside-pile strict rule (P4 เคร่ง) applies even if
+ * forceSwap is ever relaxed. Mint-own piles (T1/T2: completeMint + online
+ * swap receive) keep zero-skip — those wires pass no origin.
+ *
+ * TASK-1403 (F-049-002): after a successful run, settles every mapped
+ * pending cashu_receive tx (flip confirmed / failed / keep pending via
+ * settlePendingReceiveTxs) — the tx-flip caller binding (TASK-1402 caller
+ * path: this function IS the non-test tx-flip caller).
+ *
+ * TASK-1501 (F-050-001): settle ALSO runs on the ABORT path — the flush
+ * caller passes the error context into the settle (never `if (result)`
+ * only). The engine's onSettle(null, err) hook is the capture point: a
+ * TERMINAL-FAIL abort (mint evaluated inputs then rejected — double-spent
+ * family / mint-rule reject / mint-anomaly / counter-guard, plus unknown
+ * default failed per the boss) force-fails the mapped txs of THIS round
+ * (flip 'failed' + diagnostic + clear pending_normalize); a RETRYABLE
+ * abort (transport-only + benign 11003/20002 idempotent) keeps everything
+ * pending for the next round. Abort-settle failures are swallowed —
+ * proof state stays the source of truth.
  */
 export async function flushPendingNormalizeOnBackOnline(): Promise<NormalizeResult | null> {
 	const pendingIds = (await getPendingNormalizeProofs()).map((p) => p.local_id);
-	const result = await autoNormalizeOnBackOnline(createAutoNormalizeDeps());
+	// TASK-1501: capture the abort-path error context the engine would
+	// otherwise swallow (runAutoNormalizeNow returns null on failure).
+	let abortError: unknown;
+	let sawAbort = false;
+	const deps = createAutoNormalizeDeps();
+	deps.onSettle = (result, error) => {
+		if (result === null || result === undefined) {
+			sawAbort = true;
+			abortError = error;
+		}
+	};
+	const result = await autoNormalizeOnBackOnlineWithOrigin(deps);
 	if (result) {
 		// Consumed: pile was swapped (inputs marked spent inside swapGroup) or
 		// the pile was already a complete set (zero-swap short-circuit).
 		await clearPendingNormalize(pendingIds);
+		// TASK-1403: settle mapped txs against the now-settled proofs.
+		// TASK-1501: carry the quarantine cause (11002/11005 mint reject)
+		// into the settle so the failed leg backfills the diagnostic
+		// (failCode/failName). Cause map drains once per run.
+		try {
+			const { settlePendingReceiveTxs, describeFlushError } =
+				await import('./tokenStore');
+			const { getTransactions } = await import('../storage/db');
+			const pendingTxs = await getTransactions({ status: 'pending' }).catch(() => []);
+			for (const tx of pendingTxs) {
+				if (tx.type !== 'cashu_receive') continue;
+				if (tx.status !== 'pending') continue;
+				const cause = tx.proofIds ? causeForMappedTx(tx.proofIds) : undefined;
+				if (cause !== undefined) {
+					const { settleReceiveTxByProofs } = await import('./tokenStore');
+					await settleReceiveTxByProofs(tx.id, cause);
+					const diag = describeFlushError(cause);
+					console.warn(
+						`[flush-abort] TASK-1501 quarantine-leg diagnostic: tx=${tx.id} ` +
+						`(failCode=${String(diag.failCode ?? '—')} failName=${diag.failName ?? '—'})`
+					);
+				}
+			}
+			await settlePendingReceiveTxs();
+		} catch {
+			// tx settle is best-effort — the proof state is already correct;
+			// the next flush (or boot sweep) retries the settle.
+		} finally {
+			flushQuarantineCauses.clear();
+		}
+		return result;
+	}
+	// TASK-1501 — ABORT path: route the captured error through the 3-way
+	// taxonomy (SUCCESS is above; this branch is TERMINAL-FAIL vs RETRYABLE).
+	if (sawAbort && abortError !== undefined) {
+		try {
+			const { classifyFlushAbortError, forceFailMappedTxsOnFlushAbort } =
+				await import('./tokenStore');
+			const verdict = classifyFlushAbortError(abortError);
+			if (verdict === 'terminal') {
+				await forceFailMappedTxsOnFlushAbort(pendingIds, abortError);
+			}
+			// retryable: keep pending (tx + proofs) — no settle, no clear —
+			// the next back-online flush retries. Deliberately nothing here.
+		} catch {
+			// abort-settle is best-effort — the pending pile stays for retry.
+		} finally {
+			// Either verdict: the cause map belongs to THIS run — a retryable
+			// abort carries no quarantine causes anyway, but drain so a LATER
+			// run never reads stale entries.
+			flushQuarantineCauses.clear();
+		}
 	}
 	return result;
 }
@@ -365,3 +539,107 @@ export function cancelScheduledNormalize(): void {
 
 // ─── completeSet passthrough — single import surface for callers ──
 export { completeSet };
+
+// ─── T3 flush trigger source (TASK-1308 — F-048-001 closure, single binding) ─
+// The production flush trigger binds to the DETECTOR state change
+// (probe-success → definite 'online' verdict), NOT to the window 'online'
+// event: the event window never fires when the device never leaves online
+// state (e.g. VPN tunneled machines — F-048-001 dead window). The detector
+// fires listeners only when a COMPLETED probe run flips the verdict to
+// 'online' — the one true "back online" moment. Engine semantics unchanged
+// (zero-swap short-circuit + running lock remain in proofs.ts); the binding
+// stays in this single wiring point (v4.1 heart).
+//
+// TASK-1402 (F-049-001+F7, INTENT-013 v5.1): the T3 trigger rides on BOTH
+// detector online signals (acceptance: flush ยิงจาก flip + onOnlineConfirmed
+// ทั้งสองทาง):
+//   - onOnlineConfirmed (TASK-1401 EVENT API): fires on the steady-state
+//     offline→online flip AND on the BOOT-DRAIN path (first boot probe
+//     online + pending pile non-empty → fires immediately, NO flip wait —
+//     the boss quote: 'แล้วตอนที่ผม รีเฟรช boot ใหม่ ไม่มีการเช็ค pending
+//     swap ให้ proof ใช้ได้เลย');
+//   - onConnectivityChange flip (TASK-1308 legacy): KEPT — the pre-1401
+//     binding stays as the second rail (defense in depth for the
+//     flip-only moment).
+// Double-fire (both rails on one flip — boot-drain ชน flip) CANNOT
+// double-flush: `runAutoNormalizeNow`'s `autoNormalizeRunning` lock returns
+// null for the second concurrent call (engine-level dedupe, proofs.ts),
+// plus the module-level `flushDrainInFlight` promise gate below collapses
+// overlapping triggers into ONE run (mount-order: mount→DB→detector→probe
+// →flush, concurrent flip+boot safe). EVENT API only — no detector
+// internals touched (requestProbe/runProbe never imported or called).
+// T1/T2 wires ABOVE are byte-untouched by this task (v5.1 แตะ T3 เท่านั้น).
+//
+// The pending-pile reader (TASK-1401 `setPendingPileReader`) is registered
+// with the REAL proofsDb-backed reader: `getPendingNormalizeProofs().length
+// > 0` — the async DB read is collapsed to the sync bool the detector
+// contract needs via a cached mirror refreshed on every flush settlement
+// (`hasPendingNormalizePile`). The cache starts pessimistic (true) so a
+// boot probe landing before the first DB read still drains; after the first
+// completed flush consideration the mirror reflects reality. A stale-true
+// mirror is HARMLESS (worst case: one no-op flush that returns null on an
+// empty pile — never a missed flush); a stale-false would MISS boot-drain,
+// hence pessimistic start.
+let hasPendingNormalizePile = true;
+
+/** TASK-1402: refresh the boot-drain pile mirror — call after every flush consideration. */
+function refreshPendingPileMirror(pendingCount: number): void {
+	hasPendingNormalizePile = pendingCount > 0;
+}
+
+/**
+ * TASK-1402: the ONE shared T3 drain runner behind BOTH trigger rails.
+ * Collapses concurrent triggers (flip + onOnlineConfirmed on the same
+ * verdict, boot-drain racing a flip) into a single flush run: while a run
+ * is in flight every overlapping trigger awaits the SAME promise instead
+ * of starting a second swap. Sequential triggers (a later back-online
+ * after the first run settled) still run fresh — the gate clears in
+ * `finally`.
+ */
+let flushDrainInFlight: Promise<NormalizeResult | null> | null = null;
+
+export function runFlushDrain(): Promise<NormalizeResult | null> {
+	if (flushDrainInFlight) return flushDrainInFlight;
+	flushDrainInFlight = flushPendingNormalizeOnBackOnline()
+		.then(async (result) => {
+			try {
+				refreshPendingPileMirror((await getPendingNormalizeProofs()).length);
+			} catch {
+				refreshPendingPileMirror(0);
+			}
+			return result;
+		})
+		.catch(async (err) => {
+			try {
+				refreshPendingPileMirror((await getPendingNormalizeProofs()).length);
+			} catch {
+				refreshPendingPileMirror(0);
+			}
+			throw err;
+		})
+		.finally(() => {
+			flushDrainInFlight = null;
+		});
+	return flushDrainInFlight;
+}
+
+/** TASK-1402 (test/ops): true while a T3 drain run is in flight. */
+export function isFlushDrainInFlight(): boolean {
+	return flushDrainInFlight !== null;
+}
+
+/** TASK-1402 (test/ops): reset the drain gate + pile mirror to boot state. */
+export function resetFlushDrainForTests(): void {
+	flushDrainInFlight = null;
+	hasPendingNormalizePile = true;
+}
+
+if (typeof window !== 'undefined') {
+	setPendingPileReader(() => hasPendingNormalizePile);
+	onConnectivityChange((online) => {
+		if (online) void runFlushDrain();
+	});
+	onOnlineConfirmed(() => {
+		void runFlushDrain();
+	});
+}

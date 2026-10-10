@@ -69,8 +69,8 @@ function setDecoded(proofAmounts: number[]): void {
 /** Faithful mock mint: signs EXACTLY the submitted outputs (echo). */
 function echoSwap(): void {
 	vi.mocked(client.swapProofs).mockImplementation(
-		async (_url: string, _inputs: unknown, outputs: Array<{ id: string; amount: number; B_: string }>) => ({
-			signatures: outputs.map((o) => ({ id: o.id, amount: o.amount, C_: '02' + 'a1'.repeat(32) }))
+		async (_url: string, _inputs: unknown, outputs?: Array<{ id: string; amount: number; B_: string }>) => ({
+			signatures: (outputs ?? []).map((o) => ({ id: o.id, amount: o.amount, C_: '02' + 'a1'.repeat(32) }))
 		})
 	);
 }
@@ -150,9 +150,9 @@ describe('TASK-1304: online receive → completeSet(S), counter = outputs.length
 	it('guard (sign > derive) rejects BEFORE counter advance — no proof stored', async () => {
 		echoSwap(); // base echo
 		vi.mocked(client.swapProofs).mockImplementation(
-			async (_url: string, _inputs: unknown, outputs: Array<{ amount: number }>) => ({
+			async (_url: string, _inputs: unknown, outputs?: Array<{ amount: number }>) => ({
 				signatures: [
-					...outputs.map((o) => ({ id: KEYSET_ID, amount: o.amount, C_: '02' + 'a1'.repeat(32) })),
+					...(outputs ?? []).map((o) => ({ id: KEYSET_ID, amount: o.amount, C_: '02' + 'a1'.repeat(32) })),
 					// mint "created" an output the wallet never derived:
 					{ id: KEYSET_ID, amount: 1, C_: '02' + 'bb'.repeat(32) }
 				]
@@ -169,8 +169,8 @@ describe('TASK-1304: online receive → completeSet(S), counter = outputs.length
 	it('guard (sign < derive) refuses misaligned mapping — counter intact', async () => {
 		echoSwap();
 		vi.mocked(client.swapProofs).mockImplementation(
-			async (_url: string, _inputs: unknown, outputs: Array<{ amount: number }>) => ({
-				signatures: outputs.slice(0, outputs.length - 1).map((o) => ({
+			async (_url: string, _inputs: unknown, outputs?: Array<{ amount: number }>) => ({
+				signatures: (outputs ?? []).slice(0, (outputs ?? []).length - 1).map((o) => ({
 					id: KEYSET_ID,
 					amount: o.amount,
 					C_: '02' + 'a1'.repeat(32)

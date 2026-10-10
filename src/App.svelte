@@ -606,11 +606,10 @@
 		animation: banner-in 0.3s ease;
 	}
 
-	@media (prefers-color-scheme: light) {
-		.mint-banner {
-			background: rgba(0, 188, 212, 0.12);
-			color: #008394;
-		}
+	/* TASK-1520: mint-banner ฟัง app theme (ไม่ตาม OS) — :global() กัน tree-shake (pattern TASK-1512). */
+	:global([data-theme='light']) .mint-banner {
+		background: rgba(0, 188, 212, 0.12);
+		color: #008394;
 	}
 
 	.mint-banner-icon {
