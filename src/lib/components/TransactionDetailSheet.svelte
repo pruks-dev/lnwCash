@@ -502,15 +502,24 @@
 				<!-- Row 6: Status -->
 				<div class="detail-field">
 					<span class="field-label">{$_('detail.field_status')}</span>
-					<div class="field-value">
+					<!-- Row 6: Status — TASK-1804 (INTENT-018 P2 · mockup ชุด B · pending ทาง ก):
+				     pending = indicator ส้ม (Time icon + accent + pulse) ตรง History.svelte
+				     .tx-pending-indicator — ไม่ใช่ badge เทา; confirmed/failed = badge โปร่งแสง -->
+				<div class="field-value">
+					{#if tx.status === 'pending'}
+						<span class="status-pending-indicator" aria-label={statusLabel(tx.status)}>
+							<Iconly name="Time" size={14} />
+							<span class="pending-text">{statusLabel(tx.status)}</span>
+						</span>
+					{:else}
 						<span
 							class="status-badge"
 							class:status-confirmed={tx.status === 'confirmed'}
-							class:status-pending={tx.status === 'pending'}
 							class:status-failed={tx.status === 'failed'}
 						>
 							{statusLabel(tx.status)}
 						</span>
+					{/if}
 					</div>
 				</div>
 
@@ -827,24 +836,29 @@
 		flex-shrink: 0;
 	}
 
+	/* ─── Type icon — TASK-1804 (INTENT-018 P2 · mockup ชุด B APPROVED · pending ทาง ก):
+	   soft โปร่งแสงตรง History.svelte file reality — base = dark (default นอก light) +
+	   :global([data-theme]) override ฟัง app theme เท่านั้น (ห้ามตาม OS).
+	   ค่าตรง history: tx-send base rgba(0,188,212,.22)+primary / dark rgba(38,198,218,.28)+
+	   primary-light (History.svelte:595-608); tx-receive rgba(20,184,166,.22)+secondary
+	   ทั้งสอง theme ผ่าน token (History.svelte:600-603). :global() กัน tree-shake (pattern TASK-1512/1520). */
 	.icon-send {
-		background: #00bcd4;
-		color: #fff;
+		background: rgba(38, 198, 218, 0.28);
+		color: var(--color-primary-light);
 	}
 
 	.icon-receive {
-		background: #14b8a6;
-		color: #fff;
+		background: rgba(20, 184, 166, 0.22);
+		color: var(--color-secondary);
 	}
 
-	/* TASK-1520: icon ฟัง app theme (ไม่ตาม OS) — :global() กัน tree-shake (pattern TASK-1512). */
-	:global([data-theme='light']) .icon-send {
-		background: rgba(0, 188, 212, 0.12);
-		color: #00bcd4;
+	:global([data-theme='dark']) .icon-send {
+		background: rgba(38, 198, 218, 0.28);
+		color: var(--color-primary-light);
 	}
-	:global([data-theme='light']) .icon-receive {
-		background: rgba(20, 184, 166, 0.12);
-		color: #14b8a6;
+	:global([data-theme='light']) .icon-send {
+		background: rgba(0, 188, 212, 0.22);
+		color: var(--color-primary);
 	}
 
 	/* ─── Badges ──────────────────────────────────────── */
@@ -859,50 +873,78 @@
 		white-space: nowrap;
 	}
 
-	/* Protocol colors */
+	/* Protocol — TASK-1804: ค่าตรง History.svelte file reality — base = dark (default):
+	   lightning dark rgba(38,198,218,.18)+primary-light / light(base ใน history)
+	   rgba(0,188,212,.25)+primary (History.svelte:611-629);
+	   cashu dark rgba(183,148,244,.18)+protocol-lightning / light rgba(124,58,237,.22)+
+	   protocol-lightning (History.svelte:616-633). ฟัง app theme เท่านั้น. */
 	.protocol-lightning {
-		background: #00bcd4;
+		background: rgba(38, 198, 218, 0.18);
+		color: var(--color-primary-light);
 	}
 
 	.protocol-cashu {
-		background: #8b5cf6;
+		background: rgba(183, 148, 244, 0.18);
+		color: var(--color-protocol-lightning);
 	}
 
-	/* TASK-1520: protocol ฟัง app theme (ไม่ตาม OS) — :global() กัน tree-shake (pattern TASK-1512). */
+	:global([data-theme='dark']) .protocol-lightning {
+		background: rgba(38, 198, 218, 0.18);
+		color: var(--color-primary-light);
+	}
+	:global([data-theme='dark']) .protocol-cashu {
+		background: rgba(183, 148, 244, 0.18);
+		color: var(--color-protocol-lightning);
+	}
 	:global([data-theme='light']) .protocol-lightning {
-		background: rgba(0, 188, 212, 0.12);
-		color: #00bcd4;
+		background: rgba(0, 188, 212, 0.25);
+		color: var(--color-primary);
 	}
 	:global([data-theme='light']) .protocol-cashu {
-		background: rgba(139, 92, 246, 0.12);
-		color: #8b5cf6;
+		background: rgba(124, 58, 237, 0.22);
+		color: var(--color-protocol-lightning);
 	}
 
-	/* Status colors */
+	/* Status — TASK-1804: confirmed rgba(20,184,166,.22)+secondary ทั้งสอง theme ผ่าน token
+	   (History.svelte:683-686 — history ไม่มี light override สำหรับ confirmed);
+	   failed dark rgba(239,83,80,.16)+#ff8a80 (History.svelte:687-690) +
+	   light override rgba(239,68,68,.12)+error (History.svelte:717-720, pattern TASK-1512).
+	   pending ไม่มี badge แล้ว — ใช้ .status-pending-indicator (ทาง ก) ด้านล่าง. */
 	.status-confirmed {
-		background: #14b8a6;
-	}
-
-	.status-pending {
-		background: #94a3b8;
+		background: rgba(20, 184, 166, 0.22);
+		color: var(--color-secondary);
 	}
 
 	.status-failed {
-		background: #ef4444;
+		background: rgba(239, 83, 80, 0.16);
+		color: #ff8a80;
 	}
 
-	/* TASK-1520: status ฟัง app theme (ไม่ตาม OS) — :global() กัน tree-shake (pattern TASK-1512). */
-	:global([data-theme='light']) .status-confirmed {
-		background: rgba(20, 184, 166, 0.12);
-		color: #14b8a6;
-	}
-	:global([data-theme='light']) .status-pending {
-		background: rgba(148, 163, 184, 0.15);
-		color: #64748b;
-	}
 	:global([data-theme='light']) .status-failed {
 		background: rgba(239, 68, 68, 0.12);
-		color: #ef4444;
+		color: var(--color-error);
+	}
+
+	/* Pending indicator (ทาง ก) — ตรง History.svelte:693-711 .tx-pending-indicator +
+	   .pending-text: Time icon + ส้ม accent + pulse 2s — ไม่ใช่ badge เทา. */
+	.status-pending-indicator {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		color: var(--color-accent);
+		animation: pending-pulse 2s ease-in-out infinite;
+	}
+
+	@keyframes pending-pulse {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.5; }
+	}
+
+	.pending-text {
+		font-size: var(--font-size-xs);
+		font-weight: var(--font-weight-medium);
+		color: var(--color-accent);
+		white-space: nowrap;
 	}
 
 	/* ─── Mono text ───────────────────────────────────── */

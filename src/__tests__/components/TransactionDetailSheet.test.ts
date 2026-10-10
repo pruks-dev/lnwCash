@@ -185,10 +185,14 @@ describe('TransactionDetailSheet (TASK-150)', () => {
 		expect(badge).toBeTruthy();
 	});
 
-	it('should display status badge pending', () => {
+	it('should display status pending indicator (field 6: status — TASK-1804 pending ทาง ก)', () => {
 		const { container } = render(TransactionDetailSheet, { tx: mockReceiveTx });
-		const badge = container.querySelector('.status-badge.status-pending');
-		expect(badge).toBeTruthy();
+		const indicator = container.querySelector('.status-pending-indicator');
+		expect(indicator).toBeTruthy();
+		// ไม่ใช่ badge เทาเดิม
+		expect(container.querySelector('.status-badge.status-pending')).toBeNull();
+		// มี Time icon + pending text
+		expect(indicator?.querySelector('.pending-text')).toBeTruthy();
 	});
 
 	// ─── Field: invoice ────────────────────────────
