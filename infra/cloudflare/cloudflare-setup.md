@@ -246,23 +246,23 @@ dig lnw.cash +short
 # ควรตอบด้วย Cloudflare IP (104.x.x.x หรือ 172.x.x.x) — ไม่ใช่ IP VPS จริง
 
 # 2. HTTPS ทำงาน
-curl -I https://lnw.cash/
+curl -I https://wallet.lnw.cash/
 # ควรตอบ HTTP/2 200
 
 # 3. HTTP redirect → HTTPS
 curl -I http://lnw.cash/
-# ควรตอบ 301 redirect ไป https://lnw.cash/
+# ควรตอบ 301 redirect ไป https://wallet.lnw.cash/
 
 # 4. SPA routing ทำงาน
-curl -I https://lnw.cash/wallet/send
+curl -I https://wallet.lnw.cash/wallet/send
 # ควรตอบ 200 (ไม่ใช่ 404)
 
 # 5. Health check
-curl https://lnw.cash/health
+curl https://wallet.lnw.cash/health
 # ควรตอบ {"status":"healthy","version":"..."}
 
 # 6. Cloudflare headers ปรากฏ
-curl -I https://lnw.cash/ 2>&1 | grep -i cf-
+curl -I https://wallet.lnw.cash/ 2>&1 | grep -i cf-
 # ควรเห็น cf-ray, cf-cache-status
 ```
 
