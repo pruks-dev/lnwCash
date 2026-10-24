@@ -179,7 +179,7 @@ describe('TASK-1315: P3 pending-spendability gate + P8 restore immunity', () => 
 		expect(proofBalance.total).toBe(5);
 		expect(proofBalance.proofCount).toBe(2);
 
-		const badge = await getBalance(); // the UI badge source (F003/Receive/Send)
+		const badge = await getBalance(); // the UI badge source (Receive/Send)
 		expect(badge.total).toBe(5);
 		expect(badge.proofCount).toBe(2);
 	}, 15000);

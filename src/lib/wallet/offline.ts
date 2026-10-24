@@ -180,7 +180,7 @@ export function semiVerifyRedeem(tokenString: string): SemiVerifyResult {
  * Connectivity state — single source of truth is the probe-based detector
  * service (`$lib/offline-indicator`). These are THIN RE-EXPORTS: identical
  * signatures, shared state with the app-wide banner (D1 detector).
- * Consumers of the legacy import path (Home.svelte / F003-Balance.svelte)
+ * Consumers of the legacy import path (Home.svelte)
  * automatically see the same detector state.
  */
 export { isOnline, onConnectivityChange } from '../offline-indicator';

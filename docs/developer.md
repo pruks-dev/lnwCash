@@ -22,7 +22,6 @@ src/
 ├── screens/
 │   ├── F001-Register.svelte         # PIN setup / unlock
 │   ├── F002-CreateWallet.svelte     # Wallet name, mint URLs, keyset
-│   ├── F003-Balance.svelte          # Balance display + refresh
 │   ├── F004-Receive.svelte          # LN invoice → ecash mint
 │   ├── F005-Pay.svelte              # LN invoice payment (melt)
 │   ├── F006-Transfer.svelte         # P2P ecash send/receive + QR
@@ -246,7 +245,6 @@ src/
 │   └── screens/                 # Screen integration tests
 │       ├── F001-Register.test.ts
 │       ├── F002-CreateWallet.test.ts
-│       ├── F003-Balance.test.ts
 │       ├── F004-Receive.test.ts
 │       ├── F005-Pay.test.ts
 │       ├── F006-Transfer.test.ts
