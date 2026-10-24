@@ -218,11 +218,18 @@ describe('MintSettings (+page.svelte)', () => {
 		expect(container.textContent).toContain(DEFAULT_URL);
 		expect(container.textContent).toContain('Nutshell/0.20.1');
 
-		// Default badge
-		expect(container.textContent).toContain('mint.settings.default');
+		// R13 rework (rev57: ถอดป้าย default ออกทั้ง UI) — การ์ด active
+		// ไม่มีป้าย default เหลือ มีแค่ป้าย active + วงกลม logo/fallback ซ้ายสุด
+		expect(container.textContent).not.toContain('mint.settings.default');
 
 		// Active badge
 		expect(container.textContent).toContain('mint.settings.active');
+
+		// Logo/fallback circle replaces the removed default badge
+		// (mock mint has no icon_url → .active-fallback with initial "L")
+		expect(
+			container.querySelector('.active-logo, .active-fallback')
+		).toBeTruthy();
 	});
 
 	it('shows supported NUTs for default mint', () => {
@@ -502,12 +509,20 @@ describe('MintSettings (+page.svelte)', () => {
 
 		const { container } = render(MintSettings);
 
-		// Default badge should appear in the list item for default mint
+		// R13 rework (rev57: ถอดป้าย/จุด default ออกทั้ง UI) — แถวลิสต์
+		// ไม่มีป้าย default เหลือ ใช้วงกลม logo/fallback ลายเดียวกับ active/discover
 		const badges = container.querySelectorAll('.badge');
 		const defaultBadgeTexts = Array.from(badges).filter(
 			b => b.textContent?.includes('mint.settings.default')
 		);
-		expect(defaultBadgeTexts.length).toBeGreaterThanOrEqual(1);
+		expect(defaultBadgeTexts.length).toBe(0);
+		expect(container.textContent).not.toContain('mint.settings.default');
+
+		// List row for the default mint still renders with logo/fallback circle
+		// (mock mint has no icon_url → .mint-fallback with initial "L")
+		expect(
+			container.querySelector('.mint-logo, .mint-fallback')
+		).toBeTruthy();
 	});
 
 	// ── Additional: Modal open/close ────────────────────────────
