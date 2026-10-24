@@ -95,6 +95,22 @@ vi.mock('$lib/wallet/mint-validation', () => ({
 	validateMintUrl: vi.fn()
 }));
 
+// TASK-3801 R4: mock only the network edge of the NIP-87 client —
+// SEED_MINT_INFO / normalizeMintUrl / DEFAULT_TOP_N stay REAL so the seed
+// zone + normalize assertions test production code, not mocks.
+let mockLive: DiscoveredMint[] = [];
+let mockDiscoverError: string | null = null;
+vi.mock('$lib/nostr/mint-discover', async (importOriginal) => {
+	const orig = await importOriginal<typeof import('$lib/nostr/mint-discover')>();
+	return {
+		...orig,
+		discoverMints: vi.fn(async () => {
+			if (mockDiscoverError) throw new Error(mockDiscoverError);
+			return [...mockLive];
+		})
+	};
+});
+
 vi.mock('$lib/wallet/store', () => ({
 	getAllMintConfigs: vi.fn(() => [...mockMints]),
 	removeMintConfig: vi.fn((url: string) => {
@@ -144,6 +160,36 @@ vi.mock('$lib/wallet/store', () => ({
 // Import mocked module for test control
 import { discoverMintEndpoints } from '$lib/wallet/discovery';
 import { validateMintUrl } from '$lib/wallet/mint-validation';
+import { discoverMints, type DiscoveredMint } from '$lib/nostr/mint-discover';
+
+function liveMint(partial: Partial<DiscoveredMint> & { url: string }): DiscoveredMint {
+	return {
+		name: null,
+		picture: null,
+		nuts: [],
+		network: '',
+		reviewCount: 0,
+		uniqueReviewers: 0,
+		rating: null,
+		ratingCount: 0,
+		infoOk: false,
+		relaysSeen: [],
+		score: 0,
+		...partial
+	};
+}
+
+async function openAddModal(container: HTMLElement): Promise<void> {
+	const addButton = screen.getByText(/mint\.settings\.add/);
+	await fireEvent.click(addButton);
+	await waitFor(() => {
+		expect(container.querySelector('[role="dialog"]')).toBeTruthy();
+	});
+	// discoverMints() resolves on modal open — flush it
+	await waitFor(() => {
+		expect(discoverMints as ReturnType<typeof vi.fn>).toHaveBeenCalled();
+	});
+}
 
 // ─── Tests ─────────────────────────────────────────────────────
 
@@ -151,6 +197,10 @@ describe('MintSettings (+page.svelte)', () => {
 	beforeEach(() => {
 		resetMocks();
 		localStorage.clear();
+		mockLive = [];
+		mockDiscoverError = null;
+		// drop leftover once-queues so a failing tap can't leak a resolve into the next test
+		(validateMintUrl as ReturnType<typeof vi.fn>).mockReset();
 	});
 
 	afterEach(() => {
@@ -516,5 +566,185 @@ describe('MintSettings (+page.svelte)', () => {
 		await waitFor(() => {
 			expect(container.textContent).toContain('Custom Mint');
 		});
+	});
+
+	// ── TASK-3801 R5 — single-list + dedup + no dead zone ──────────
+	// rev19+rev20: ลิสต์เดียวไม่แยกที่มา, dedup canonical (live ชนะ),
+	// sort มีรีวิว count desc แล้ว seed-only ต่อท้าย, ไม่มีโซนแยก.
+
+	it('R5: single list renders seed metadata with ZERO live /v1/info in list-path', async () => {
+		mockLive = [];
+		const valMock = validateMintUrl as ReturnType<typeof vi.fn>;
+
+		const { container } = render(MintSettings);
+		await openAddModal(container);
+
+		// single list: 31 total, no zone labels anywhere
+		await waitFor(() => {
+			expect(container.querySelectorAll('.discover-row').length).toBe(7);
+		});
+		expect(container.textContent).not.toMatch(/live from relays/i);
+		expect(container.textContent).not.toMatch(/seed online/i);
+		expect(container.textContent).not.toMatch(/offline/i);
+		// expand to reach the pathed mints
+		await fireEvent.click(screen.getByText('Show more (+24)'));
+		await waitFor(() => {
+			expect(container.textContent).toContain('Minibits mint');
+		});
+		expect(container.textContent).toContain('https://mint.minibits.cash/Bitcoin');
+		expect(container.textContent).not.toContain('https://mint.minibits.cash/Bitcoin/');
+		expect(container.textContent).toContain('https://satscribe.me/cashu');
+		// list-path performed no validation fetch — tap-only contract holds
+		expect(valMock).not.toHaveBeenCalled();
+		expect(discoverMints as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+	});
+
+	it('R5: no rank numbers anywhere (rev14 cut holds)', async () => {
+		mockLive = [
+			liveMint({ url: 'https://mint-a.example', name: 'Mint A', reviewCount: 9, infoOk: true }),
+			liveMint({ url: 'https://mint-b.example', name: 'Mint B', reviewCount: 3, infoOk: true })
+		];
+		const { container } = render(MintSettings);
+		await openAddModal(container);
+
+		await waitFor(() => {
+			// 2 live + 29 seed-only = 31 in one list
+			expect(container.querySelectorAll('.discover-row').length).toBe(7);
+		});
+		expect(container.querySelectorAll('.discover-rank').length).toBe(0);
+		expect(container.textContent).not.toMatch(/live from relays/i);
+		expect(container.textContent).not.toMatch(/seed online/i);
+		expect(container.textContent).not.toMatch(/offline/i);
+	});
+
+	it('R5: live and seed dedupe by canonical URL — live wins, no double rows', async () => {
+		mockLive = [
+			liveMint({
+				url: 'https://mint.minibits.cash/Bitcoin/',
+				name: 'Minibits mint',
+				reviewCount: 5,
+				infoOk: true
+			})
+		];
+		const { container } = render(MintSettings);
+		await openAddModal(container);
+
+		await fireEvent.click(screen.getByText('Show more (+24)'));
+		await waitFor(() => {
+			expect(container.querySelectorAll('.discover-row').length).toBe(31);
+		});
+		// canonical URL appears exactly once (live row kept the review count)
+		const hits = container.textContent?.match(/mint\.minibits\.cash\/Bitcoin/g) ?? [];
+		expect(hits.length).toBe(1);
+		expect(container.textContent).toContain('5 reviews');
+	});
+
+	it('R5: entries without metadata are hidden — no badge path, never shown', async () => {
+		mockLive = [
+			liveMint({ url: 'https://mint-a.example', name: 'Mint A', reviewCount: 9, infoOk: true }),
+			liveMint({ url: 'https://ghost-mint.example', name: null, reviewCount: 1, infoOk: false })
+		];
+		const { container } = render(MintSettings);
+		await openAddModal(container);
+
+		await waitFor(() => {
+			expect(container.querySelectorAll('.discover-row').length).toBeGreaterThan(0);
+		});
+		// ghost row hidden entirely (record-only), Mint A visible
+		expect(container.textContent).toContain('Mint A');
+		expect(container.textContent).not.toContain('ghost-mint.example');
+		expect(container.textContent).not.toMatch(/offline/i);
+	});
+
+	it('R5: reviewed sort by count desc, seed-only tail', async () => {
+		mockLive = [
+			liveMint({ url: 'https://mint-b.example', name: 'Mint B', reviewCount: 3, infoOk: true }),
+			liveMint({ url: 'https://mint-a.example', name: 'Mint A', reviewCount: 9, infoOk: true })
+		];
+		const { container } = render(MintSettings);
+		await openAddModal(container);
+
+		await waitFor(() => {
+			expect(container.querySelectorAll('.discover-row').length).toBe(7);
+		});
+		const names = Array.from(container.querySelectorAll('.discover-name')).map((el) => el.textContent);
+		// reviewed first by count desc: A(9) before B(3), seed-only (0) after
+		expect(names[0]).toBe('Mint A');
+		expect(names[1]).toBe('Mint B');
+	});
+
+	it('R5: tap seed pathed row validates CANONICAL url (path kept, fetch hits right target)', async () => {
+		mockLive = [];
+		const valMock = validateMintUrl as ReturnType<typeof vi.fn>;
+		valMock.mockResolvedValueOnce({
+			success: true,
+			config: { ...CUSTOM_MINT, url: 'https://satscribe.me/cashu', name: 'SatScribe Mint' },
+			nuts: ['4']
+		});
+
+		const { container } = render(MintSettings);
+		await openAddModal(container);
+
+		await fireEvent.click(screen.getByText('Show more (+24)'));
+		await waitFor(() => {
+			expect(container.textContent).toContain('https://satscribe.me/cashu');
+		});
+		const rows = Array.from(container.querySelectorAll<HTMLButtonElement>('.discover-row'));
+		const target = rows.find((r) => r.textContent?.includes('https://satscribe.me/cashu'));
+		expect(target).toBeTruthy();
+		await fireEvent.click(target!);
+
+		// canonical: path preserved (→ /cashu/v1/info = 200), no trailing slash
+		await waitFor(() => {
+			expect(valMock).toHaveBeenCalledWith('https://satscribe.me/cashu');
+		});
+	});
+
+	it('R5: relay death still shows single list + manual stays usable (silent partial)', async () => {
+		mockDiscoverError = 'all relays down';
+		const valMock = validateMintUrl as ReturnType<typeof vi.fn>;
+		valMock.mockResolvedValueOnce({ success: false, error: 'bad url' });
+
+		const { container } = render(MintSettings);
+		await fireEvent.click(screen.getByText(/mint\.settings\.add/));
+		await waitFor(() => {
+			expect(container.querySelector('[role="dialog"]')).toBeTruthy();
+		});
+
+		// one quiet banner for the dead relays… but the single list survives on seed
+		await waitFor(() => {
+			expect(container.querySelectorAll('.discover-row').length).toBe(7);
+		});
+		expect(container.textContent).toContain('21Mint');
+		expect(container.textContent).not.toMatch(/offline/i);
+		// …and manual flow still works
+		const urlInput = container.querySelector('input[type="text"]') as HTMLInputElement;
+		await fireEvent.input(urlInput, { target: { value: 'not-a-mint' } });
+		await fireEvent.click(screen.getByText('mint.settings.validate'));
+		await waitFor(() => {
+			expect(container.textContent).toContain('bad url');
+		});
+	});
+
+	it('R5: single more/less expands the full 31 without rank or endorsement claims', async () => {
+		mockLive = [];
+		const { container } = render(MintSettings);
+		await openAddModal(container);
+
+		await waitFor(() => {
+			expect(container.textContent).toContain('Show more (+24)');
+		});
+		expect(container.querySelectorAll('.discover-row').length).toBe(7);
+		await fireEvent.click(screen.getByText('Show more (+24)'));
+		await waitFor(() => {
+			expect(container.querySelectorAll('.discover-row').length).toBe(31);
+		});
+		expect(container.textContent).toContain('Show less');
+		await fireEvent.click(screen.getByText('Show less'));
+		await waitFor(() => {
+			expect(container.querySelectorAll('.discover-row').length).toBe(7);
+		});
+		// no endorsement language anywhere on screen
+		expect(container.textContent).not.toMatch(/verif|endorse|certif|trusted/i);
 	});
 });
