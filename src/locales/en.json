@@ -63,7 +63,6 @@
 	"screen.balance.mint_breakdown": "Per-mint Breakdown",
 	"screen.home.title": "LNWCASH",
 	"screen.home.total_balance": "Total Balance",
-	"screen.home.active_mint": "Mint:",
 	"screen.home.quick_actions": "Quick Actions",
 	"screen.home.recent_tx": "Recent Transactions",
 	"screen.home.no_tx": "No transactions yet",

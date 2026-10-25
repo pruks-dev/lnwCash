@@ -12,7 +12,7 @@
 	import { isOnline, onConnectivityChange } from '$lib/wallet/offline';
 	import { navigateTo } from '$lib/router';
 	import type { ScreenKey } from '$lib/router';
-	import { activeMintStore, getActiveMintUrl, getMintConfig } from '$lib/wallet/store';
+	import { activeMintStore, getActiveMintUrl } from '$lib/wallet/store';
 	import { mintConfirmed } from '$lib/stores/mint-events';
 
 	let _lastBalance: number = Number(sessionStorage.getItem('lnw_last_balance') || 0);
@@ -138,21 +138,6 @@
 		return new Intl.NumberFormat().format(amount);
 	}
 
-	// TASK-4001 (INTENT-040, mockup R6 rev16 APPROVE): Mint: line shows mint
-	// NAME (config name || short host fallback — ลอก mint/+page.svelte:424),
-	// full URL lives in the title attr. Reactive via currentMintUrl (:78 subscribe).
-	function shortMintHost(url: string): string {
-		try {
-			return new URL(url).host;
-		} catch {
-			return url;
-		}
-	}
-
-	let activeMintName: string = $derived(
-		getMintConfig(currentMintUrl)?.name?.trim() || shortMintHost(currentMintUrl)
-	);
-
 	function estimateFiat(sats: number): string {
 		const thb = Math.round(sats * 0.015);
 		return thb.toLocaleString();
@@ -191,8 +176,6 @@
 			<div class="balance-section">
 				<Heading level="h2" align="center">{$_('screen.home.total_balance')}</Heading>
 
-				<!-- TASK-4001 R5 rev13: state wrapper (ตรง mockup #home-state) — ยอด→fiat 8px + fiat กลางทุก state -->
-				<div class="home-state">
 				{#if loading}
 					<Body size="lg" weight="semibold" color="disabled" align="center">
 						{$_('common.loading')}
@@ -212,10 +195,6 @@
 						≈ {estimateFiat(displayBalance)} THB
 					</div>
 				{/if}
-				</div>
-
-				<!-- TASK-4001 (INTENT-040, mockup R3/R10 APPROVE): Mint: บรรทัดแยกเหนือ badge (above — ไม่ใช่ใน/ใต้ badge) -->
-				<p class="mint-above"><span>{$_('screen.home.active_mint')}</span>&nbsp;<strong class="mint-name" title={currentMintUrl}>{activeMintName}</strong></p>
 
 				<div class="balance-status">
 					{#if online}
@@ -304,18 +283,7 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		/* TASK-4001 R5 (mockup APPROVE): gap→0 + ระยะ explicit รายคู่ (สเกล 8/16/4) */
-		gap: 0;
-	}
-
-	/* TASK-4001 R5 rev13 (ตรง mockup #home-state): heading→state 8px + ยอด→fiat 8px + กลางทุก state */
-	.home-state {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
 		gap: var(--space-sm);
-		margin-top: var(--space-sm);
-		text-align: center;
 	}
 
 	.balance-amount {
@@ -343,25 +311,8 @@
 	.fiat-estimate {
 		font-size: var(--font-size-sm);
 		color: var(--color-text-secondary);
-		/* TASK-4001 R5 rev13: fiat (THB) กลาง — ตรง mockup APPROVE */
-		text-align: center;
 	}
 
-	/* TASK-4001 rev8/R5 rev14-15 (mockup APPROVE): Mint: บรรทัดแยกเหนือ badge
-	   (above — ไม่ใช่ใน badge) — fiat→Mint 16px (แยกกลุ่ม meta) */
-	.mint-above {
-		margin-top: var(--space-md);
-		margin-bottom: 0;
-		font-size: var(--font-size-sm);
-		color: var(--color-text-secondary);
-	}
-
-	.mint-above strong {
-		font-weight: var(--font-weight-semibold);
-		color: var(--color-text);
-	}
-
-	/* TASK-4001 R5 rev15: Mint→badge 4px ชิด (gap section เป็น 0 แล้ว) */
 	.balance-status {
 		margin-top: var(--space-xs);
 	}

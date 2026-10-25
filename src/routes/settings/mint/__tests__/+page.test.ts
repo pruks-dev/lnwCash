@@ -448,7 +448,7 @@ describe('MintSettings (+page.svelte)', () => {
 		});
 	});
 
-	it('R5 rev48: active custom card has no remove button (active never removable via card)', async () => {
+	it('falls back to default when active custom mint is removed', async () => {
 		mockMints = [
 			{ ...DEFAULT_MINT, last_info_fetch: Date.now() },
 			{ ...CUSTOM_MINT, last_info_fetch: Date.now() }
@@ -459,19 +459,13 @@ describe('MintSettings (+page.svelte)', () => {
 
 		const { container } = render(MintSettings);
 
-		// R5 rev48 (Commander: active ห้ามลบ): the active card has NO remove
-		// button at all — not even for a non-default active mint. Removal of a
-		// custom mint happens only in the list after switching away; the
-		// handleRemoveMint fallback branch (activeMintUrl === url → default)
-		// stays in code untouched (INTENT-038 forbidden).
+		// Remove the active custom mint
+		const removeBtn = screen.getByText('mint.settings.remove');
+		await fireEvent.click(removeBtn);
+
 		await waitFor(() => {
-			expect(container.querySelector('.active-head')).not.toBeNull();
+			expect(localStorage.getItem('lnwcash_active_mint')).toBe(DEFAULT_URL);
 		});
-		expect(container.querySelector('.active-head')?.querySelector('button')).toBeNull();
-		expect(container.querySelector('.active-head .active-side')?.querySelector('button')).toBeNull();
-		expect(container.querySelector('.active-head .active-side')?.textContent).toContain(
-			'mint.settings.active'
-		);
 	});
 
 	// ── AC: Default mint cannot be removed ──────────────────────
@@ -487,28 +481,19 @@ describe('MintSettings (+page.svelte)', () => {
 
 		const { container } = render(MintSettings);
 
-		// R5 rev48: active card (custom) has NO remove + default list row has
-		// NO remove and NO spacer — so zero remove buttons on this screen.
-		// (List remove for non-default rows is covered by 'removes a custom
-		// mint from the list' with active=default.)
+		// Default should have 'Default' badge, not 'Remove' button
+		// The only remove button should be for the custom mint
 		const removeButtons = container.querySelectorAll('button');
-		const removeTexts = Array.from(removeButtons).filter(b => b.textContent?.includes('mint.settings.remove'));
-		expect(removeTexts.length).toBe(0);
-		expect(container.querySelector('.row-spacer')).toBeNull();
-	});
+		let hasRemoveOnDefault = false;
 
-	it('keeps exactly one list remove button when custom mint is inactive (R5: list remove stays)', () => {
-		mockMints = [
-			{ ...DEFAULT_MINT, last_info_fetch: Date.now() },
-			{ ...CUSTOM_MINT, last_info_fetch: Date.now() }
-		];
+		removeButtons.forEach(btn => {
+			if (btn.textContent?.includes('mint.settings.remove')) {
+				// Each remove button is in a list item with a mint
+				hasRemoveOnDefault = true;
+			}
+		});
 
-		// Default active → custom appears in the list with its remove ghost
-		localStorage.setItem('lnwcash_active_mint', DEFAULT_URL);
-
-		const { container } = render(MintSettings);
-
-		const removeButtons = container.querySelectorAll('.mint-list button');
+		// There should be only one Remove button (for custom mint)
 		const removeTexts = Array.from(removeButtons).filter(b => b.textContent?.includes('mint.settings.remove'));
 		expect(removeTexts.length).toBe(1);
 	});
