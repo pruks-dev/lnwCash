@@ -27,6 +27,11 @@
 	} from '$lib/wallet/store';
 	import { DEFAULT_MINT_CONFIG, type MintConfig } from '$lib/wallet/config';
 	import { validateMintUrl } from '$lib/wallet/mint-validation';
+	// TASK-4002 (INTENT-040 R10+R14 APPROVE rev26+rev31): per-mint spendable
+	// balance for the active-card badge + every list row. SPENDABLE-ONLY
+	// (INTENT-015 — pending/failed excluded inside proofsDb/balance;
+	// UI uses the numbers verbatim, never re-filters).
+	import { getMintBalances } from '$lib/wallet/balance';
 	import Input from '$lib/components/ui/Input.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
@@ -42,6 +47,42 @@
 	let activeMintUrl: string = $state(getActiveMintUrl());
 	let loading: boolean = $state(false);
 	let error: string = $state('');
+
+	// ─── Per-mint balances (TASK-4002 — SPENDABLE-ONLY) ──────────
+	// Single batched read (one IndexedDB pass — safe for many mints +
+	// offline; no network). Loading → skeleton pill; error (e.g. DB
+	// unavailable) → badge hidden (never show a stale/wrong number).
+	let mintBalances: Record<string, number> = $state({});
+	let balancesLoading: boolean = $state(true);
+	let balancesError: string = $state('');
+
+	async function loadBalances(): Promise<void> {
+		balancesLoading = true;
+		balancesError = '';
+		try {
+			const list = await getMintBalances();
+			const next: Record<string, number> = {};
+			for (const b of list) next[b.mintUrl] = b.amount;
+			mintBalances = next;
+		} catch (e) {
+			balancesError = e instanceof Error ? e.message : 'balance load failed';
+			mintBalances = {};
+		} finally {
+			balancesLoading = false;
+		}
+	}
+
+	// Exact-URL lookup (proofs carry the same config URL). Returns null
+	// while loading / on error so callers render skeleton / nothing.
+	function mintBalance(url: string): number | null {
+		if (balancesLoading || balancesError) return null;
+		return mintBalances[url] ?? 0;
+	}
+
+	// Same grouping as Home.svelte formatSat — no new format util.
+	function formatSats(n: number): string {
+		return new Intl.NumberFormat().format(n);
+	}
 
 	// Add/Edit Modal state
 	let showAddModal: boolean = $state(false);
@@ -240,6 +281,7 @@
 
 	$effect(() => {
 		loadMints();
+		void loadBalances();
 	});
 
 	function loadMints(): void {
@@ -408,7 +450,11 @@
 	<!-- Active Mint Card -->
 	{#each mints.filter(m => isActiveMint(m.url)) as mint (mint.url)}
 		<Card variant="basic" padding="md">
-			<div class="active-mint-header">
+			<!-- R5 rev48 REWORK (Commander verbatim: active ห้ามลบ):
+			     ถอดปุ่มลบออกจากการ์ด active ทั้งหมด — side เหลือ Badge ตัวเดียว.
+			     ลบใน list คงเดิม + handler (handleRemoveMint/isDefaultMint) เดิม ไม่แตะ. -->
+			<div class="active-head">
+				<div class="active-id">
 				{#if activeIconUrl(mint)}
 					<img
 						class="active-logo"
@@ -421,13 +467,29 @@
 				{/if}
 				<div class="active-mint-text">
 					<div class="mint-name-row">
-						<h2 class="mint-name">{mint.name || mint.url}</h2>
+						<h2 class="mint-name" title={mint.name || mint.url}>{mint.name || mint.url}</h2>
+						<!-- TASK-4002 (INTENT-040 R14 APPROVE rev30+rev31): Balance เป็น
+						     badge เล็กใสข้างชื่อ — row เดียวกับ mint-name (สไตล์เดียวกับ
+						     list — สีเดียว primary ใส). SPENDABLE-ONLY (INTENT-015).
+						     loading → skeleton; error → ซ่อน (ไม่โชว์เลขผิด). -->
+						{#if balancesLoading}
+							<span
+								class="bal-badge bal-skeleton"
+								role="status"
+								aria-label={$_('common.loading')}
+							></span>
+						{:else if mintBalance(mint.url) !== null}
+							<span class="bal-badge">{formatSats(mintBalance(mint.url) ?? 0)} {$_('screen.balance.sats')}</span>
+						{/if}
 						<!-- R12 rework (rev57 Commander verbatim): ถอดป้าย default ออกทั้ง UI —
 						     mint บอสเหมือนเจ้าอื่น ไม่บอกว่าเป็น default. logic หลังบ้าน
 						     (isDefaultMint/getDefaultMintUrl/setDefault) คงเดิม 100%. -->
-						<Badge variant="success" size="sm">{$_('mint.settings.active')}</Badge>
 					</div>
-					<p class="mint-url">{mint.url}</p>
+					<p class="mint-url" title={mint.url}>{mint.url}</p>
+				</div>
+				</div>
+				<div class="active-side">
+					<Badge variant="success" size="sm">{$_('mint.settings.active')}</Badge>
 				</div>
 			</div>
 			<div class="mint-details">
@@ -455,18 +517,6 @@
 				</div>
 			{/if}
 			</div>
-			{#if !isDefaultMint(mint.url)}
-				<div class="active-mint-actions">
-					<Button
-						variant="ghost"
-						size="sm"
-						ariaLabel={$_('mint.settings.remove') + ' ' + mint.url}
-						onclick={() => handleRemoveMint(mint)}
-					>
-						{#snippet children()}{$_('mint.settings.remove')}{/snippet}
-					</Button>
-				</div>
-			{/if}
 		</Card>
 	{/each}
 
@@ -489,9 +539,8 @@
 			</Card>
 		{:else}
 			{#each mints.filter(m => !isActiveMint(m.url)) as mint (mint.url)}
+				<!-- TASK-4002 (INTENT-040 R10+R11 APPROVE rev26-28+rev31) + R2 rev36 REWORK (ชื่อ/URL ยาวตัด ellipsis ลอก ListItem title/subtitle — การ์ด/ลิสต์ไม่ขยายขวา): body top row name + Balance badge + bottom row url ellipsis (title attr เก็บ url เต็ม) -- trailing remove ghost only. title/subtitle props unused (flat render cannot pair badge) -- children snippet instead (ListItem body is already column). -->
 				<ListItem
-					title={mint.name || mint.url}
-					subtitle={mint.url}
 					active={false}
 					onclick={() => handleSwitchMint(mint)}
 				>
@@ -511,6 +560,21 @@
 							<span class="mint-fallback" aria-hidden="true">{activeInitial(mint)}</span>
 						{/if}
 					{/snippet}
+					{#snippet children()}
+						<span class="row-top">
+							<span class="row-name" title={mint.name || mint.url}>{mint.name || mint.url}</span>
+							{#if balancesLoading}
+								<span
+									class="bal-badge bal-skeleton"
+									role="status"
+									aria-label={$_('common.loading')}
+								></span>
+							{:else if mintBalance(mint.url) !== null}
+								<span class="bal-badge">{formatSats(mintBalance(mint.url) ?? 0)} {$_('screen.balance.sats')}</span>
+							{/if}
+						</span>
+						<span class="row-url" title={mint.url}>{mint.url}</span>
+					{/snippet}
 					{#snippet trailing()}
 						<div class="mint-actions">
 							{#if !isDefaultMint(mint.url)}
@@ -526,6 +590,7 @@
 									{#snippet children()}{$_('mint.settings.remove')}{/snippet}
 								</Button>
 							{/if}
+							<!-- R5 rev48: .row-spacer ถอดทิ้งทั้ง element — แถว default ไม่ต้องจองที่ (setting ไม่มีของแบบนี้). -->
 						</div>
 					{/snippet}
 				</ListItem>
@@ -601,7 +666,7 @@
 								{:else}
 									<span class="validated-fallback" aria-hidden="true">{previewInitial}</span>
 								{/if}
-								<p class="validated-name"><strong>{validatedConfig.name || validatedConfig.url}</strong></p>
+								<p class="validated-name" title={validatedConfig.name || validatedConfig.url}><strong>{validatedConfig.name || validatedConfig.url}</strong></p>
 							</div>
 							{#if validatedConfig.version}
 								<p class="validated-version">{$_('mint.settings.version')}: {validatedConfig.version}</p>
@@ -722,13 +787,41 @@
 </Modal>
 
 <style>
+	/* R4 rev42+rev44 REWORK (ตัด padding ซ้อน — route นี้ไม่มีใช้เดี่ยว):
+	   MintSettings ฝังใน .settings-screen (Settings.svelte sub-view Mint Manage) —
+	   กรอบนอกคุมเองแล้ว (max-width 480px + margin auto + padding md ที่
+	   Settings.svelte:843-846) กรอบในจึง padding 0 + max-width none —
+	   ไม่เบิ้ล 16px ไม่ล็อกซ้ำ การ์ด/List ยืดตามกรอบนอกเอง. */
 	.mint-settings {
-		padding: var(--space-md);
+		padding: 0;
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-md);
-		max-width: 600px;
-		margin: 0 auto;
+		max-width: none;
+		/* R6 rev51 ROOT FLOOR-2 (chromium พิสูจน์: margin 0 auto ตัวเดียวทำ
+		   doc 1763px — auto margin ยกเลิก stretch ของ column flex item ทำให้
+		   .mint-settings กว้างเท่า max-content (ชื่อยาว nowrap) ไม่หดตามจอ:
+		   เอา auto ออก → stretch กลับมา 358px ที่ viewport 390 (การ์ดเต็มกรอบ
+		   เหมือน setting — ตรง intent R4 "ยืดตามกรอบนอกเอง" ที่ margin auto
+		   ขัดไว้; จอกว้างก็เต็ม 448 ไม่หดกลาง — ปุ่ม add จัดกลางในตัวเองอยู่แล้ว). */
+		margin: 0;
+		/* R6 rev51 ROOT FLOOR (Commander verbatim <390px ไม่หด — พิสูจน์ด้วย
+		   chromium จริง): .mint-settings เป็น flex item ของ .settings-screen
+		   (column) — min-width auto = หดต่ำกว่า min-content ไม่ได้ (ชื่อยาว
+		   nowrap ดัน 1747px) เติม min-width 0 ปลดล็อกให้หดตามกรอบนอก. */
+		min-width: 0;
+	}
+
+	/* R6 rev51 COLUMN FLOOR (คอลัมน์เดียวกัน — card/list เป็น flex item ของ
+	   .mint-settings ที่เป็น column): min-width auto ค้ำเหมือนกัน เติม 0 ให้
+	   หดได้ (Card เป็น shared component — override scoped เฉพาะหน้านี้ผ่าน
+	   :global ไม่แตะ Card.svelte; .mint-list/.add-mint-section ของหน้านี้เอง).
+	   ครบแล้ว chain 390px หดทุกชั้น: screen 480cap → settings 0 → card/list 0
+	   → row items 0 (R2-R5) + text ellipsis + chrome shrink-0. */
+	.mint-settings > :global(.card),
+	.mint-list,
+	.add-mint-section {
+		min-width: 0;
 	}
 
 	.error-text {
@@ -737,11 +830,35 @@
 		font-size: var(--font-size-sm);
 	}
 
-	.active-mint-header {
+	/* R5 rev48 REWORK (Commander verbatim: active ห้ามลบ):
+	   .active-head flex row — ซ้าย logo+ชื่อ/url (.active-id flex 1 1 auto min-width 0) + ขวา Badge active ตัวเดียว
+	   (.active-side flex-shrink 0 — ปุ่มลบถอดออกจากการ์ดทั้งหมด; ลบใน list คงเดิม).
+	   metrics ลอก mockup R7 (gap md/side gap sm) — tokens ล้วน ไม่ hardcode. */
+	.active-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-md);
+		min-width: 0;
+		margin-bottom: var(--space-sm);
+	}
+
+	.active-id {
 		display: flex;
 		align-items: center;
 		gap: var(--space-sm);
-		margin-bottom: var(--space-sm);
+		flex: 1 1 auto;
+		min-width: 0;
+		text-align: left;
+	}
+
+	/* R6 rev51: ลอก ListItem .list-item-trailing ตรงๆ (shrink-0 — chrome ขวาไม่โดนบีบ). */
+	.active-side {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		gap: var(--space-sm);
+		flex-shrink: 0;
 	}
 
 	/* R11 active logo: วงกลม 36px เท่าลิสต์ (.mint-logo) ซ้ายสุดข้างชื่อ+url —
@@ -772,14 +889,20 @@
 	.active-mint-text {
 		flex: 1 1 auto;
 		min-width: 0;
+		overflow: hidden;
 	}
 
+	/* TASK-4002 (INTENT-040 R13+R14 APPROVE rev29-31): row \u0e40\u0e14\u0e35\u0e22\u0e27\u0e01\u0e31\u0e1a mint-name + gap xs + badge \u0e40\u0e25\u0e47\u0e01\u0e43\u0e2a color-mix 14% + \u0e02\u0e36\u0e49\u0e19 1px (\u0e40\u0e2b\u0e21\u0e37\u0e2d\u0e19 list \u2014 \u0e2a\u0e35\u0e40\u0e14\u0e35\u0e22\u0e27 primary \u0e43\u0e2a). */
+	/* R6 rev51 (Commander verbatim floor <390px): เติม max-width 100% ลอก R3 — text chain หดไม่ล้นขวา. */
 	.mint-name-row {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
+		gap: var(--space-xs);
 		flex-wrap: wrap;
 		margin-bottom: var(--space-xs);
+		min-width: 0;
+		max-width: 100%;
+		overflow: hidden;
 	}
 
 	.mint-name {
@@ -787,13 +910,21 @@
 		font-weight: var(--font-weight-semibold);
 		margin: 0;
 		color: var(--color-text);
+		flex: 0 1 auto;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.mint-url {
 		font-size: var(--font-size-sm);
 		color: var(--color-text-secondary);
 		margin: 0;
-		word-break: break-all;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.mint-details {
@@ -805,28 +936,38 @@
 		border-top: 1px solid var(--color-divider);
 	}
 
+	/* R4 rev42+rev44 REWORK (ผ่อน floors — detail chain เหลือแค่ ellipsis กันดัน):
+	   .detail-row/.detail-value/.nuts-list/.detail-label min-width 0
+	   (หดได้ไม่ค้ำการ์ด) + value ตัด ellipsis ขวา — ไม่เหลือ floor ค้ำบวม.
 	.detail-row {
 		display: flex;
 		align-items: flex-start;
 		gap: var(--space-sm);
+		min-width: 0;
 	}
 
+	/* R4 rev42+rev44 REWORK: label min-width 0 (จาก 7rem R8) — ผ่อน floor ค้ำบวม, flex-shrink 0 คง (ตัวอักษรไม่โดนบีบ), value ellipsis รับแทน. */
 	.detail-label {
 		font-size: var(--font-size-sm);
 		color: var(--color-text-secondary);
-		min-width: 100px;
+		min-width: 0;
 		flex-shrink: 0;
 	}
 
 	.detail-value {
 		font-size: var(--font-size-sm);
 		color: var(--color-text);
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.nuts-list {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 4px;
+		min-width: 0;
 	}
 
 	.add-mint-section {
@@ -846,16 +987,113 @@
 
 	.mint-list :global(.list-item) {
 		border-bottom: 1px solid var(--color-divider);
+		/* R6 rev51 ROW FLOOR: .list-item เป็น flex item ของ .mint-list (column) —
+		   min-width auto ค้ำชื่อยาว เติม 0 ให้หด (body min-width 0 ของ ListItem
+		   รับต่อ + row-name ellipsis — ไม่แตะ ListItem.svelte). */
+		min-width: 0;
 	}
 
 	.mint-list :global(.list-item:last-child) {
 		border-bottom: none;
 	}
 
+	/* R5 rev48 REWORK (.row-spacer ถอดทิ้งทั้ง element+CSS):
+	   .mint-actions min-width 0 (หดได้ไม่ค้ำขวา) + gap sm คง —
+	   แถว default ไม่จองที่ (setting ไม่มีของแบบนี้); padding ขวา ListItem มีผลเสมอ. */
+	/* R6 rev51: + flex-shrink 0 — trailing chrome คงที่เหมือน ListItem
+	   .list-item-trailing (shrink-0) ไม่โดน text chain บีบ; ลอก setting ตรงๆ. */
 	.mint-actions {
 		display: flex;
 		align-items: center;
 		gap: var(--space-sm);
+		min-width: 0;
+		flex-shrink: 0;
+	}
+
+	/* TASK-4002 (INTENT-040 R10+R11+R13+R14 APPROVE rev26-31) \u2014 per-mint
+	   spendable badge (\u0e2a\u0e35\u0e40\u0e14\u0e35\u0e22\u0e27 primary \u0e43\u0e2a \u0e01\u0e32\u0e23\u0e4c\u0e14\u0e01\u0e31\u0e1a\u0e25\u0e34\u0e2a\u0e15\u0e4c\u0e2a\u0e44\u0e15\u0e25\u0e4c\u0e40\u0e14\u0e35\u0e22\u0e27\u0e01\u0e31\u0e19):
+	   pill \u0e40\u0e17\u0e48\u0e32 badge-sm (\u0e25\u0e2d\u0e01 metrics Badge.svelte \u2014 \u0e44\u0e21\u0e48 hardcode \u0e43\u0e2b\u0e21\u0e48) +
+	   bg color-mix primary 14% + \u0e15\u0e31\u0e27 primary + \u0e02\u0e36\u0e49\u0e19 1px optical
+	   (pill 10px \u0e02\u0e49\u0e32\u0e07 title md) \u2014 tokens \u0e25\u0e49\u0e27\u0e19 \u0e22\u0e01\u0e40\u0e27\u0e49\u0e19 px
+	   \u0e40\u0e14\u0e35\u0e22\u0e27\u0e15\u0e32\u0e21 verbatim (translateY(-1px) + border 1px \u0e40\u0e01\u0e48\u0e32 R3).
+	   .row-top: \u0e41\u0e16\u0e27\u0e1a\u0e19 body (name + badge \u0e15\u0e34\u0e14\u0e0a\u0e37\u0e48\u0e2d\u0e08\u0e23\u0e34\u0e07 \u2014
+	   flex-start + gap xs + name flex 0 1 auto \u0e44\u0e21\u0e48\u0e14\u0e31\u0e19\u0e02\u0e2d\u0e1a\u0e02\u0e27\u0e32).
+	   .row-url: url ellipsis \u0e02\u0e27\u0e32 nowrap (R2 rev36 \u0e25\u0e2d\u0e01 ListItem subtitle \u2014 wrap break-all \u0e16\u0e2d\u0e14\u0e41\u0e25\u0e49\u0e27). R5 rev48: .row-spacer ถอดทิ้งทั้ง element+CSS (แถว default ไม่จองที่). */
+	.bal-badge {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		font-weight: var(--font-weight-semibold);
+		border-radius: var(--radius-full);
+		white-space: nowrap;
+		letter-spacing: 0.02em;
+		padding: 2px 6px;
+		font-size: 10px;
+		line-height: 1.4;
+		flex-shrink: 0;
+		background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+		color: var(--color-primary);
+		transform: translateY(-1px);
+	}
+
+	/* Loading skeleton: pill \u0e27\u0e48\u0e32\u0e07 surface-variant pulse (\u0e44\u0e21\u0e48\u0e42\u0e0a\u0e27\u0e4c\u0e40\u0e25\u0e02\u0e1c\u0e34\u0e14\u0e23\u0e30\u0e2b\u0e27\u0e48\u0e32\u0e07\u0e42\u0e2b\u0e25\u0e14) + reduced-motion guard (\u0e41\u0e1a\u0e1a discover-spinner). */
+	/* R6 rev51 (Commander verbatim floor <390px — skeleton คือ floor เดียวที่เหลือ):
+	   min-width 3rem → 0 + width 3rem คงรูป pill + flex-shrink 1 ยอมหดเมื่อจอแคบ
+	   (loading มีแต่ชื่อยาว+โครง — ชื่อ ellipsis รับก่อน โครงยอมหดทีหลัง ไม่ค้ำขวา).
+	   inner sr-only ถอดแล้ว (เหลือ role=status+aria-label เดิม — SR ประกาศเหมือนเดิม;
+	   chromium พิสูจน์ abs-pos sr-only ดัน scrollWidth +10px ใน row แคบ). */
+	.bal-skeleton {
+		min-width: 0;
+		width: 3rem;
+		flex-shrink: 1;
+		min-height: 1.4em;
+		background: var(--color-surface-variant);
+		animation: bal-pulse 1.2s ease-in-out infinite;
+	}
+
+	@keyframes bal-pulse {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.45; }
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.bal-skeleton {
+			animation: none;
+		}
+	}
+
+	.row-top {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: flex-start;
+		gap: var(--space-xs);
+		min-width: 0;
+		max-width: 100%;
+		overflow: hidden;
+	}
+
+	.row-top .row-name {
+		flex: 0 1 auto;
+		min-width: 0;
+		font-size: var(--font-size-md);
+		font-weight: var(--font-weight-normal);
+		color: var(--color-text);
+		line-height: var(--line-height-tight);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.row-url {
+		font-size: var(--font-size-sm);
+		color: var(--color-text-secondary);
+		line-height: var(--line-height-tight);
+		min-width: 0;
+		max-width: 100%;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.empty-text {
@@ -1014,7 +1252,7 @@
 		border: 0;
 		padding: var(--space-sm) var(--space-md);
 		font-size: var(--font-size-md);
-		min-height: 56px;
+		min-height: 48px;
 	}
 
 	.discover-row:hover {
@@ -1061,10 +1299,16 @@
 		min-width: 0;
 		display: flex;
 		flex-direction: column;
+		overflow: hidden;
 	}
 
+	/* R3 rev39+rev40 REWORK (ตัดจากขวาทุกจุด — ลอก ListItem title/subtitle):
+	   discover name/url เติม min-width 0 + max-width 100% (ellipsis/nowrap มีแล้ว) —
+	   ยาวแค่ไหนก็ตัดไม่ดัน + padding ขวา discover-row มีผลเสมอ. */
 	.discover-name {
 		font-weight: var(--font-weight-medium);
+		min-width: 0;
+		max-width: 100%;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -1073,6 +1317,8 @@
 	.discover-url {
 		font-size: var(--font-size-md);
 		color: var(--color-text-secondary);
+		min-width: 0;
+		max-width: 100%;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -1152,6 +1398,7 @@
 		display: flex;
 		align-items: center;
 		gap: var(--space-sm);
+		min-width: 0;
 	}
 
 	.validated-logo {
@@ -1185,10 +1432,18 @@
 		gap: var(--space-xs);
 	}
 
+	/* R3 rev39+rev40 REWORK (ตัดจากขวาทุกจุด — ลอก ListItem title):
+	   validated-name (preview card) min-width 0 + ellipsis nowrap —
+	   ยาวแค่ไหนก็ตัดไม่ดัน modal + title attr เก็บเต็ม (template). */
 	.validated-name {
 		font-size: var(--font-size-md);
 		margin: 0;
 		color: var(--color-text);
+		min-width: 0;
+		max-width: 100%;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.validated-version {
