@@ -109,7 +109,7 @@ const REQUIRED_NUT08_KEYS = [
 	'nut08.error.derive'
 ] as const;
 
-const TOTAL_KEYS = 428; // 423 (TASK-FIX-325 baseline) + 5 scanner keys (iter5: common.scan_qr, screen.common.scanner_overlay_title, screen.receive.camera_permission_denied, screen.receive.scan_qr_button, screen.receive.scanner_modal_title). Baseline history: TASK-315 → 422, TASK-316 → 427, TASK-FIX-320 → 428, TASK-FIX-325 → 423, iter5 → 428.
+const TOTAL_KEYS = 429; // 428 (iter5) + 1 R6 screen.home.active_mint (INTENT-040 BLUEPRINT-040 v1, TASK-4006 verified: flat key count = 429). Baseline history: TASK-315 → 422, TASK-316 → 427, TASK-FIX-320 → 428, TASK-FIX-325 → 423, iter5 → 428, R6 → 429.
 
 describe('TASK-316: i18n NUT-08 namespace + parity', () => {
 	beforeAll(() => {
@@ -144,7 +144,7 @@ describe('TASK-316: i18n NUT-08 namespace + parity', () => {
 		expect(hasThaiChars, 'th.json nut08.* values must contain Thai characters').toBe(true);
 	});
 
-	it('c) parity: en.json keys === th.json keys (428 = 428, full parity)', () => {
+	it('c) parity: en.json keys === th.json keys (429 = 429, full parity)', () => {
 		const enKeys = Object.keys(en).sort();
 		const thKeys = Object.keys(th).sort();
 

@@ -63,6 +63,7 @@
 	"screen.balance.mint_breakdown": "แยกตาม Mint",
 	"screen.home.title": "LNWCASH",
 	"screen.home.total_balance": "ยอดคงเหลือทั้งหมด",
+	"screen.home.active_mint": "Mint:",
 	"screen.home.quick_actions": "ดำเนินการด่วน",
 	"screen.home.recent_tx": "ธุรกรรมล่าสุด",
 	"screen.home.no_tx": "ยังไม่มีธุรกรรม",

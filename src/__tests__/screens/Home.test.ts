@@ -48,12 +48,13 @@ vi.mock('$lib/wallet/balance', () => ({
 	getMintBalances: async () => []
 }));
 
-// Mock wallet store
+// Mock wallet store (TASK-4006: + getMintConfig — real sig (mintUrl: string) => MintConfig | undefined; R6 Home.svelte imports it; unknown mint → undefined → shortMintHost fallback; test logic untouched)
 vi.mock('$lib/wallet/store', () => ({
 	activeMintStore: {
 		subscribe: (fn: (v: string) => void) => { fn('https://mint.example.com'); return () => {}; }
 	},
-	getActiveMintUrl: () => 'https://mint.example.com'
+	getActiveMintUrl: () => 'https://mint.example.com',
+	getMintConfig: (_mintUrl: string) => undefined
 }));
 
 // Mock storage/db
