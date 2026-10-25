@@ -6,7 +6,7 @@
 	import { _ } from 'svelte-i18n';
 	import { locale } from 'svelte-i18n';
 	import { getSettings, setSettings } from '$lib/storage/local';
-	import { navigateTo } from '$lib/router';
+	import { navigateTo, getHashParam, clearHashParams } from '$lib/router';
 	import { themeMode, setTheme } from '$lib/design/theme';
 	import type { ThemeMode } from '$lib/types';
 
@@ -56,6 +56,10 @@
 	let currentLang: string = $state('en');
 	let currentTheme: ThemeMode = $state('system');
 	let showMintManage: boolean = $state(false); // F-042: sub-view for Manage Mint
+	// TASK-4101 (INTENT-041): origin-aware Mint Manage entry — 'home' when
+	// opened from the Home Mint: line (hash mint=manage&origin=home), null
+	// otherwise (settings-list entry — default, no param).
+	let mintManageOrigin: string | null = $state(null);
 	let autoLockTimeout: number = $state(5); // TASK-210: auto-lock timeout (minutes)
 	// TASK-220: PIN keypad shuffle setting (persisted, default off).
 	let pinShuffle: boolean = $state(false);
@@ -441,6 +445,43 @@
 	function handleBack() {
 		onBack?.();
 	}
+
+	// ─── TASK-4101 (INTENT-041): origin-aware Mint Manage ───
+	// Auto-open on mount + every hash change: mint=manage → show Mint Manage
+	// full-screen sub-view (same MintSettings component — no redesign).
+	// Open-only: never auto-closes (ListItem entry + in-app back own the
+	// close path), so clearHashParams-driven hashchanges can't reopen it.
+	function syncMintManageFromHash(): void {
+		try {
+			if (getHashParam('mint') === 'manage') {
+				showMintManage = true;
+				mintManageOrigin = getHashParam('origin');
+			}
+		} catch {
+			/* ignore — default stays settings list */
+		}
+	}
+
+	// Back splits 2 ways per Commander: origin=home → home (never parks on
+	// the settings list); origin=setting or no param (ListItem :476 entry)
+	// → settings list as before. Params are cleared after use so browser
+	// back doesn't re-trigger the auto-open.
+	function handleMintManageBack(): void {
+		const origin = mintManageOrigin ?? getHashParam('origin');
+		mintManageOrigin = null;
+		showMintManage = false;
+		clearHashParams();
+		if (origin === 'home') {
+			navigateTo('home');
+		}
+	}
+
+	$effect(() => {
+		syncMintManageFromHash();
+		if (typeof window === 'undefined') return;
+		window.addEventListener('hashchange', syncMintManageFromHash);
+		return () => window.removeEventListener('hashchange', syncMintManageFromHash);
+	});
 </script>
 
 <div class="settings-screen" role="main" aria-label={$_('screen.settings.title')}>
@@ -458,7 +499,7 @@
 	{#if showMintManage}
 		<!-- F-042: Mint Manage sub-view -->
 		<div class="mint-manage-header">
-			<button type="button" class="back-btn" onclick={() => { showMintManage = false; }} aria-label={$_('common.back')}>
+			<button type="button" class="back-btn" onclick={handleMintManageBack} aria-label={$_('common.back')}>
 				<ArrowLeft size={24} />
 			</button>
 			<Heading level="h2" align="center">{$_('screen.settings.mint_manage')}</Heading>

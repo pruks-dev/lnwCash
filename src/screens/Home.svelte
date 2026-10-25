@@ -162,6 +162,16 @@
 		navigateTo(screen);
 	}
 
+	// TASK-4100 (INTENT-041, BLUEPRINT-041 v1): Mint: line → Mint Manage.
+	// Single hash write (codebase precedent: Setup.svelte '/setup?recover=1'):
+	// router strips query for screen match (screenFromHash) → settings opens;
+	// one history entry → back returns home, never strands on settings list.
+	// Contract — locked pair names, DO NOT rename: mint=manage & origin=home
+	// (read by TASK-4101 via getHashParam + clearHashParams after use).
+	function goMintManageFromHome() {
+		window.location.hash = '/settings?mint=manage&origin=home';
+	}
+
 	function handleRipple(e: MouseEvent) {
 		const btn = e.currentTarget as HTMLElement;
 		const rect = btn.getBoundingClientRect();
@@ -215,7 +225,13 @@
 				</div>
 
 				<!-- TASK-4001 (INTENT-040, mockup R3/R10 APPROVE): Mint: บรรทัดแยกเหนือ badge (above — ไม่ใช่ใน/ใต้ badge) -->
-				<p class="mint-above"><span>{$_('screen.home.active_mint')}</span>&nbsp;<strong class="mint-name" title={currentMintUrl}>{activeMintName}</strong></p>
+				<!-- TASK-4100 (INTENT-041): <p> → <button> whole-line clickable → Mint Manage (mint=manage&origin=home), look unchanged (R14) -->
+				<button
+					type="button"
+					class="mint-above"
+					onclick={() => goMintManageFromHome()}
+					aria-label={$_('screen.settings.mint_manage')}
+				><span>{$_('screen.home.active_mint')}</span>&nbsp;<strong class="mint-name" title={currentMintUrl}>{activeMintName}</strong></button>
 
 				<div class="balance-status">
 					{#if online}
@@ -349,16 +365,31 @@
 
 	/* TASK-4001 rev8/R5 rev14-15 (mockup APPROVE): Mint: บรรทัดแยกเหนือ badge
 	   (above — ไม่ใช่ใน badge) — fiat→Mint 16px (แยกกลุ่ม meta) */
+	/* TASK-4100 (INTENT-041): <p> → <button> — reset ด้วย token ล้วน หน้าตาคงเดิม:
+	   margin R14 frozen (top space-md 16px / bottom 0) — ขยาย touch ด้วย padding ใน */
 	.mint-above {
 		margin-top: var(--space-md);
 		margin-bottom: 0;
+		background: none;
+		border: none;
+		padding: var(--space-xs) var(--space-md);
+		inline-size: 100%;
+		font: inherit;
 		font-size: var(--font-size-sm);
 		color: var(--color-text-secondary);
+		text-align: center;
+		cursor: pointer;
 	}
 
 	.mint-above strong {
 		font-weight: var(--font-weight-semibold);
 		color: var(--color-text);
+	}
+
+	/* TASK-4100: keyboard focus ring — token color only (no layout shift) */
+	.mint-above:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
 	}
 
 	/* TASK-4001 R5 rev15: Mint→badge 4px ชิด (gap section เป็น 0 แล้ว) */
