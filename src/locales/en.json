@@ -322,6 +322,9 @@
 	"screen.receive.error_mint_timeout": "Mint response timeout — try again",
 	"screen.receive.error_quote_expired": "Invoice creation expired — please create a new one",
 	"screen.receive.error_payment_timeout": "Payment not detected within time limit — please try again",
+	"screen.receive.mint_new_badge": "new",
+	"screen.receive.error_new_mint_offline": "New mint must be online once before receiving — go back online then press Receive again",
+	"screen.receive.error_swap_fee_short": "Received {total} sats is too small to cover the {fee} sat mint swap fee — nothing was swapped, no money moved",
 
 	"screen.send.tab_lightning": "Lightning",
 	"screen.send.tab_cashu": "Cashu",

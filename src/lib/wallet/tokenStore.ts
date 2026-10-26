@@ -47,13 +47,23 @@ import {
 	NetworkError
 } from '../cashu/client';
 import { blindMessage, unblindSignature, blindingFactorToHex } from '../cashu/blind';
-import { fetchAndCacheKeysets, getMintPubkey, resolveKeysetId } from '../cashu/keyset';
+import { fetchAndCacheKeysets, getKeysetById, getMintPubkey, resolveKeysetId } from '../cashu/keyset';
 import { verifyDleqCarol } from '../cashu/dleq';
 import { getPrivateKey } from './state';
 import { deriveSecretAndR, getActiveSeed } from './nut13';
 import { getCounterK, incrementCounterK, withKeysetLock } from './counterK';
+// TASK-4206: i18n for the swap-fee shortfall message (en + th, see
+// src/locales/*.json) — same safeT idiom as melt.ts (TASK-316): get(t)
+// throws when i18n is not initialized (unit tests), so always fall back
+// to the literal English human message. Never breaks the receive flow.
+import { t } from 'svelte-i18n';
+import { get } from 'svelte/store';
 import { isWalletOnline, scheduleNormalizeAfterReceiveOnline } from './normalizeWiring';
 import { notifySuspectOffline } from '../offline-indicator';
+import { getMintConfig, setMintConfig, getOrCreateMintConfig } from './store';
+import { discoverMintEndpoints } from './discovery';
+import { validateMintUrl } from './mint-validation';
+import { createPlaceholderConfig } from './config';
 import type { TokenProof, DecodedToken } from '../types';
 import { TokenValidationError } from './errors';
 
@@ -590,6 +600,79 @@ export {
 
 // ─── Send / Receive (P2P token transfer) ──────────────────────
 
+/**
+ * TASK-4201 (INTENT-042 BLUEPRINT-042 v2) — auto-add unknown mint after
+ * receive success (tap Receive เท่านั้น — paste แล้ว add เองห้าม).
+ *
+ * Success path เท่านั้น (online swap + offline passthrough + D3 fallback
+ * ซึ่งก็คือ passthrough กลไกเดิม): หลัง return data พร้อม — getMintConfig
+ * != undefined → ข้าม / undefined → try discoverMintEndpoints +
+ * validateMintUrl → setMintConfig(full) — catch → fallback
+ * setMintConfig(createPlaceholderConfig) — ห้าม throw ทับเงินเด็ดขาด
+ * (best-effort: money stored แล้วต้อง return สำเร็จเสมอ).
+ *
+ * Reuse ล้วน (ห้าม reinvent client): store.ts getMintConfig/setMintConfig/
+ * getOrCreateMintConfig + discovery.ts:103 + mint-validation.ts:14 +
+ * config.ts createPlaceholderConfig. ไม่แตะ swap/derive/passthrough/dleq
+ * gate/seed/counter/NUT-13 แม้แต่ตัวอักษรเดียว — helper นี้อยู่นอกกลไกพวกนั้น.
+ */
+async function ensureMintConfigAfterReceive(mintUrl: string): Promise<void> {
+	try {
+		if (getMintConfig(mintUrl) !== undefined) return;
+		try {
+			const discovery = await discoverMintEndpoints(mintUrl);
+			if (discovery.success && discovery.config) {
+				try {
+					const validated = await validateMintUrl(mintUrl);
+					if (validated.success && validated.config) {
+						setMintConfig(validated.config);
+						return;
+					}
+				} catch {
+					// fall through to the discovery config below
+				}
+				setMintConfig(discovery.config);
+				return;
+			}
+			const validated = await validateMintUrl(mintUrl);
+			if (validated.success && validated.config) {
+				setMintConfig(validated.config);
+				return;
+			}
+			getOrCreateMintConfig(mintUrl);
+		} catch {
+			try {
+				setMintConfig(createPlaceholderConfig(mintUrl));
+			} catch {
+				// never throw over money
+			}
+		}
+	} catch {
+		// never throw — money already stored
+	}
+}
+
+/**
+ * TASK-4206 (INTENT-042 rev7) — human message for the swap-fee shortfall
+ * edge (input total <= NUT-02 swap fee). 4202 pattern: TH=EN locale key
+ * (`screen.receive.error_swap_fee_short`) + console keeps the technician
+ * terms (the caller logs the technical line before throwing). Falls back
+ * to literal English when i18n is not initialized — never throws.
+ */
+function formatSwapFeeShortage(total: number, fee: number): string {
+	const fallback =
+		`Received ${total} sats is too small to cover the ${fee} sat mint swap fee — ` +
+		`nothing was swapped, no money moved.`;
+	try {
+		const msg = get(t)('screen.receive.error_swap_fee_short', {
+			values: { total, fee }
+		});
+		return msg || fallback;
+	} catch {
+		return fallback;
+	}
+}
+
 export interface SendResult {
 	token: string;
 	amount: number;
@@ -743,7 +826,11 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 	// TASK-1309: the mechanism itself lives in receiveProofsPassthrough() —
 	// the D3 network-error fallback reuses THIS SAME mechanism (no drift).
 	if (!isWalletOnline()) {
-		return await receiveProofsPassthrough(decoded, mintUrl, tokenString);
+		const offlineResult = await receiveProofsPassthrough(decoded, mintUrl, tokenString);
+		// TASK-4201: success path ensure (offline passthrough) — unknown mint
+		// → discover+validate → setMintConfig / fail → placeholder, never throws.
+		await ensureMintConfigAfterReceive(mintUrl);
+		return offlineResult;
 	}
 
 	// ONLINE swap receive — deterministic derivation REQUIRES a seed.
@@ -785,9 +872,33 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 			// the counter MUST advance by outputs.length (จุดเสี่ยง 2 HIGH —
 			// ห้ามค้าง decoded.proofs.length; advance = จำนวนก้อนที่ mint sign
 			// เสมอ เพื่อให้ NUT-9 restore ครอบทุกก้อน).
-			const targetAmounts = completeSet(
-				decoded.proofs.reduce((sum, p) => sum + p.amount, 0)
-			);
+			//
+			// TASK-4206 (INTENT-042 rev7) — fee-aware outputs (NUT-02 §Fees +
+			// NUT-03 wallet construction: sum(inputs) - fees == sum(outputs)):
+			// fees = ceil(Σ input_fee_ppk / 1000) over the ACTUAL input proofs
+			// (each proof indexed by its OWN keyset — integer math
+			// (sum+999)//1000, no floats). The old code submitted outputs =
+			// completeSet(total), so a fee-charging mint rejected with
+			// 400/11005 expected_fee. Now outputs = completeSet(total - fee).
+			// total <= fee rejects BEFORE any derive/blind/swap (no wasted
+			// swap, counter untouched, nothing stored) with a human message.
+			const inputTotal = decoded.proofs.reduce((sum, p) => sum + p.amount, 0);
+			let feePpkSum = 0;
+			for (const p of decoded.proofs) {
+				const pid = resolveKeysetId(mintUrl, p.id) || p.id;
+				feePpkSum += getKeysetById(mintUrl, pid)?.input_fee_ppk ?? 0;
+			}
+			const swapFee = Math.floor((feePpkSum + 999) / 1000);
+			if (inputTotal <= swapFee) {
+				console.warn(
+					`[cashu receive] TASK-4206 swap-fee shortfall — technical: ` +
+					`input total ${inputTotal} sat <= swap fee ${swapFee} sat ` +
+					`(feePpkSum ${feePpkSum} ppk over ${decoded.proofs.length} inputs, ` +
+					`NUT-02 ceil) — rejecting before derive/swap; counter untouched, nothing stored`
+				);
+				throw new TokenValidationError(formatSwapFeeShortage(inputTotal, swapFee));
+			}
+			const targetAmounts = completeSet(inputTotal - swapFee);
 
 			// Create blinded outputs (deterministic NUT-13 secrets + blinding)
 			const blindPairs: Array<{ secret: string; B_: string; r: string }> = [];
@@ -883,6 +994,10 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 		// IS the completeSet target).
 		scheduleNormalizeAfterReceiveOnline();
 
+		// TASK-4201: success path ensure (online swap) — unknown mint →
+		// discover+validate → setMintConfig / fail → placeholder, never throws.
+		await ensureMintConfigAfterReceive(mintUrl);
+
 		return {
 			amount: totalAmount,
 			mint: mintUrl,
@@ -903,7 +1018,11 @@ export async function receiveTokens(tokenString: string): Promise<ReceiveResult>
 		// fall to the rethrow tail below (token rejected เชิง rules ห้ามเก็บ).
 		if (isTransportNetworkError(err)) {
 			notifySuspectOffline();
-			return await receiveProofsPassthrough(decoded, mintUrl, tokenString);
+			const fallbackResult = await receiveProofsPassthrough(decoded, mintUrl, tokenString);
+			// TASK-4201: success path ensure (D3 fallback passthrough) — unknown
+			// mint → discover+validate → setMintConfig / fail → placeholder.
+			await ensureMintConfigAfterReceive(mintUrl);
+			return fallbackResult;
 		}
 
 		// ── OLD rethrow tail (คงเดิม 100%): mint-reject / validation → throw ──

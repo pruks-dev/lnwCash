@@ -248,6 +248,19 @@
 		return $_('screen.receive.error_mint_fail');
 	}
 
+	// TASK-4202 (INTENT-042 BLUEPRINT-042 v2): cashu offline+new-mint human error —
+	// narrow gate #2 ONLY ('no denomination key in the keyset cache') → human
+	// TH=EN pair (screen.receive.error_new_mint_offline); technical term kept
+	// via console; all other errors keep e.message unchanged. Never match
+	// broad 'cache'/'offline' — exact gate-2 substring only.
+	function mapCashuReceiveError(e: unknown): string {
+		if (e instanceof Error && e.message.includes('no denomination key in the keyset cache')) {
+			console.warn('[cashu receive] new-mint offline gate — technical:', e.message);
+			return $_('screen.receive.error_new_mint_offline');
+		}
+		return e instanceof Error ? e.message : $_('screen.receive.error_receive_token');
+	}
+
 	/**
 	 * Phase 1: Request mint quote → get invoice → display QR
 	 * Phase 2 will start via polling after invoice display.
@@ -561,7 +574,7 @@
 				showUnlockPrompt = true;
 				return;
 			}
-			cashuError = e instanceof Error ? e.message : $_('screen.receive.error_receive_token');
+			cashuError = mapCashuReceiveError(e);
 			cashuState = 'error';
 			showToast(cashuError, 'error');
 		}
@@ -818,7 +831,12 @@
 							</div>
 							<div class="detail-row">
 								<Body size="sm" color="secondary">{$_('screen.send.mint_url_label')}</Body>
-								<Body size="sm" weight="semibold" truncate>{cashuDecodedToken.mint}</Body>
+								<span class="mint-value">
+									<Body size="sm" weight="semibold" truncate>{cashuDecodedToken.mint}</Body>
+									{#if getMintConfig(cashuDecodedToken.mint) === undefined}
+										<span class="mint-new-badge">{$_('screen.receive.mint_new_badge')}</span>
+									{/if}
+								</span>
 							</div>
 							<div class="detail-row">
 								<Body size="sm" color="secondary">{$_('screen.receive.proof_count')}</Body>
@@ -1323,6 +1341,33 @@
 		align-items: center;
 		padding: var(--space-xs) 0;
 		border-bottom: 1px solid var(--color-border);
+	}
+
+	/* TASK-4208 (INTENT-042 rev7 Commander decision (a) — ฟ้าใสแบบ bal-badge primary):
+	   tone ลอก src/routes/settings/mint/+page.svelte .bal-badge ตรงๆ —
+	   bg color-mix primary 14% + ตัว primary (theme tokens เดิม, no hardcode).
+	   Conditional/markup/logic/tokenStore/mapper/i18n คงเดิม — style-only. */
+	.mint-value {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-xs);
+		min-width: 0;
+	}
+
+	.mint-new-badge {
+		display: inline-flex;
+		align-items: center;
+		padding: 2px 8px;
+		border-radius: var(--radius-full);
+		font-family: var(--font-family);
+		font-size: var(--font-size-xs);
+		font-weight: var(--font-weight-semibold);
+		line-height: 1.4;
+		letter-spacing: 0.02em;
+		white-space: nowrap;
+		background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+		color: var(--color-primary);
+		flex-shrink: 0;
 	}
 
 	.preview-actions {
