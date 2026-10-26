@@ -51,6 +51,42 @@ vi.mock('../../cashu/keyset', () => ({
 	resolveKeysetId: vi.fn((_url: string, id: string) => id)
 }));
 
+// TASK-4308 (INTENT-043 fix-forward): pin the detector ONLINE.
+// Root cause of the CI red (B-4307-01): this suite never pinned the detector,
+// so it relied on the ambient `navigator.onLine` seed ('online'). But
+// tokenStore.ts → store.ts module init pushes probe targets and the
+// detector's boot catch-up fires a REAL fetch probe; in CI (full suite, 2+ min)
+// the probe completes → singleton settles 'offline' → receiveTokens takes the
+// offline passthrough → the TASK-1314 (S4) DLEQ gate fail-closes on this
+// suite's dleq-less mock fixtures (refuses dleq-less coins — correct prod
+// behavior, gate untouched). The dleq-less fixtures are valid ONLY on the
+// ONLINE swap path (the mint re-issues outputs; inputs need no dleq) — so the
+// suite must pin 'online' explicitly. Same controllable-fake-detector pattern
+// as the TASK-1315 flake-lock in swap-counter-guard.test.ts; no real probes
+// run here.
+vi.mock('../../offline-indicator', () => ({
+	getDetectorStatus: vi.fn(() => ({
+		state: 'online',
+		online: true,
+		suspect: false,
+		probing: false,
+		bootWired: true,
+		targets: [],
+		probeCount: 0,
+		lastProbeAt: 0,
+		lastResult: 'online'
+	})),
+	isOnline: vi.fn(() => true),
+	onConnectivityChange: vi.fn(() => () => {}),
+	onOnlineConfirmed: vi.fn(() => () => {}),
+	setPendingPileReader: vi.fn(),
+	notifySuspectOffline: vi.fn(),
+	setProbeTargets: vi.fn(),
+	wasOffline: vi.fn(() => false),
+	resetWasOffline: vi.fn(),
+	trackWasOffline: vi.fn(() => () => {})
+}));
+
 import { createWallet, unlockWallet } from '../state';
 import { clearAllWalletData } from '../storage';
 import { deleteProofDB, resetProofDB, getAllProofs } from '../proofsDb';
