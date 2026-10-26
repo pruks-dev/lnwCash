@@ -147,7 +147,20 @@ vi.mock('$lib/pwa-install', () => ({
 vi.mock('$lib/offline-indicator', () => ({
 	isOnline: () => true,
 	wasOffline: () => false,
+	getDetectorStatus: () => ({
+		state: 'online',
+		online: true,
+		suspect: false,
+		probing: false,
+		bootWired: true,
+		targets: [],
+		probeCount: 0,
+		lastProbeAt: 0,
+		lastResult: null
+	}),
 	onConnectivityChange: vi.fn(() => () => {}),
+	onOnlineConfirmed: vi.fn(() => () => {}),
+	setPendingPileReader: vi.fn(),
 	trackWasOffline: vi.fn(() => () => {})
 }));
 vi.mock('$lib/wallet/autolock', () => ({

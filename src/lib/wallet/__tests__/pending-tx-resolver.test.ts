@@ -100,16 +100,20 @@ describe('resolvePendingTransactions', () => {
 
 	// ── AC-3: mint quote PAID → confirmed ─────────────────
 
-	it('confirms mint when quote state is PAID', async () => {
+	it('skips mint when quote state is PAID (owned by central poll collector)', async () => {
+		// TASK-4301 (INTENT-043): mint PAID → continue/skip (leave pending).
+		// The central 5s poll in App.svelte owns PAID mint quotes and mints
+		// them for real via completeMint — resolver must NOT confirm here.
+		// Precedent: DEV-1303-1.
 		const mintTx = tx({ id: 'mint-abc123', type: 'mint' });
 		mockGetTransactions.mockResolvedValue([mintTx]);
 		mockCheckMintQuote.mockResolvedValue({ state: 'PAID' });
 
 		const result = await resolvePendingTransactions();
 
-		expect(result).toBe(1);
+		expect(result).toBe(0);
 		expect(mockCheckMintQuote).toHaveBeenCalledWith(MINT_URL, 'abc123');
-		expect(mockUpdateTransaction).toHaveBeenCalledWith('mint-abc123', { status: 'confirmed' });
+		expect(mockUpdateTransaction).not.toHaveBeenCalled();
 	});
 
 	// ── AC-4: mint quote EXPIRED → skipped ────────────────
@@ -242,13 +246,14 @@ describe('resolvePendingTransactions', () => {
 
 		const result = await resolvePendingTransactions();
 
-		// oldTx → failed (1), paidTx → confirmed (1), expiredTx → skipped, errorTx → skipped
-		expect(result).toBe(2);
+		// oldTx → failed (1), paidTx → skipped per TASK-4301 (mint PAID owned by
+		// central poll collector), expiredTx → skipped, errorTx → skipped
+		expect(result).toBe(1);
 
 		// oldTx was auto-failed
 		expect(mockUpdateTransaction).toHaveBeenCalledWith('mint-old', { status: 'failed' });
-		// paidTx was confirmed
-		expect(mockUpdateTransaction).toHaveBeenCalledWith('mint-paid', { status: 'confirmed' });
+		// paidTx was left pending for the collector (TASK-4301 continue/skip)
+		expect(mockUpdateTransaction).not.toHaveBeenCalledWith('mint-paid', expect.anything());
 		// expiredTx and errorTx were not updated
 		expect(mockUpdateTransaction).not.toHaveBeenCalledWith('mint-expired', expect.anything());
 		expect(mockUpdateTransaction).not.toHaveBeenCalledWith('melt-error', expect.anything());
