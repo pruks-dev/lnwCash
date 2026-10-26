@@ -14,14 +14,17 @@
 	 * All UI states: idle, loading, success, error, timeout
 	 */
 	import { _ } from 'svelte-i18n';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { scannedQRValue } from '$lib/stores/scannedQR';
+	// TASK-4300 (INTENT-043) RECEIVE-PAUSE-FLAG — invoice-open signal (in-memory only).
+	import { receiveInvoiceOpen } from '$lib/stores/receive-invoice';
 	import { completeMint, type MintResult } from '$lib/wallet/mint';
 	import { receiveTokens, type ReceiveResult } from '$lib/wallet/tokenStore';
 	import { isCashuToken, getTokenAmount, decodeToken } from '$lib/cashu/token';
 	import { CashuError } from '$lib/cashu/client';
 	import { fetchAndCacheKeysets } from '$lib/cashu/keyset';
-	import { addTransaction, updateTransaction } from '$lib/storage/db';
+	import { addTransaction, getTransactionById, updateTransaction } from '$lib/storage/db';
+	import type { Transaction } from '$lib/types';
 	import { getBalance } from '$lib/wallet/balance';
 	import { getPrivateKey, storeSessionPin, unlockWallet } from '$lib/wallet/state';
 	import { WalletLockedError } from '$lib/wallet/errors';
@@ -82,6 +85,28 @@
 	// Re-entrancy guard: prevents double-submit of the mint when overlapping
 	// poll callbacks both observe the quote as PAID (intermittent 400).
 	let mintCompleting: boolean = $state(false);
+
+	// TASK-4300 (INTENT-043) RECEIVE-PAUSE-FLAG — single place that clears
+	// the poll timer (reuses the resetLightning :484 snippet). Called from
+	// resetLightning + onDestroy + visibilitychange(hidden).
+	function clearPollTimer() {
+		if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+	}
+
+	// TASK-4300 — pause polling while the tab is hidden; resume on visible
+	// only if still waiting for payment (invoice still open).
+	function handleVisibilityChange() {
+		if (document.hidden) {
+			clearPollTimer();
+		} else if (lightningState === 'polling' && !pollTimer && !mintCompleting) {
+			startQuotePolling();
+		}
+	}
+
+	// TASK-4300 — claim marker: ephemeral, written via cast so
+	// TransactionStatus (pending|confirmed|failed) in types.ts stays untouched.
+	// confirmed/failed writers overwrite status wholesale, so the marker never leaks.
+	const CLAIM_STATUS = 'minting' as Transaction['status'];
 
 	// ─── Cashu state ─────────────────────────────────────────
 	type CashuState = 'idle' | 'validating' | 'preview' | 'loading' | 'success' | 'error';
@@ -148,6 +173,8 @@
 	// full token from F007-QRScan (and clipboard/manual paste paths still
 	// write to `cashuTokenInput` directly).
 	onMount(() => {
+		// TASK-4300 — pause quote polling while the tab is hidden.
+		document.addEventListener('visibilitychange', handleVisibilityChange);
 		const unsub = scannedQRValue.subscribe((value) => {
 			if (value && (value.startsWith('cashuA') || value.startsWith('cashuB') || value.startsWith('cashu'))) {
 				cashuTokenInput = value;
@@ -158,6 +185,14 @@
 		});
 
 		return unsub;
+	});
+
+	// TASK-4300 — lifecycle: always clear the poll timer + lower the
+	// invoice-open flag on every unmount (covers back-nav mid-polling).
+	onDestroy(() => {
+		clearPollTimer();
+		receiveInvoiceOpen.set(false);
+		document.removeEventListener('visibilitychange', handleVisibilityChange);
 	});
 
 	function showToast(message: string, type: 'info' | 'success' | 'error' = 'info') {
@@ -270,11 +305,13 @@
 		if (isNaN(amount) || amount <= 0) {
 			lightningError = $_('screen.receive.amount_required');
 			lightningState = 'error';
+			receiveInvoiceOpen.set(false); // TASK-4300: exit path — flag stays down
 			return;
 		}
 		if (!mintUrl.trim()) {
 			lightningError = $_('common.error_mint_url_required');
 			lightningState = 'error';
+			receiveInvoiceOpen.set(false); // TASK-4300: exit path — flag stays down
 			return;
 		}
 
@@ -316,10 +353,12 @@
 			lightningState = 'polling';
 			pollCount = 0;
 			mintCompleting = false;
+			receiveInvoiceOpen.set(true); // TASK-4300: invoice open — pause other polls
 			startQuotePolling();
 		} catch (e) {
 			lightningError = mapMintError(e);
 			lightningState = 'error';
+			receiveInvoiceOpen.set(false); // TASK-4300: exit path — flag down
 			showToast(lightningError, 'error');
 		}
 	}
@@ -341,6 +380,7 @@
 				pollTimer = null;
 				lightningError = $_('screen.receive.error_payment_timeout');
 				lightningState = 'error';
+				receiveInvoiceOpen.set(false); // TASK-4300: exit path — flag down
 				showToast(lightningError, 'error');
 				return;
 			}
@@ -360,6 +400,7 @@
 					pollTimer = null;
 					lightningError = $_('screen.receive.error_quote_expired');
 					lightningState = 'error';
+					receiveInvoiceOpen.set(false); // TASK-4300: exit path — flag down
 					showToast(lightningError, 'error');
 				}
 				// UNPAID: keep polling (no-op)
@@ -382,6 +423,34 @@
 		try {
 			const mintUrlClean = mintUrl.trim();
 			getPrivateKey(); // ensure wallet is unlocked (throws WalletLockedError → unlock prompt)
+
+			// TASK-4300 (INTENT-043) — claim pending->minting compare-and-set
+			// BEFORE completeMint: ต่อ 1 invoice มีคนเดียวที่ mint proofs.
+			// Winner flips the pending tx to 'minting' and proceeds to mint
+			// (ends in received); loser finds non-pending and stops silently —
+			// no toast, no state change (winner drives the UI to received).
+			// Best-effort single-thread CAS: if the record is missing
+			// (best-effort add failed) or IndexedDB is unavailable, fall back
+			// to the in-memory mintCompleting guard as winner.
+			let claimed = false;
+			try {
+				if (!pendingTxId) {
+					claimed = true;
+				} else {
+					const existing = await getTransactionById(pendingTxId);
+					if (!existing) {
+						claimed = true;
+					} else if (existing.status === 'pending') {
+						// compare-and-set: only the first claimant wins
+						await updateTransaction(pendingTxId, { status: CLAIM_STATUS });
+						claimed = true;
+					}
+				}
+			} catch {
+				// IndexedDB unavailable — fall back to in-memory guard.
+				claimed = true;
+			}
+			if (!claimed) return; // loser: stop silently
 
 			// Step 1: Get keysets (completeMint requires the keysetId)
 			const keysets = await fetchAndCacheKeysets(mintUrlClean);
@@ -432,12 +501,14 @@
 
 			lightningState = 'success';
 			mintCompleting = false;
+			receiveInvoiceOpen.set(false); // TASK-4300: exit path — flag down
 			animateBalance(0, pendingAmount);
 			showToast($_('screen.receive.success_received'), 'success');
 		} catch (e) {
 			// TASK-092 (F-061): Wallet lock fallback — show unlock prompt + retry
 			if (e instanceof WalletLockedError) {
 				lightningState = 'idle';
+				receiveInvoiceOpen.set(false); // TASK-4300: exit path — flag down
 				unlockPendingOp = () => completeMintAfterPayment();
 				showUnlockPrompt = true;
 				return;
@@ -445,6 +516,7 @@
 			lightningError = mapMintError(e);
 			lightningState = 'error';
 			mintCompleting = false;
+			receiveInvoiceOpen.set(false); // TASK-4300: exit path — flag down
 			showToast(lightningError, 'error');
 
 			// Mark pending transaction as failed
@@ -481,7 +553,8 @@
 
 	function resetLightning() {
 		// Clean up poll timer
-		if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+		clearPollTimer(); // TASK-4300: reuse — same snippet as :484
+		receiveInvoiceOpen.set(false); // TASK-4300: exit path — flag down
 		lightningState = 'idle';
 		lightningAmount = '0';
 		lightningInvoice = '';

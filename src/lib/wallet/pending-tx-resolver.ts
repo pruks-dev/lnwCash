@@ -44,8 +44,11 @@ export async function resolvePendingTransactions(): Promise<number> {
 			if (tx.type === 'mint') {
 				const quote = await checkMintQuote(tx.mint_url, quoteId);
 				if (quote.state === 'PAID') {
-					await updateTransaction(tx.id, { status: 'confirmed' });
-					resolved++;
+					// TASK-4301 (INTENT-043): do NOT confirm here — the central 5s
+					// poll in App.svelte owns PAID mint quotes and mints them for
+					// real via completeMint (proofs+balance, not a label).
+					// Leave pending so the collector claims it (เก็บตกต้องได้เงินจริง).
+					continue;
 				}
 				// EXPIRED or ISSUED (not PAID) → skip, stays pending until timeout
 			} else if (tx.type === 'melt') {

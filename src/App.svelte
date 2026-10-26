@@ -25,9 +25,17 @@
 	// and applies data-theme attribute to document.documentElement reactively.
 	import { themeMode, resolveTheme, applyThemeDom } from '$lib/design/theme';
 
-	// Background mint polling: check pending mint transactions every 15s
-	import { getTransactions, updateTransaction } from '$lib/storage/db';
+	// Background mint polling: check pending mint transactions every 5s
+	import { getTransactions, updateTransaction, compareAndSetTransactionStatus } from '$lib/storage/db';
 	import { checkMintQuote } from '$lib/cashu/client';
+	import { completeMint } from '$lib/wallet/mint';
+	import { fetchAndCacheKeysets } from '$lib/cashu/keyset';
+	import { withTransactionGuard } from '$lib/wallet/autolock';
+	import { resolvePendingTransactions } from '$lib/wallet/pending-tx-resolver';
+	import { get } from 'svelte/store';
+	// TASK-4300/4301 (INTENT-043): central-pause flag — true while Receive
+	// shows an open invoice QR (Receive owns that round, central must skip).
+	import { receiveInvoiceOpen } from '$lib/stores/receive-invoice';
 	import { notifyMintConfirmed, mintBanner } from '$lib/stores/mint-events';
 	import Iconly from '$lib/iconly/Iconly.svelte';
 
@@ -181,13 +189,20 @@
 	});
 
 	// ─── Background mint polling ──────────────────────────────
-	// Poll pending mint transactions every 5s — works on any screen.
+	// TASK-4301 (INTENT-043): central collector — PAID/ISSUED → claim
+	// (compare-and-set pending→minting, loser retreats silently) → full
+	// completeMint → success confirms+notifies (Home reloads balance via
+	// mintConfirmed). Locked → back to pending ONLY (never failed).
+	// EXPIRED → failed (unchanged). Receive-open round → skip entirely.
 	let pollInterval: ReturnType<typeof setInterval> | undefined;
 
 	onMount(() => {
 
 		async function poll() {
 			try {
+				// TASK-4301 central-pause: QR open → Receive owns this round —
+				// skip the whole round (0 checkMintQuote calls).
+				if (get(receiveInvoiceOpen)) return;
 				const allTxs = await getTransactions();
 				const pendingTxs = allTxs.filter(tx => tx.type === 'mint' && tx.status === 'pending');
 				if (pendingTxs.length === 0) return;
@@ -199,12 +214,45 @@
 						const state = quote.state ?? (quote.paid ? 'PAID' : 'UNPAID');
 
 						if (state === 'PAID' || state === 'ISSUED') {
-							try {
-						await updateTransaction(tx.id, { status: 'confirmed' });
-							} catch (upErr) {
-								console.error(`[mint-poll] ❌ updateTransaction failed:`, upErr);
+							// TASK-4301 claim: atomic compare-and-set pending → minting.
+							// Loser (already claimed/confirmed elsewhere) retreats
+							// silently — single notify guaranteed.
+							const claimed = await compareAndSetTransactionStatus(tx.id, 'pending', 'minting');
+							if (!claimed) continue;
+							// Mid-round QR open → release the claim, let Receive own it (no fight).
+							if (get(receiveInvoiceOpen)) {
+								await updateTransaction(tx.id, { status: 'pending' }).catch(() => {});
+								continue;
 							}
-							notifyMintConfirmed(tx.amount);
+							try {
+								const keysets = await fetchAndCacheKeysets(tx.mint_url);
+								const activeKeysets = keysets.filter(k => k.active);
+								if (activeKeysets.length === 0) throw new Error('No active keysets found for this mint');
+								// TASK-4301 real-mint: the whole original completeMint
+								// (NUT-13 seed/counter untouched inside).
+								// waitForPayment=false — PAID/ISSUED already verified
+								// above, so no 120s re-poll block. ISSUED routes into
+								// this same mint path (never confirmed-float).
+								const result = await withTransactionGuard(() =>
+									completeMint(tx.mint_url, quoteId, tx.amount, activeKeysets[0].id, false)
+								);
+								if (result.success) {
+									await updateTransaction(tx.id, { status: 'confirmed' });
+									notifyMintConfirmed(tx.amount);
+								} else if (result.error && /wallet is locked/i.test(result.error)) {
+									// TASK-4301 lock → back to pending ONLY — never failed (retry after unlock).
+									await updateTransaction(tx.id, { status: 'pending' });
+								} else {
+									// Mint failed (network/mint-side) → back to pending
+									// for next-round retry. Never confirmed without
+									// proofs (no floating label).
+									await updateTransaction(tx.id, { status: 'pending' });
+								}
+							} catch (mintErr) {
+								// Same rule on throw: revert claim to pending — never failed, never confirmed-float.
+								console.warn(`[mint-poll] Mint failed for ${tx.id}, released to pending:`, mintErr);
+								await updateTransaction(tx.id, { status: 'pending' }).catch(() => {});
+							}
 						} else if (state === 'EXPIRED') {
 							await updateTransaction(tx.id, { status: 'failed' });
 							console.log(`[mint-poll] Mint expired: ${tx.id}`);
@@ -218,6 +266,10 @@
 			}
 		}
 
+		// TASK-4301: boot resolver — wire once (single call, no interval).
+		// Stale >30min → failed inside the resolver; fresh PAID mint quotes are
+		// left pending there so THIS central poll mints them for real.
+		resolvePendingTransactions().catch(() => {});
 		poll();
 		pollInterval = setInterval(poll, 5_000);
 

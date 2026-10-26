@@ -140,6 +140,37 @@ export async function updateTransaction(id: string, patch: Partial<Transaction>)
 }
 
 /**
+ * TASK-4301 (INTENT-043): atomic claim transition — compare-and-set.
+ *
+ * Single-readwrite-transaction read-check-write: swaps `status` only when the
+ * stored value still equals `expected`. Returns true on swap (claim won),
+ * false when another owner already moved it (claim lost → retreat silently,
+ * no notify). The transient 'minting' state marks an in-flight central mint
+ * so the central 5s poll and the Receive 3s poll never double-mint one quote.
+ */
+
+/** Transient claim state — never final, always resolved within the round. */
+export type MintClaimState = 'minting';
+
+export async function compareAndSetTransactionStatus(
+	id: string,
+	expected: Transaction['status'] | MintClaimState,
+	next: Transaction['status'] | MintClaimState
+): Promise<boolean> {
+	const db = await getDB();
+	const tx = db.transaction(STORE_NAME, 'readwrite');
+	const store = tx.objectStore(STORE_NAME);
+	const existing = (await store.get(id)) as Transaction | undefined;
+	if (!existing || existing.status !== expected) {
+		await tx.done;
+		return false;
+	}
+	await store.put({ ...existing, status: next as Transaction['status'] });
+	await tx.done;
+	return true;
+}
+
+/**
  * Delete a transaction by ID
  */
 export async function deleteTransaction(id: string): Promise<void> {
