@@ -109,7 +109,7 @@ const REQUIRED_NUT08_KEYS = [
 	'nut08.error.derive'
 ] as const;
 
-const TOTAL_KEYS = 429; // 428 (iter5) + 1 R6 screen.home.active_mint (INTENT-040 BLUEPRINT-040 v1, TASK-4006 verified: flat key count = 429). Baseline history: TASK-315 → 422, TASK-316 → 427, TASK-FIX-320 → 428, TASK-FIX-325 → 423, iter5 → 428, R6 → 429.
+const TOTAL_KEYS = 432; // 429 (R6) + 3 INTENT-042 screen.receive.mint_new_badge / error_new_mint_offline / error_swap_fee_short (TASK-4210 verified: flat key count = 432). Baseline history: TASK-315 → 422, TASK-316 → 427, TASK-FIX-320 → 428, TASK-FIX-325 → 423, iter5 → 428, R6 → 429 (TASK-4006), INTENT-042 → 432.
 
 describe('TASK-316: i18n NUT-08 namespace + parity', () => {
 	beforeAll(() => {
