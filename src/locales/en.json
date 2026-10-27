@@ -334,8 +334,6 @@
 	"screen.send.total": "Total",
 	"screen.send.check_fee": "Check fee",
 	"screen.send.confirm_send": "Confirm send",
-	"screen.send.irreversible_warning": "This transaction cannot be undone",
-	"screen.send.confirm_send_irreversible": "Confirm — irreversible",
 	"screen.send.sending": "Sending...",
 	"screen.send.do_not_close": "Please wait, do not close the app",
 	"screen.send.success_payment": "Payment sent",

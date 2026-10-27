@@ -823,19 +823,13 @@
 	}
 </script>
 
-<div class="send-screen" role="main" aria-label={$_('screen.send.title')}>
-
-	<!-- Header -->
-	<div class="screen-header">
+<div class="send-screen" role="main" aria-label={$_('screen.send.title')}><!-- Header --><div class="screen-header">
 		<button type="button" class="back-btn" onclick={handleBack} aria-label={$_('common.back')}>
 			<ArrowLeft size={24} />
 		</button>
 		<Heading level="h2">{$_('screen.send.title')}</Heading>
 		<div class="header-spacer"></div>
-	</div>
-
-	<!-- Tabs -->
-	<div class="tab-bar" role="tablist">
+	</div><!-- Tabs --><div class="tab-bar" role="tablist">
 		<button
 			type="button"
 			role="tab"
@@ -856,10 +850,7 @@
 		>
 			<Iconly name="Banknote" size={18} /> {$_('screen.send.tab_cashu')}
 		</button>
-	</div>
-
-	<!-- ══════════════════ LIGHTNING TAB ══════════════════ -->
-	{#if activeTab === 'lightning'}
+	</div><!-- ══════════════════ LIGHTNING TAB ══════════════════ -->{#if activeTab === 'lightning'}
 		<div class="tab-content" role="tabpanel">
 			{#if lightningState === 'sending'}
 				<div class="inline-sending" role="alert" aria-live="assertive">
@@ -985,9 +976,7 @@
 							{/if}
 						</div>
 					</Card>
-				{/if}
-
-				{#if lnurlFlowState !== 'idle'}
+				{/if}{#if lnurlFlowState !== 'idle'}
 					{#if lnurlFlowState === 'resolving'}
 						<Card variant="basic" padding="lg">
 							<div class="loading-section">
@@ -1064,9 +1053,7 @@
 								</Numpad>
 							</div>
 						</Card>
-					{/if}
-
-					{#if lnurlFlowState === 'error' && lnurlError}
+					{/if}{#if lnurlFlowState === 'error' && lnurlError}
 						<div class="error-banner" role="alert">
 							<Body size="sm">{lnurlError}</Body>
 							<button type="button" class="error-close" onclick={() => { lnurlError = ''; lnurlFlowState = lnurlPayInfo ? 'ready' : 'idle'; }} aria-label="Dismiss">
@@ -1088,9 +1075,7 @@
 								</div>
 							{/if}
 						</div>
-					</Card>
-
-					{#if lightningFee > 0 || lightningState === 'fee-calculating'}
+					</Card>{#if lightningFee > 0 || lightningState === 'fee-calculating'}
 						<Card variant="basic" padding="md">
 							<div class="fee-section">
 								<div class="detail-row">
@@ -1113,13 +1098,10 @@
 								{/if}
 							</div>
 						</Card>
-					{/if}
-
-					<div class="action-buttons">
+					{/if}<div class="action-buttons">
 						<Button variant="ghost" size="md" onclick={handleCheckFee} loading={lightningState === 'fee-calculating'}>
 							{#snippet children()}{$_('screen.send.check_fee')}{/snippet}
-						</Button>
-						<button
+						</Button><button
 							type="button"
 							class="send-confirm-btn"
 							onclick={handleConfirmSend}
@@ -1128,9 +1110,7 @@
 							{$_('screen.send.confirm_send')}
 						</button>
 					</div>
-				{/if}
-
-				{#if lightningState === 'error' && lightningError}
+				{/if}{#if lightningState === 'error' && lightningError}
 					<div class="error-banner" role="alert">
 						<Body size="sm">{lightningError}</Body>
 						<button type="button" class="error-close" onclick={() => lightningState = 'idle'} aria-label="Dismiss">
@@ -1140,10 +1120,7 @@
 				{/if}
 			{/if}
 		</div>
-	{/if}
-
-	<!-- ══════════════════ CASHU TAB ═══════════════════════ -->
-	{#if activeTab === 'cashu'}
+	{/if}<!-- ══════════════════ CASHU TAB ═══════════════════════ -->{#if activeTab === 'cashu'}
 		<div class="tab-content" role="tabpanel">
 			{#if cashuState === 'idle' || cashuState === 'error' || cashuState === 'preview'}
 				<Card variant="basic" padding="lg">
@@ -1154,17 +1131,13 @@
 							<span class="amount-unit">{$_('screen.balance.sats')}</span>
 						</div>
 					</div>
-				</Card>
-
-				<Numpad
+				</Card><Numpad
 					value={cashuAmount}
 					onchange={handleCashuAmountChange}
 					onconfirm={handlePreviewToken}
 					confirmLabel={$_('screen.send.preview_token')}
 					disabled={isCashuDisabled()}
-				/>
-
-				{#if cashuState === 'preview'}
+				/>{#if cashuState === 'preview'}
 					<Card variant="basic" padding="md">
 						<div class="preview-details">
 							<Body size="sm" color="secondary">
@@ -1184,9 +1157,7 @@
 							</Button>
 						</div>
 					</Card>
-				{/if}
-
-				{#if cashuState === 'error' && cashuError}
+				{/if}{#if cashuState === 'error' && cashuError}
 					<div class="error-banner" role="alert">
 						<Body size="sm">{cashuError}</Body>
 						<button type="button" class="error-close" onclick={() => cashuState = 'idle'} aria-label="Dismiss">
@@ -1194,16 +1165,12 @@
 						</button>
 					</div>
 				{/if}
-			{/if}
-
-			{#if cashuState === 'loading'}
+			{/if}{#if cashuState === 'loading'}
 				<div class="loading-section">
 					<div class="spinner-lg"></div>
 					<Body size="md" color="secondary">{$_('screen.send.creating_token')}</Body>
 				</div>
-			{/if}
-
-			{#if cashuState === 'success' && cashuToken}
+			{/if}{#if cashuState === 'success' && cashuToken}
 				<Card variant="basic" padding="lg">
 					<div class="success-section" data-flow="send-cashu">
 						<span class="success-icon" aria-hidden="true">
@@ -1273,19 +1240,14 @@
 				</Card>
 			{/if}
 		</div>
-	{/if}
-
-	<!-- ══════════════════ CONFIRMATION DIALOG ══════════════ -->
-	<Modal open={showConfirmDialog} onclose={cancelConfirm} ariaLabel={$_('screen.send.confirm_title')}>
+	{/if}<!-- ══════════════════ CONFIRMATION DIALOG ══════════════ --><Modal open={showConfirmDialog} onclose={cancelConfirm} title={$_('screen.send.confirm_title')} ariaLabel={$_('screen.send.confirm_title')}>
 		{#snippet children()}
 			<div class="confirm-dialog">
-				<Heading level="h3" align="center">{$_('screen.send.confirm_title')}</Heading>
 				<div class="confirm-details">
 					<div class="detail-row">
 						<Body size="sm" color="secondary">{$_('screen.send.amount')}</Body>
 						<Body size="sm" weight="semibold">{formatSat(lightningInvoiceAmount || 1)} {$_('screen.balance.sats')}</Body>
-					</div>
-					{#if lightningFee > 0}
+					</div>{#if lightningFee > 0}
 						<div class="detail-row">
 							<Body size="sm" color="secondary">{$_('screen.send.fee')}</Body>
 							<Body size="sm" weight="semibold">{formatSat(lightningFee)} {$_('screen.balance.sats')}</Body>
@@ -1297,42 +1259,27 @@
 							</span>
 						</div>
 					{/if}
-				</div>
-				<span class="text-error-warning">
-					<Body size="sm" align="center" weight="semibold">
-						<Iconly name="Warning" size={18} /> {$_('screen.send.irreversible_warning')}
-					</Body>
-				</span>
-				<div class="confirm-actions">
+				</div><div class="confirm-actions">
 					<Button variant="secondary" size="md" onclick={cancelConfirm}>
 						{#snippet children()}{$_('common.cancel')}{/snippet}
-					</Button>
-					<button type="button" class="danger-btn" onclick={executeLightningSend}>
-						{$_('screen.send.confirm_send_irreversible')}
+					</Button><button type="button" class="danger-btn" onclick={executeLightningSend}>
+						{$_('screen.send.confirm_send')}
 					</button>
 				</div>
 			</div>
 		{/snippet}
-	</Modal>
-
-	<!-- TASK-092 (F-061): Unlock Prompt — shown when wallet lock detected -->
-	<UnlockPrompt
+	</Modal><!-- TASK-092 (F-061): Unlock Prompt — shown when wallet lock detected --><UnlockPrompt
 		open={showUnlockPrompt}
 		onunlock={handleUnlockSuccess}
 		oncancel={handleUnlockCancel}
-	/>
-
-	<!-- Toast -->
-	<div class="toast-container">
+	/><!-- Toast --><div class="toast-container">
 		<Toast
 			message={toastMessage}
 			type={toastType}
 			visible={toastVisible}
 			onclose={() => toastVisible = false}
 		/>
-	</div>
-
-	<div class="bottom-spacer"></div>
+	</div><div class="bottom-spacer"></div>
 </div>
 
 <style>

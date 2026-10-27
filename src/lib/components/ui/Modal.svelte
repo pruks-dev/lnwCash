@@ -12,6 +12,8 @@
 		title?: string;
 		/** Variant: dialog or bottom sheet */
 		variant?: 'dialog' | 'bottomsheet';
+		/** Layout: auto (content-sized) or fixed (R7 pinned-scroll: flex-column fixed-height) */
+		layout?: 'auto' | 'fixed';
 		/** Aria label for the dialog */
 		ariaLabel?: string;
 		/** Aria describedby id */
@@ -24,6 +26,7 @@
 		onclose,
 		title = undefined,
 		variant = 'dialog',
+		layout = 'auto',
 		ariaLabel = undefined,
 		ariaDescribedby = undefined,
 		children
@@ -75,7 +78,7 @@
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 		<div
 			bind:this={modalRef}
-			class="modal-content modal-{variant}"
+			class="modal-content modal-{variant} modal-layout-{layout}"
 			role="dialog"
 			aria-modal="true"
 			aria-label={ariaLabel ?? title ?? 'Dialog'}
@@ -197,6 +200,30 @@
 		padding: var(--space-md);
 	}
 
+	/* TASK-4503 (layout=fixed — R7 pinned-scroll, moved in from mint page
+	   :global): flex-column fixed-height + body flex:1 scroll-inside.
+	   auto (default) keeps content-sized behavior above — confirm back
+	   to auto. Specificity/order: these sit after base rules so equal-
+	   weight .modal-layout-fixed beats .modal-content overflow. */
+	.modal-layout-fixed {
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
+
+	.modal-dialog.modal-layout-fixed {
+		height: min(78vh, 640px);
+		max-height: 85vh;
+	}
+
+	.modal-layout-fixed .modal-body {
+		display: flex;
+		flex-direction: column;
+		flex: 1 1 auto;
+		min-height: 0;
+		overflow: hidden;
+	}
+
 	@keyframes backdrop-in {
 		from { opacity: 0; }
 		to { opacity: 1; }
@@ -219,6 +246,12 @@
 		}
 		to {
 			transform: translateY(0);
+		}
+	}
+
+	@media (max-height: 640px) {
+		.modal-dialog.modal-layout-fixed {
+			height: 88vh;
 		}
 	}
 </style>

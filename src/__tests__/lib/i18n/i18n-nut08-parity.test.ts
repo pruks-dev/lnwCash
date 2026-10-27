@@ -109,7 +109,7 @@ const REQUIRED_NUT08_KEYS = [
 	'nut08.error.derive'
 ] as const;
 
-const TOTAL_KEYS = 432; // 429 (R6) + 3 INTENT-042 screen.receive.mint_new_badge / error_new_mint_offline / error_swap_fee_short (TASK-4210 verified: flat key count = 432). Baseline history: TASK-315 → 422, TASK-316 → 427, TASK-FIX-320 → 428, TASK-FIX-325 → 423, iter5 → 428, R6 → 429 (TASK-4006), INTENT-042 → 432.
+const TOTAL_KEYS = 430; // 432 (INTENT-042) minus 2 = TASK-4502 orphan sweep of the irreversible pair (TH/EN symmetric deletion).
 
 describe('TASK-316: i18n NUT-08 namespace + parity', () => {
 	beforeAll(() => {
@@ -144,7 +144,7 @@ describe('TASK-316: i18n NUT-08 namespace + parity', () => {
 		expect(hasThaiChars, 'th.json nut08.* values must contain Thai characters').toBe(true);
 	});
 
-	it('c) parity: en.json keys === th.json keys (429 = 429, full parity)', () => {
+	it('c) parity: en.json keys === th.json keys (430 = 430, full parity)', () => {
 		const enKeys = Object.keys(en).sort();
 		const thKeys = Object.keys(th).sort();
 

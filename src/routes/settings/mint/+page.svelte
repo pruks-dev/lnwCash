@@ -599,12 +599,14 @@
 	</div>
 </div>
 
-<!-- Add Mint Modal -->
+<!-- Add Mint Modal — R7 pinned-scroll: layout fixed (Modal owns
+     flex-column fixed-height + body flex:1 — no :global needed) -->
 <Modal
 	open={showAddModal}
 	onclose={closeAddModal}
 	title={$_('mint.settings.add')}
 	variant="dialog"
+	layout="fixed"
 >
 	{#snippet children()}
 		<div class="add-mint-form">
@@ -1117,22 +1119,6 @@
 		overflow: hidden;
 	}
 
-	:global(.modal-dialog) {
-		display: flex;
-		flex-direction: column;
-		height: min(78vh, 640px);
-		max-height: 85vh;
-		overflow: hidden;
-	}
-
-	:global(.modal-body) {
-		display: flex;
-		flex-direction: column;
-		flex: 1 1 auto;
-		min-height: 0;
-		overflow: hidden;
-	}
-
 	.url-block {
 		display: flex;
 		flex-direction: column;
@@ -1359,9 +1345,6 @@
 	}
 
 	@media (max-height: 640px) {
-		:global(.modal-dialog) {
-			height: 88vh;
-		}
 		.discover-list {
 			min-height: 96px;
 		}

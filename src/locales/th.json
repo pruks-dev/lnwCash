@@ -338,8 +338,6 @@
 	"screen.send.total": "รวมทั้งสิ้น",
 	"screen.send.check_fee": "ตรวจสอบค่าธรรมเนียม",
 	"screen.send.confirm_send": "ยืนยันการส่ง",
-	"screen.send.irreversible_warning": "ธุรกรรมนี้ไม่สามารถยกเลิกได้",
-	"screen.send.confirm_send_irreversible": "ยืนยันการส่ง — ไม่สามารถยกเลิกได้",
 	"screen.send.sending": "กำลังส่ง...",
 	"screen.send.do_not_close": "กรุณารอ อย่าปิดแอป",
 	"screen.send.success_payment": "ส่งเงินสำเร็จ",
