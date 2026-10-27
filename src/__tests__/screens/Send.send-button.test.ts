@@ -17,7 +17,8 @@
  * keydown resolve) are unchanged and asserted for regression.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/svelte';
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import Send from '../../screens/Send.svelte';
 
 vi.mock('svelte-i18n', () => {
@@ -127,10 +128,14 @@ describe('Send unified button (TASK-297)', () => {
 			if (url.includes('/.well-known/lnurlp/')) return jsonResponse(PAY_INFO);
 			if (url.includes('service.com')) return jsonResponse(PAY_INFO);
 			if (url.includes('/callback')) return jsonResponse({ pr: 'lnbc1testinvoice' });
+			// TASK-4600: auto-quote — melt quote endpoint serves fee_reserve: 2
+			if (url.includes('/v1/melt/quote/bolt11')) return jsonResponse({ quote: 'q-test', amount: 1, fee_reserve: 2, state: 'UNPAID' });
 			throw new Error('unexpected fetch: ' + url);
 		});
 		vi.stubGlobal('fetch', fetchMock);
 	});
+
+	const quoteCalls = () => fetchMock.mock.calls.filter((c) => String(c[0]).includes('/v1/melt/quote/bolt11'));
 
 	afterEach(() => {
 		cleanup();
@@ -225,19 +230,52 @@ describe('Send unified button (TASK-297)', () => {
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
-	it('valid bolt11 → auto-validates + preview; Send button NOT shown', async () => {
+	// TASK-4600: valid bolt11 auto-quotes exactly once per distinct invoice.
+	// Success (fee=2>0) hides the Check fee button; the merged single card
+	// shows amount+fee+total with no desc/memo row.
+	it('valid bolt11 → auto-validates + auto-quotes once; success hides check_fee; guard blocks re-quote', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
+		await tick();
 		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.input(textarea, { target: { value: VALID_BOLT11 } });
 
-		// bolt11 preview active (check fee action renders)
-		expect(await screen.findByText('screen.send.check_fee')).toBeTruthy();
 		// Send button hidden on bolt11 preview
 		expect(screen.queryByRole('button', { name: 'screen.send.lnaddr.send_button' })).toBeNull();
 		// no LNURL resolve
 		expect(document.querySelector('[data-flow="send-lnurl"]')).toBeNull();
-		expect(fetchMock).not.toHaveBeenCalled();
+		// auto-quote fired exactly once (melt quote — not an LNURL resolve)
+		await waitFor(() => expect(quoteCalls().length).toBe(1));
+		// success (fee>0): check_fee hidden, merged card shows total, no desc row
+		expect(await screen.findByText('screen.send.total')).toBeTruthy();
+		expect(screen.getByText('2 screen.balance.sats')).toBeTruthy();
+		expect(screen.queryByText('screen.send.check_fee')).toBeNull();
+		expect(screen.queryByText('screen.send.description')).toBeNull();
+
+		// guard: same invoice re-validated → NO second quote
+		await fireEvent.input(textarea, { target: { value: VALID_BOLT11 } });
+		await tick();
+		expect(quoteCalls().length).toBe(1);
+
+		// distinct invoice → quotes again (once)
+		await fireEvent.input(textarea, { target: { value: `${VALID_BOLT11}x` } });
+		await waitFor(() => expect(quoteCalls().length).toBe(2));
+	});
+
+	it('valid bolt11 + failed quote → check_fee stays for retry (error, fee=0)', async () => {
+		fetchMock.mockImplementationOnce(async () => {
+			throw new Error('fetch failed: mint unreachable');
+		});
+		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
+		await tick();
+		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
+
+		await fireEvent.input(textarea, { target: { value: VALID_BOLT11 } });
+
+		// failure: same Check fee button remains for manual retry, no total row
+		expect(await screen.findByText('screen.send.check_fee')).toBeTruthy();
+		expect(screen.queryByText('screen.send.total')).toBeNull();
+		expect(quoteCalls().length).toBe(1);
 	});
 
 	it('paste address → auto-resolve; Send button hidden after resolve (before it was shown)', async () => {

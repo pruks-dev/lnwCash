@@ -251,10 +251,14 @@ describe('Send — prefix strip (TASK-FIX-iter5)', () => {
 			if (url.includes('/.well-known/lnurlp/')) return jsonResponse(PAY_INFO);
 			if (url.includes('service.com')) return jsonResponse(PAY_INFO);
 			if (url.includes('/callback')) return jsonResponse({ pr: 'lnbc1testinvoice' });
+			// TASK-4600: auto-quote — melt quote endpoint serves fee_reserve: 2
+			if (url.includes('/v1/melt/quote/bolt11')) return jsonResponse({ quote: 'q-test', amount: 1, fee_reserve: 2, state: 'UNPAID' });
 			throw new Error('unexpected fetch: ' + url);
 		});
 		vi.stubGlobal('fetch', fetchMock);
 	});
+
+	const quoteCalls = () => fetchMock.mock.calls.filter((c) => String(c[0]).includes('/v1/melt/quote/bolt11'));
 
 	afterEach(() => {
 		cleanup();
@@ -263,6 +267,7 @@ describe('Send — prefix strip (TASK-FIX-iter5)', () => {
 
 	it('strips lightning: prefix from pasted bolt11 (textarea shows canonical form)', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
+		await tick();
 		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.paste(textarea, {
@@ -271,13 +276,16 @@ describe('Send — prefix strip (TASK-FIX-iter5)', () => {
 
 		// textarea reflects canonical form (no prefix)
 		expect(textarea.value).toBe(VALID_BOLT11);
-		// bolt11 auto-validated → preview rendered (check_fee button visible)
-		expect(await screen.findByText('screen.send.check_fee')).toBeTruthy();
-		expect(fetchMock).not.toHaveBeenCalled();
+		// bolt11 auto-validated + auto-quoted once (melt quote — not LNURL)
+		await waitFor(() => expect(quoteCalls().length).toBe(1));
+		// success (fee>0): merged card total visible, check_fee hidden
+		expect(await screen.findByText('screen.send.total')).toBeTruthy();
+		expect(screen.queryByText('screen.send.check_fee')).toBeNull();
 	});
 
 	it('strips bitcoin: prefix from pasted bolt11', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
+		await tick();
 		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.paste(textarea, {
@@ -285,7 +293,8 @@ describe('Send — prefix strip (TASK-FIX-iter5)', () => {
 		});
 
 		expect(textarea.value).toBe(VALID_BOLT11);
-		expect(await screen.findByText('screen.send.check_fee')).toBeTruthy();
+		await waitFor(() => expect(quoteCalls().length).toBe(1));
+		expect(await screen.findByText('screen.send.total')).toBeTruthy();
 	});
 
 	it('strips lightning: prefix from pasted lnurl bech32 (resolves as lnurl)', async () => {
@@ -317,14 +326,16 @@ describe('Send — prefix strip (TASK-FIX-iter5)', () => {
 
 	it('paste lightning:lnbc1... into textarea → resolves as bolt11 (canonical form)', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
+		await tick();
 		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.paste(textarea, {
 			clipboardData: { getData: () => `lightning:${VALID_BOLT11}` }
 		});
 
-		// canonical form starts with lnbc → bolt11 → preview rendered
-		expect(await screen.findByText('screen.send.check_fee')).toBeTruthy();
+		// canonical form starts with lnbc → bolt11 → auto-quoted → total shown
+		await waitFor(() => expect(quoteCalls().length).toBe(1));
+		expect(await screen.findByText('screen.send.total')).toBeTruthy();
 	});
 
 	it('handleInvoiceKeydown (Enter) strips prefix before classify', async () => {
@@ -363,6 +374,7 @@ describe('Send — prefix strip (TASK-FIX-iter5)', () => {
 
 	it('bare uppercase bolt11 (LNBC1...) → detects as bolt11 + auto-validates', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
+		await tick();
 		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.paste(textarea, {
@@ -370,13 +382,16 @@ describe('Send — prefix strip (TASK-FIX-iter5)', () => {
 		});
 
 		// detectInputType matches uppercase bolt11 via /^ln(bc|tb|bcrt|sb)/i
-		// → mock decodeBolt11 returns valid → check_fee rendered
-		expect(await screen.findByText('screen.send.check_fee')).toBeTruthy();
-		expect(fetchMock).not.toHaveBeenCalled();
+		// → mock decodeBolt11 returns valid → auto-quoted once (melt quote)
+		await waitFor(() => expect(quoteCalls().length).toBe(1));
+		// success (fee>0): merged card total visible, check_fee hidden
+		expect(await screen.findByText('screen.send.total')).toBeTruthy();
+		expect(screen.queryByText('screen.send.check_fee')).toBeNull();
 	});
 
 	it('prefixed uppercase bolt11 (lightning:LNBC1...) → strips prefix + detects as bolt11', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
+		await tick();
 		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.paste(textarea, {
@@ -384,12 +399,14 @@ describe('Send — prefix strip (TASK-FIX-iter5)', () => {
 		});
 
 		// stripInputPrefix removes lightning: (case-insensitive) → uppercase
-		// bolt11 passed to detectInputType → matches → auto-validates
-		expect(await screen.findByText('screen.send.check_fee')).toBeTruthy();
+		// bolt11 passed to detectInputType → matches → auto-validates + auto-quotes
+		await waitFor(() => expect(quoteCalls().length).toBe(1));
+		expect(await screen.findByText('screen.send.total')).toBeTruthy();
 	});
 
 	it('all-uppercase prefixed bolt11 (LIGHTNING:LNBC1...) → case-insensitive strip + detects as bolt11', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
+		await tick();
 		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 
 		await fireEvent.paste(textarea, {
@@ -397,8 +414,9 @@ describe('Send — prefix strip (TASK-FIX-iter5)', () => {
 		});
 
 		// strip regex is /^(lightning:|bitcoin:)/i so LIGHTNING: is also stripped
-		// → detectInputType matches uppercase bolt11 → auto-validates
-		expect(await screen.findByText('screen.send.check_fee')).toBeTruthy();
+		// → detectInputType matches uppercase bolt11 → auto-validates + auto-quotes
+		await waitFor(() => expect(quoteCalls().length).toBe(1));
+		expect(await screen.findByText('screen.send.total')).toBeTruthy();
 	});
 
 	it('bare uppercase lnurl (LNURL1...) → detects as lnurl + resolves', async () => {

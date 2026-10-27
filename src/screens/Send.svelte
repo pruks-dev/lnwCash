@@ -123,6 +123,14 @@
 	let lnurlError: string = $state('');
 	let lastResolvedInput: string = $state('');
 
+	// TASK-4600: auto-quote guard — one auto handleCheckFee per distinct invoice
+	// string. validateInvoiceSimple still runs every keystroke (local bech32
+	// decode, no network); the guard fires the network quote only on the first
+	// invalid→valid transition of each distinct invoice. Persists across
+	// resetLightningInputState (per-keystroke resets); cleared only by full
+	// resetLightning (new payment).
+	let lastAutoQuotedInvoice: string = $state('');
+
 	// ─── Cashu state ─────────────────────────────────────────
 	type CashuState = 'idle' | 'preview' | 'loading' | 'success' | 'error';
 	let cashuState: CashuState = $state('idle');
@@ -411,6 +419,17 @@
 		lightningInvoiceDesc = result.description || formatBolt11Summary(result);
 		lightningInvoiceValid = true;
 		lightningState = 'idle';
+
+		// TASK-4600: auto-trigger — first invalid→valid transition of each
+		// distinct invoice string fires exactly one quote. All 4 bolt11 entry
+		// points (input/keydown/paste/Send-click/QR/hash/paste-btn) funnel
+		// through this validate, so the guard lives here alone. Fire-and-forget
+		// (handleCheckFee manages its own async state); no retry loop.
+		const canonicalInvoice = invoice.trim();
+		if (canonicalInvoice !== lastAutoQuotedInvoice) {
+			lastAutoQuotedInvoice = canonicalInvoice;
+			void handleCheckFee();
+		}
 	}
 
 	/** Format a brief summary from bolt11 decoded data */
@@ -632,13 +651,20 @@
 		lightningState = 'fee-calculating';
 		lightningError = '';
 
+		// TASK-4600 stale guard: capture the invoice at quote time; if the user
+		// edits/pastes a new invoice mid-flight, the stale result is dropped on
+		// return (no overwrite, no retry loop — the new invoice auto-quotes itself).
+		const quoteInvoice = lightningInvoiceInput.trim();
+
 		try {
 			// Call melt quote to get fee estimate — use thin wrapper with unit support (TASK-068)
-			const quote = await requestMeltQuoteWithUnit(mintUrl.trim(), lightningInvoiceInput.trim(), lightningInvoiceAmount || undefined);
+			const quote = await requestMeltQuoteWithUnit(mintUrl.trim(), quoteInvoice, lightningInvoiceAmount || undefined);
+			if (lightningInvoiceInput.trim() !== quoteInvoice) return;
 			lightningFee = quote.fee_reserve ?? 0;
 			lightningTotal = (lightningInvoiceAmount || 1) + lightningFee;
 			lightningState = 'idle';
 		} catch (e) {
+			if (lightningInvoiceInput.trim() !== quoteInvoice) return;
 			// Fee check failed — still allow sending with estimated fee=0
 			lightningFee = 0;
 			lightningTotal = lightningInvoiceAmount || 1;
@@ -737,6 +763,9 @@
 		lightningInvoiceAmount = 0;
 		lightningInvoiceDesc = '';
 		lightningInvoiceValid = false;
+		// TASK-4600: full reset clears the auto-quote guard (new payment may
+		// reuse a previous invoice string and must quote again).
+		lastAutoQuotedInvoice = '';
 		lightningFee = 0;
 		lightningTotal = 0;
 		lightningError = '';
@@ -1062,46 +1091,47 @@
 						</div>
 					{/if}
 				{:else if lightningInvoiceValid}
+					<!-- TASK-4600: ONE merged card — 3 rows max (amount/fee/total).
+					     lightningInvoiceDesc/formatBolt11Summary decode kept in script,
+					     removed from render (no desc/memo row). Fee row: '...' while
+					     calculating / value on success (fee>0) / hidden when never
+					     quoted or failed. Total row: only when fee>0. -->
 					<Card variant="basic" padding="md">
 						<div class="preview-section">
 							<div class="detail-row">
 								<Body size="sm" color="secondary">{$_('screen.send.amount')}</Body>
 								<Body size="sm" weight="semibold">{formatSat(lightningInvoiceAmount)} {$_('screen.balance.sats')}</Body>
 							</div>
-							{#if lightningInvoiceDesc}
-								<div class="detail-row">
-									<Body size="sm" color="secondary">{$_('screen.send.description')}</Body>
-									<Body size="sm" weight="semibold" truncate>{lightningInvoiceDesc}</Body>
-								</div>
-							{/if}
-						</div>
-					</Card>{#if lightningFee > 0 || lightningState === 'fee-calculating'}
-						<Card variant="basic" padding="md">
-							<div class="fee-section">
+							{#if lightningState === 'fee-calculating'}
 								<div class="detail-row">
 									<Body size="sm" color="secondary">{$_('screen.send.fee')}</Body>
 									<Body size="sm" weight="semibold">
-										{#if lightningState === 'fee-calculating'}
-											<span class="fee-loading">...</span>
-										{:else}
-											{formatSat(lightningFee)} {$_('screen.balance.sats')}
-										{/if}
+										<span class="fee-loading">...</span>
 									</Body>
 								</div>
-								{#if lightningTotal > 0 && lightningState !== 'fee-calculating'}
-									<div class="detail-row detail-row-total">
-										<Body size="md" weight="semibold">{$_('screen.send.total')}</Body>
-										<span class="text-primary-total">
-											<Body size="md" weight="bold">{formatSat(lightningTotal)} {$_('screen.balance.sats')}</Body>
-										</span>
-									</div>
-								{/if}
-							</div>
-						</Card>
-					{/if}<div class="action-buttons">
-						<Button variant="ghost" size="md" onclick={handleCheckFee} loading={lightningState === 'fee-calculating'}>
-							{#snippet children()}{$_('screen.send.check_fee')}{/snippet}
-						</Button><button
+							{:else if lightningFee > 0}
+								<div class="detail-row">
+									<Body size="sm" color="secondary">{$_('screen.send.fee')}</Body>
+									<Body size="sm" weight="semibold">{formatSat(lightningFee)} {$_('screen.balance.sats')}</Body>
+								</div>
+								<div class="detail-row detail-row-total">
+									<Body size="md" weight="semibold">{$_('screen.send.total')}</Body>
+									<span class="text-primary-total">
+										<Body size="md" weight="bold">{formatSat(lightningTotal)} {$_('screen.balance.sats')}</Body>
+									</span>
+								</div>
+							{/if}
+						</div>
+					</Card><div class="action-buttons">
+						<!-- TASK-4600: Check fee visible only while NOT quoted-ok
+						     (fee<=0: never-quoted or failed → manual retry via same
+						     button, check_fee key kept). Success (fee>0) hides it.
+						     No tap-row / auto-retry added. -->
+						{#if lightningFee <= 0}
+							<Button variant="ghost" size="md" onclick={handleCheckFee} loading={lightningState === 'fee-calculating'}>
+								{#snippet children()}{$_('screen.send.check_fee')}{/snippet}
+							</Button>
+						{/if}<button
 							type="button"
 							class="send-confirm-btn"
 							onclick={handleConfirmSend}
@@ -1548,9 +1578,8 @@
 		opacity: 0.7;
 	}
 
-	/* ─── Preview / Fee ───────────────── */
-	.preview-section,
-	.fee-section {
+	/* ─── Preview (TASK-4600: single merged card — .fee-section folded in) ─ */
+	.preview-section {
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-sm);
@@ -1608,19 +1637,24 @@
 	}
 
 	/* TASK-161 (F-V18-007): Spacing-only design — 2px cyan border-top removed, padding-top increased to preserve visual rhythm */
+	/* TASK-4602 (gap_spec_rev9): gap above Total 24px → 8px — padding-top md
+	   16px → sm 8px + margin-top sm 8px → 0 = 8px, matches row gap. Single
+	   shared class: fixes card (:1117) + modal (:1285) together. */
 	.detail-row-total {
 		border-bottom: none;
-		padding-top: var(--space-md);
-		margin-top: var(--space-sm);
+		padding-top: var(--space-sm);
+		margin-top: 0;
 	}
 
-	/* TASK-F-NEW-008: Lightning invoice amount (preview section, first row) — Cyan highlight.
-	   Target via :global() to reach the Body child component's <p data-weight="semibold"> element.
-	   Scoped to .preview-section (Lightning tab only — Cashu uses .preview-details, not .preview-section). */
+	/* TASK-4600: F-NEW-008 NEUTRALIZED — the merged single card returns the
+	   amount row to the main text color (NOT cyan). The rule below is kept as
+	   a comment for history; only Total stays cyan via .text-primary-total.
+	   amount/fee keep text/secondary. */
+	/* NEUTRALIZED (was F-NEW-008 cyan amount):
 	.preview-section .detail-row:first-child :global([data-weight='semibold']) {
 		color: var(--color-primary);
 		font-weight: var(--font-weight-bold);
-	}
+	} */
 
 	.detail-row:last-child {
 		border-bottom: none;
@@ -1812,6 +1846,16 @@
 	}
 
 	.text-primary-total {
+		color: var(--color-primary);
+	}
+
+	/* TASK-4600: Total-blue must reach the number itself. Body renders
+	   <p data-color="text"> which sets its own color, overriding the inherited
+	   span color — so dye the bold number directly. Doubled-class specificity
+	   beats Body's scoped [data-color] rule. Covers BOTH surfaces (card +
+	   confirm modal: both use Body weight="bold" for the total value).
+	   amount/fee (semibold) are untouched — never cyan. */
+	.text-primary-total.text-primary-total :global([data-weight='bold']) {
 		color: var(--color-primary);
 	}
 

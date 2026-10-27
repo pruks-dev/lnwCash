@@ -1,14 +1,15 @@
 /**
  * TASK-280 — bolt11 invoice path regression (Send.svelte).
- *
- * The existing bolt11 flow (lnbc / lntb / lnbcrt) MUST remain intact and MUST
- * NOT enter the LNURL/lightning-address resolve flow.
+ * TASK-4600 — valid bolt11 auto-quotes (melt quote, exactly once per distinct
+ * invoice). The quote fetch is EXPECTED; what MUST NOT happen is entering the
+ * LNURL/lightning-address resolve flow.
  *
  * decodeBolt11 is the REAL implementation here (NOT mocked) so a real bolt11
  * invoice validates end-to-end through the existing path.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/svelte';
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import Send from '../../screens/Send.svelte';
 
 vi.mock('svelte-i18n', () => {
@@ -73,11 +74,25 @@ describe('Send bolt11 regression (TASK-280)', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
-		// any accidental LNURL resolve would hit fetch — make it fail loudly
-		fetchMock = vi.fn(async () => {
-			throw new Error('LNURL fetch must not be called for bolt11 input');
+		// TASK-4600: the melt-quote fetch IS expected (auto-quote, once per
+		// distinct invoice). Anything LNURL-shaped still fails loudly.
+		fetchMock = vi.fn(async (input: string | URL | Request) => {
+			const url = typeof input === 'string' ? input : input.toString();
+			if (url.includes('/v1/melt/quote/bolt11')) {
+				return new Response(JSON.stringify({ quote: 'q-test', amount: 250000, fee_reserve: 2, state: 'UNPAID' }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				});
+			}
+			throw new Error('LNURL fetch must not be called for bolt11 input: ' + url);
 		});
 		vi.stubGlobal('fetch', fetchMock);
+	});
+
+	const quoteCalls = () => fetchMock.mock.calls.filter((c) => String(c[0]).includes('/v1/melt/quote/bolt11'));
+	const lnurlCalls = () => fetchMock.mock.calls.filter((c) => {
+		const u = String(c[0]);
+		return !u.includes('/v1/melt/quote/bolt11');
 	});
 
 	afterEach(() => {
@@ -85,19 +100,33 @@ describe('Send bolt11 regression (TASK-280)', () => {
 		vi.unstubAllGlobals();
 	});
 
-	it('lnbc invoice → bolt11 preview (real decode), NO lnurl resolve, NO fetch', async () => {
+	it('lnbc invoice → bolt11 preview (real decode) + auto-quote once; NO lnurl resolve', async () => {
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
+		await tick();
 
 		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
 		await fireEvent.input(textarea, { target: { value: BOLT11_2500U } });
 
-		// bolt11 path taken: "check fee" action renders once the invoice is valid
-		expect(await screen.findByText('screen.send.check_fee')).toBeTruthy();
+		// TASK-4600: auto-quote fired exactly once (melt quote — not LNURL)
+		await waitFor(() => expect(quoteCalls().length).toBe(1));
+		expect(lnurlCalls().length).toBe(0);
+
+		// success (fee>0): merged single card — total visible, check_fee hidden,
+		// no desc/memo row in render
+		expect(await screen.findByText('screen.send.total')).toBeTruthy();
+		expect(document.querySelector('.detail-row-total')).toBeTruthy();
+		expect(screen.queryByText('screen.send.check_fee')).toBeNull();
+		expect(screen.queryByText('screen.send.description')).toBeNull();
+
+		// guard: same invoice re-validated → NO second quote
+		await fireEvent.input(textarea, { target: { value: BOLT11_2500U } });
+		await tick();
+		expect(quoteCalls().length).toBe(1);
 
 		// did NOT enter the LNURL flow
 		expect(screen.queryByText('screen.send.lnaddr.resolving')).toBeNull();
 		expect(document.querySelector('[data-flow="send-lnurl"]')).toBeNull();
-		expect(fetchMock).not.toHaveBeenCalled();
+		expect(lnurlCalls().length).toBe(0);
 	});
 
 	it('lntb-prefixed input → routed to bolt11 path (not lnurl)', async () => {
