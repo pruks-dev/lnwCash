@@ -97,18 +97,25 @@ function chainProof(amount: number, label: string): TokenProof {
 }
 
 describe('TASK-1315: P3 pending-spendability gate + P8 restore immunity', () => {
+	// TASK-4408 (INTENT-044 fix-forward, B-4405-01): explicit 30s hook budget.
+	// CI red on run 40449631481 was `Hook timed out in 10000ms` in this
+	// beforeEach (deleteProofDB scheduling starved under full-suite parallel
+	// load) — NOT an assertion failure, prod untouched, no 4400–4407 behavior
+	// involved. This file is already acknowledged heavy (per-test 15000ms
+	// below: Carol-chain crypto + real restoreBatch); the hooks get the same
+	// headroom. Test-only change.
 	beforeEach(async () => {
 		vi.clearAllMocks();
 		localStorage.clear();
 		await deleteProofDB();
 		resetProofDB();
 		vi.mocked(getMintPubkey).mockReturnValue(mint.A);
-	});
+	}, 30000);
 
 	afterEach(async () => {
 		await deleteProofDB();
 		resetProofDB();
-	});
+	}, 30000);
 
 	// ── Layer 1 (DB) + role separation ──
 	it('g1) getUnspentProofs EXCLUDES pending (spendable pool) while getPendingNormalizeProofs sees the full pile — two queries, two roles', async () => {
