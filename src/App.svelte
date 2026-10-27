@@ -196,6 +196,45 @@
 	// EXPIRED → failed (unchanged). Receive-open round → skip entirely.
 	let pollInterval: ReturnType<typeof setInterval> | undefined;
 
+	// TASK-4402 (INTENT-044 CENTRAL-STAGGER-COOLDOWN): pacing for the central
+	// poll — per-tx stagger (300-500ms + jitter, no burst) + per-mint cooldown
+	// (a 429 parks ONLY that mint_url; other mints keep flowing). The map is
+	// keyed by tx.mint_url at runtime — no mint name/URL is hardcoded.
+	const STAGGER_MIN_MS = 300;
+	const STAGGER_MAX_MS = 500;
+	const STAGGER_JITTER_MS = 100;
+	const COOLDOWN_DEFAULT_MS = 30_000;
+	const COOLDOWN_MAX_MS = 300_000;
+	const mintCooldownUntil = new Map<string, number>();
+
+	const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+	// Uniform 300-500ms base + 0-100ms jitter → each gap lands in [300, 600]ms.
+	function staggerDelayMs(rand: () => number = Math.random): number {
+		return STAGGER_MIN_MS + rand() * (STAGGER_MAX_MS - STAGGER_MIN_MS) + rand() * STAGGER_JITTER_MS;
+	}
+
+	// Generic 429 recognition (any mint): HTTP status 429 or the
+	// RateLimitedError name from $lib/cashu/client — never mint-specific.
+	function isRateLimited(err: unknown): boolean {
+		if (!err || typeof err !== 'object') return false;
+		const e = err as { status?: unknown; name?: unknown };
+		if (e.status === 429) return true;
+		return typeof e.name === 'string' && e.name === 'RateLimitedError';
+	}
+
+	function retryAfterOf(err: unknown): number | undefined {
+		const ms = (err as { retryAfterMs?: unknown }).retryAfterMs;
+		return typeof ms === 'number' && Number.isFinite(ms) && ms > 0 ? ms : undefined;
+	}
+
+	// Park ONLY this mint_url until now + Retry-After (or default, capped).
+	function parkMintOnRateLimit(mintUrl: string, err: unknown): void {
+		if (!isRateLimited(err)) return;
+		const waitMs = Math.min(retryAfterOf(err) ?? COOLDOWN_DEFAULT_MS, COOLDOWN_MAX_MS);
+		mintCooldownUntil.set(mintUrl, Date.now() + waitMs);
+	}
+
 	onMount(() => {
 
 		async function poll() {
@@ -207,7 +246,17 @@
 				const pendingTxs = allTxs.filter(tx => tx.type === 'mint' && tx.status === 'pending');
 				if (pendingTxs.length === 0) return;
 
-				for (const tx of pendingTxs) {
+				for (let i = 0; i < pendingTxs.length; i++) {
+					const tx = pendingTxs[i];
+					// TASK-4402 per-mint cooldown: this mint parked → skip ONLY it,
+					// other mints continue in this same round.
+					const cooledUntil = mintCooldownUntil.get(tx.mint_url);
+					if (cooledUntil !== undefined) {
+						if (Date.now() < cooledUntil) continue;
+						mintCooldownUntil.delete(tx.mint_url);
+					}
+					// TASK-4402 per-tx stagger: 300-500ms + jitter between checks.
+					if (i > 0) await sleep(staggerDelayMs());
 					try {
 						const quoteId = tx.id.startsWith('mint-') ? tx.id.slice(5) : tx.id;
 						const quote = await checkMintQuote(tx.mint_url, quoteId);
@@ -250,6 +299,8 @@
 								}
 							} catch (mintErr) {
 								// Same rule on throw: revert claim to pending — never failed, never confirmed-float.
+								// TASK-4402: a 429 here parks ONLY this mint (others keep flowing).
+								parkMintOnRateLimit(tx.mint_url, mintErr);
 								console.warn(`[mint-poll] Mint failed for ${tx.id}, released to pending:`, mintErr);
 								await updateTransaction(tx.id, { status: 'pending' }).catch(() => {});
 							}
@@ -258,6 +309,9 @@
 							console.log(`[mint-poll] Mint expired: ${tx.id}`);
 						}
 					} catch (txErr) {
+						// TASK-4402: a 429 parks ONLY this mint_url — other mints
+						// continue in this same round and the next rounds.
+						parkMintOnRateLimit(tx.mint_url, txErr);
 						console.warn(`[mint-poll] Error checking mint tx ${tx.id}:`, txErr);
 					}
 				}

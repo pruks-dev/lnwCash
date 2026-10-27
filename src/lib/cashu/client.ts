@@ -87,6 +87,44 @@ export class NetworkError extends CashuError {
 	}
 }
 
+/**
+ * TASK-4400 (CLIENT-429-RECOGNIZE): mint answered HTTP 429 Too Many Requests.
+ * Generic for every mint — never carries a mint name/URL.
+ * Carries the parsed `Retry-After` delay (`retryAfterMs`, undefined when the
+ * header is absent/unparsable). fetchFromMint throws this immediately and
+ * never retries 429 inline — the caller decides when to retry.
+ */
+export class RateLimitedError extends CashuError {
+	constructor(message: string, retryAfterMs?: number, code?: number | string) {
+		super(message, 429, code);
+		this.name = 'RateLimitedError';
+		this.retryAfterMs = retryAfterMs;
+	}
+	retryAfterMs?: number;
+}
+
+/**
+ * TASK-4400: parse a `Retry-After` header value into milliseconds.
+ * Accepts delay-seconds ("120") or an HTTP-date. Returns undefined when the
+ * value is missing or unparsable. Pure + generic (no mint knowledge).
+ */
+export function parseRetryAfterMs(
+	value: string | null | undefined,
+	nowMs: number = Date.now()
+): number | undefined {
+	if (value === null || value === undefined) return undefined;
+	const trimmed = value.trim();
+	if (trimmed === '') return undefined;
+	if (/^\d+$/.test(trimmed)) {
+		return Number(trimmed) * 1000;
+	}
+	const dateMs = Date.parse(trimmed);
+	if (!Number.isNaN(dateMs)) {
+		return Math.max(0, dateMs - nowMs);
+	}
+	return undefined;
+}
+
 export class InvalidResponseError extends CashuError {
 	constructor(mintUrl: string, details?: string) {
 		super(`Invalid response from ${mintUrl}${details ? `: ${details}` : ''}`);
@@ -326,6 +364,19 @@ async function fetchFromMint<T>(
 					// ignore parse errors
 				}
 				const codeSuffix = errorCode !== undefined ? ` (${errorCode})` : '';
+				// TASK-4400: recognize 429 generically (any mint). Parse Retry-After
+				// (delay-seconds or HTTP-date) and throw RateLimitedError immediately
+				// — never retry 429 inline here; the caller decides when to retry.
+				if (response.status === 429) {
+					const retryAfterMs = parseRetryAfterMs(
+						response.headers?.get?.('Retry-After') ?? null
+					);
+					throw new RateLimitedError(
+						`HTTP 429${codeSuffix}: ${errorDetail || 'Rate limit exceeded'}`,
+						retryAfterMs,
+						errorCode
+					);
+				}
 				const err = new CashuError(
 					`HTTP ${response.status}${codeSuffix}: ${errorDetail || response.statusText}`,
 					response.status,
@@ -543,6 +594,8 @@ export async function mintTokens(
  *
  * Returns the quote with its current state (UNPAID, PAID, EXPIRED, ISSUED).
  * The caller should poll this until state === 'PAID' before calling mintTokens.
+ *
+ * TASK-4400: forwards fetch errors unchanged — including RateLimitedError (429).
  */
 export async function checkMintQuote(
 	mintUrl: string,
@@ -577,6 +630,7 @@ export async function checkMeltQuote(
  * @param pollIntervalMs - Initial poll interval in ms (default: 2000)
  * @returns The quote once it reaches target state
  * @throws Error if quote expires or times out
+ * TASK-4400: fetch errors (incl. RateLimitedError on 429) propagate unchanged.
  */
 export async function pollMintQuoteUntil(
 	mintUrl: string,

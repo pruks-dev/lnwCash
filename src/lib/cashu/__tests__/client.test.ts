@@ -11,10 +11,13 @@ import {
 	requestMeltQuote,
 	meltTokens,
 	checkState,
+	checkMintQuote,
 	swapProofs,
 	CashuError,
 	MintUnreachableError,
-	NetworkError
+	NetworkError,
+	RateLimitedError,
+	parseRetryAfterMs
 } from '../client';
 import { hash_to_curve } from '../blind';
 import { utf8ToBytes, hexToBytes } from '@noble/hashes/utils.js';
@@ -461,6 +464,158 @@ describe('Cashu mint HTTP client', () => {
 	});
 
 	// ─── Error handling ───────────────────────────────────────
+
+	describe('TASK-4400: 429 rate-limit recognition (generic, any mint)', () => {
+		const headersOf = (value: string | null) => ({
+			get: (name: string) => (name.toLowerCase() === 'retry-after' ? value : null)
+		});
+
+		it('429 + Retry-After seconds → RateLimitedError with retryAfterMs, no inline retry', async () => {
+			mockFetch.mockResolvedValue({
+				ok: false,
+				status: 429,
+				statusText: 'Too Many Requests',
+				headers: headersOf('5'),
+				json: () => Promise.resolve({ detail: 'Rate limit exceeded' })
+			});
+
+			try {
+				await getMintInfo(MINT_A);
+				expect.fail('should have thrown');
+			} catch (e) {
+				expect(e).toBeInstanceOf(RateLimitedError);
+				expect(e).toBeInstanceOf(CashuError);
+				if (e instanceof RateLimitedError) {
+					expect(e.status).toBe(429);
+					expect(e.retryAfterMs).toBe(5000);
+					expect(e.message).toContain('429');
+					expect(e.message).toContain('Rate limit exceeded');
+				}
+			}
+			expect(mockFetch).toHaveBeenCalledTimes(1);
+		});
+
+		it('429 + Retry-After http-date → retryAfterMs ≈ date - now', async () => {
+			const future = new Date(Date.now() + 30_000).toUTCString();
+			mockFetch.mockResolvedValue({
+				ok: false,
+				status: 429,
+				statusText: 'Too Many Requests',
+				headers: headersOf(future),
+				json: () => Promise.resolve({ detail: 'slow down' })
+			});
+
+			try {
+				await getMintInfo(MINT_B);
+				expect.fail('should have thrown');
+			} catch (e) {
+				expect(e).toBeInstanceOf(RateLimitedError);
+				if (e instanceof RateLimitedError) {
+					expect(e.status).toBe(429);
+					expect(typeof e.retryAfterMs).toBe('number');
+					expect(e.retryAfterMs as number).toBeGreaterThan(0);
+					expect(e.retryAfterMs as number).toBeLessThanOrEqual(30_000);
+				}
+			}
+			expect(mockFetch).toHaveBeenCalledTimes(1);
+		});
+
+		it('429 without Retry-After → RateLimitedError, retryAfterMs undefined, default message', async () => {
+			mockFetch.mockResolvedValue({
+				ok: false,
+				status: 429,
+				statusText: 'Too Many Requests',
+				headers: headersOf(null),
+				json: () => Promise.resolve({})
+			});
+
+			try {
+				await getMintInfo(MINT_A);
+				expect.fail('should have thrown');
+			} catch (e) {
+				expect(e).toBeInstanceOf(RateLimitedError);
+				if (e instanceof RateLimitedError) {
+					expect(e.status).toBe(429);
+					expect(e.retryAfterMs).toBeUndefined();
+					expect(e.message).toContain('Rate limit exceeded');
+				}
+			}
+			expect(mockFetch).toHaveBeenCalledTimes(1);
+		});
+
+		it('checkMintQuote forwards RateLimitedError type unchanged', async () => {
+			mockFetch.mockResolvedValue({
+				ok: false,
+				status: 429,
+				statusText: 'Too Many Requests',
+				headers: headersOf('2'),
+				json: () => Promise.resolve({ detail: 'Rate limit exceeded' })
+			});
+
+			await expect(checkMintQuote(MINT_A, 'quote-1')).rejects.toBeInstanceOf(RateLimitedError);
+			try {
+				await checkMintQuote(MINT_A, 'quote-1');
+				expect.fail('should have thrown');
+			} catch (e) {
+				if (e instanceof RateLimitedError) {
+					expect(e.retryAfterMs).toBe(2000);
+				}
+			}
+		});
+
+		it('5xx behavior unchanged: 500 stays plain CashuError (not RateLimited)', async () => {
+			mockFetch.mockResolvedValue({
+				ok: false,
+				status: 500,
+				statusText: 'Internal Server Error',
+				headers: headersOf(null),
+				json: () => Promise.resolve({ detail: 'boom' })
+			});
+
+			try {
+				await getMintInfo(MINT_A);
+				expect.fail('should have thrown');
+			} catch (e) {
+				expect(e).toBeInstanceOf(CashuError);
+					expect(e).not.toBeInstanceOf(RateLimitedError);
+				if (e instanceof CashuError) expect(e.status).toBe(500);
+			}
+		});
+
+		it('non-429 behavior unchanged: 400 stays plain CashuError (not RateLimited)', async () => {
+			mockFetch.mockResolvedValue({
+				ok: false,
+				status: 400,
+				statusText: 'Bad Request',
+				headers: headersOf('9'),
+				json: () => Promise.resolve({ detail: 'bad args' })
+			});
+
+			try {
+				await getMintInfo(MINT_A);
+				expect.fail('should have thrown');
+			} catch (e) {
+				expect(e).toBeInstanceOf(CashuError);
+					expect(e).not.toBeInstanceOf(RateLimitedError);
+				if (e instanceof CashuError) expect(e.status).toBe(400);
+			}
+			expect(mockFetch).toHaveBeenCalledTimes(1);
+		});
+
+		it('parseRetryAfterMs: seconds / http-date / invalid / empty', () => {
+			expect(parseRetryAfterMs('120')).toBe(120_000);
+			expect(parseRetryAfterMs('  3  ')).toBe(3000);
+			const now = Date.now();
+			const future = new Date(now + 10_000).toUTCString();
+			const ms = parseRetryAfterMs(future, now);
+			expect(ms).toBeGreaterThan(9000);
+			expect(ms).toBeLessThanOrEqual(10_000);
+			expect(parseRetryAfterMs('not-a-date')).toBeUndefined();
+			expect(parseRetryAfterMs('')).toBeUndefined();
+			expect(parseRetryAfterMs(null)).toBeUndefined();
+			expect(parseRetryAfterMs(undefined)).toBeUndefined();
+		});
+	});
 
 	describe('error handling', () => {
 		it('should throw NetworkError on timeout', async () => {

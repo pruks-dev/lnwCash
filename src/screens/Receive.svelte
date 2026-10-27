@@ -1,3 +1,46 @@
+<script module lang="ts">
+	// TASK-4401 (INTENT-044 BLUEPRINT-044 v3) RECEIVE-ADAPTIVE-PACING —
+	// pure pacing helpers (no mint knowledge, no I/O, no hardcoded mint).
+	// Unit-tested directly by Receive.adaptive-pacing.test.ts.
+	/** Base poll cadence: 3s fixed (unchanged default). */
+	export const RECEIVE_POLL_BASE_MS = 3000;
+	/** Backoff ceiling: 30s. */
+	export const RECEIVE_POLL_MAX_MS = 30_000;
+
+	/**
+	 * ±20% jitter band around a delay. `rand` is injectable ([0,1))
+	 * so unit tests stay deterministic (defaults to Math.random).
+	 */
+	export function applyPollJitter(delayMs: number, rand: number = Math.random()): number {
+		return delayMs * (0.8 + rand * 0.4);
+	}
+
+	/**
+	 * Next poll delay after a 429: exponential x2 from the current delay
+	 * (capped at 30s), honoring the server Retry-After as a floor (clamped
+	 * to the same 30s cap), then ±20% jitter. The jittered value never
+	 * drops below the honored Retry-After floor.
+	 */
+	export function nextRateLimitDelay(
+		currentMs: number,
+		retryAfterMs?: number,
+		rand: number = Math.random()
+	): number {
+		const grown = Math.min(currentMs * 2, RECEIVE_POLL_MAX_MS);
+		const floor =
+			retryAfterMs === undefined
+				? 0
+				: Math.min(Math.max(retryAfterMs, 0), RECEIVE_POLL_MAX_MS);
+		const target = Math.max(grown, floor);
+		return Math.min(Math.max(applyPollJitter(target, rand), floor), RECEIVE_POLL_MAX_MS);
+	}
+
+	/** Any successful (non-429) poll resets pacing to the 3s base. */
+	export function resetPollDelay(): number {
+		return RECEIVE_POLL_BASE_MS;
+	}
+</script>
+
 <script lang="ts">
 	/**
 	 * Receive Screen — TASK-066 Complete Redesign
@@ -21,7 +64,7 @@
 	import { completeMint, type MintResult } from '$lib/wallet/mint';
 	import { receiveTokens, type ReceiveResult } from '$lib/wallet/tokenStore';
 	import { isCashuToken, getTokenAmount, decodeToken } from '$lib/cashu/token';
-	import { CashuError } from '$lib/cashu/client';
+	import { CashuError, RateLimitedError, parseRetryAfterMs } from '$lib/cashu/client';
 	import { fetchAndCacheKeysets } from '$lib/cashu/keyset';
 	import { addTransaction, getTransactionById, updateTransaction } from '$lib/storage/db';
 	import type { Transaction } from '$lib/types';
@@ -82,6 +125,10 @@
 	let pendingAmount: number = $state(0);
 	let pendingTxId: string | null = $state(null);
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
+	// TASK-4401 adaptive pacing: current delay (3s base) + 429-hit counter.
+	// Reset to base on every fresh invoice and on any successful poll.
+	let pollBackoffMs: number = RECEIVE_POLL_BASE_MS;
+	let rateLimitHits: number = 0;
 	// Re-entrancy guard: prevents double-submit of the mint when overlapping
 	// poll callbacks both observe the quote as PAID (intermittent 400).
 	let mintCompleting: boolean = $state(false);
@@ -243,6 +290,14 @@
 		const timeout = setTimeout(() => controller.abort(), 10_000);
 		try {
 			const res = await fetch(url, { signal: controller.signal });
+			if (res.status === 429) {
+				// TASK-4401: recognize 429 generically (any mint — no mint
+				// name/URL carried). Parse Retry-After via the TASK-4400
+				// client parser and throw RateLimitedError; the poll loop
+				// below backs off instead of hammering. Never retried here.
+				const retryAfterMs = parseRetryAfterMs(res.headers?.get?.('Retry-After') ?? null);
+				throw new RateLimitedError('Rate limited — backing off', retryAfterMs);
+			}
 			if (!res.ok) {
 				throw new CashuError(`HTTP ${res.status}`, res.status);
 			}
@@ -364,18 +419,33 @@
 	}
 
 	/**
-	 * Real polling: check mint quote state every 3 seconds.
-	 * Max ~60 polls (~3 minutes) then timeout.
+	 * Adaptive polling (TASK-4401): base 3s cadence; each 429 doubles the
+	 * delay (cap 30s), honors the server Retry-After, adds ±20% jitter;
+	 * any successful (non-429) poll resets to base. Max 60 polls then
+	 * timeout. SetTimeout chain (not fixed setInterval) so the delay can
+	 * grow/shrink per poll. clearInterval also clears setTimeout handles
+	 * (same timer pool), so clearPollTimer keeps working unchanged.
 	 */
 	function startQuotePolling() {
 		// Clean up any previous poll
 		if (pollTimer) clearInterval(pollTimer);
+		// Fresh invoice (pollCount === 0) resets pacing to base;
+		// tab-visible resume (pollCount > 0) keeps the current backoff.
+		if (pollCount === 0) {
+			pollBackoffMs = resetPollDelay();
+			rateLimitHits = 0;
+		}
 
-		pollTimer = setInterval(async () => {
+		const scheduleNext = () => {
+			if (mintCompleting) return;
+			pollTimer = setTimeout(tick, pollBackoffMs);
+		};
+
+		const tick = async () => {
 			if (mintCompleting) return;
 			pollCount++;
 			if (pollCount >= 60) {
-				// Timeout after ~3 minutes
+				// Timeout after ~3 minutes (base cadence)
 				clearInterval(pollTimer!);
 				pollTimer = null;
 				lightningError = $_('screen.receive.error_payment_timeout');
@@ -390,6 +460,9 @@
 				// Re-check after the await: a slower overlapping callback may have
 				// already started completing the mint while this one was in flight.
 				if (mintCompleting) return;
+				// Successful (non-429) poll — pacing back to base.
+				pollBackoffMs = resetPollDelay();
+				rateLimitHits = 0;
 				if (state === 'PAID') {
 					mintCompleting = true;
 					clearInterval(pollTimer!);
@@ -402,13 +475,25 @@
 					lightningState = 'error';
 					receiveInvoiceOpen.set(false); // TASK-4300: exit path — flag down
 					showToast(lightningError, 'error');
+				} else {
+					// UNPAID: keep polling (no-op)
+					scheduleNext();
 				}
-				// UNPAID: keep polling (no-op)
-			} catch {
+			} catch (e) {
+				// TASK-4401: 429 → backoff x2 (cap 30s) + honor Retry-After
+				// + ±20% jitter, then keep polling. All other network errors
+				// stay transient — keep trying (unchanged).
+				if (e instanceof RateLimitedError) {
+					rateLimitHits++;
+					pollBackoffMs = nextRateLimitDelay(pollBackoffMs, e.retryAfterMs);
+				}
 				// Network errors during polling are transient — keep trying
 				// Only fail after too many consecutive errors
+				if (!mintCompleting) scheduleNext();
 			}
-		}, 3000);
+		};
+
+		pollTimer = setTimeout(tick, pollBackoffMs);
 	}
 
 	/**
