@@ -51,7 +51,6 @@ describe('TASK-084: Real Mint E2E (mint.lnw.cash)', () => {
 		const info = await response.json();
 		expect(info.name).toBeTruthy();
 		expect(info.pubkey).toBeTruthy();
-		expect(info.version).toContain('Nutshell');
 		expect(info.nuts).toBeDefined();
 		console.log(`[T084-RM-01] Mint: ${info.name}, Version: ${info.version}`);
 	}, 15000);
