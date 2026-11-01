@@ -209,6 +209,32 @@
 		}
 	}
 
+	// TASK-4800 (INTENT-048) — icon hardening gate: validate ก่อน render.
+	// live NUT-06 icon เท่านั้น (mint.icon_url / validatedConfig.icon_url
+	// ที่ discovery/validate เขียนจาก GET /v1/info สด — ห้ามอ่าน seed icon
+	// ใน UI path, ห้าม hard-code url รูป, ห้ามใช้ Nostr picture/kind:0/relay).
+	// กฎ: trim + https เท่านั้น (http/data:/blob:/file:/javascript: ตัดทิ้ง→
+	// fallback) + length cap 2048. ว่าง/ไม่ผ่าน → '' = วงกลมตัวย่อ.
+	const ICON_URL_MAX_LEN = 2048;
+	function sanitizeIconUrl(raw: unknown): string {
+		if (typeof raw !== 'string') return '';
+		const v = raw.trim();
+		if (!v || v.length > ICON_URL_MAX_LEN) return '';
+		if (!/^https:\/\//i.test(v)) return '';
+		return v;
+	}
+
+	// TASK-4800 — broken-img guard: url ไหน onerror แล้วจำไว้ใน session นี้
+	// (ไม่ render <img> ซ้ำ → ไม่ broken img; โชว์วงกลมตัวย่อแทน).
+	let iconFailedSet = $state(new Set<string>());
+	function markIconFailed(url: string): void {
+		if (!url || iconFailedSet.has(url)) return;
+		iconFailedSet = new Set(iconFailedSet).add(url);
+	}
+	function iconVisible(url: string): boolean {
+		return !!url && !iconFailedSet.has(url);
+	}
+
 	// R10 rework (rev48+rev49 Commander verbatim): preview card logo
 	// มี fallback วงกลมตัวย่อเหมือนลิสต์ — ไม่มี icon_url ใช้วงกลม
 	// initialOf เดิม (ไม่ใช่ช่องว่างแบบ R9).
@@ -225,31 +251,34 @@
 		return (src[0] ?? '?').toUpperCase();
 	});
 
-	// preview logo: reuse icon_url จากลิสต์ที่ validate ตรงกัน — ไม่ยิงเพิ่ม.
+	// TASK-4800 (INTENT-048): preview logo = LIVE validatedConfig.icon_url
+	// จาก GET /v1/info สดเท่านั้น (ผ่าน sanitizeIconUrl — https เท่านั้น) —
+	// ไม่ reuse จากลิสต์/seed, ไม่ยิงเพิ่ม. ไม่มี → วงกลมตัวย่อ.
 	let previewIconUrl = $derived.by(() => {
 		if (!validatedConfig) return '';
-		const hit = singleList.find(
-			(m) => canonicalUrl(m.url) === canonicalUrl(validatedConfig.url)
-		);
-		return hit?.icon_url ?? '';
+		return sanitizeIconUrl(validatedConfig.icon_url);
 	});
 
-	// R11 rework (rev51+rev53 Commander verbatim "active mint ควรมีวงกลม
-	// logo ด้วย ... วงกลมต้องอยู่ซ้าย ชื่อ mint และ url ... fallback คือ
-	// อักษรแรกของ mint"): วงกลม logo ซ้ายสุดข้างชื่อ+url ในการ์ด active.
-	// icon_url จาก probe ล้วน (SEED_MINT_INFO = /v1/info ที่ probe ไว้แล้ว
-	// + reuse แถว discover ที่ตรงกัน — ไม่ยิงเพิ่ม, ไม่ใช้ Nostr picture).
-	// ไม่มี icon_url ใช้วงกลมตัวย่ออักษรแรก (แบบเดียวกับลิสต์/preview).
+	// TASK-4800 (INTENT-048) R11 rework: วงกลม logo ซ้ายสุดข้างชื่อ+url ในการ์ด
+	// active + แถวลิสต์ — LIVE mint.icon_url จาก store (GET /v1/info สดที่
+	// discovery flow เขียนลง store) ผ่าน sanitizeIconUrl ก่อน render เสมอ.
+	// ห้ามอ่าน seed icon ใน UI path — ไม่มี/ไม่ผ่านกฎใช้
+	// วงกลมตัวย่ออักษรแรก (แบบเดียวกับลิสต์/preview). ไม่ยิงเพิ่ม,
+	// ไม่ใช้ Nostr picture.
 	function activeIconUrl(mint: MintConfig): string {
-		const key = canonicalUrl(mint.url);
-		const hit = singleList.find((m) => canonicalUrl(m.url) === key);
-		if (hit?.icon_url) return hit.icon_url;
-		return SEED_MINT_INFO[key]?.icon_url ?? '';
+		return sanitizeIconUrl(mint.icon_url);
 	}
 
 	function activeInitial(mint: MintConfig): string {
 		const src = (mint.name || mint.url || '?').trim();
 		return (src[0] ?? '?').toUpperCase();
+	}
+
+	// TASK-4800 (INTENT-048): discover list (พื้นผิวที่ 3) — icon จาก
+	// discoverMints() (live relay / seed-probe) ผ่าน sanitizeIconUrl เดียวกัน
+	// ก่อน render เสมอ (https เท่านั้น + trim + cap). ไม่ผ่าน → วงกลมตัวย่อ.
+	function discoverIconUrl(m: DiscoveredMint): string {
+		return sanitizeIconUrl(m.icon_url);
 	}
 
 	async function loadDiscover(): Promise<void> {
@@ -364,6 +393,22 @@
 
 		validatedConfig = result.config!;
 		validatedNuts = result.nuts || [];
+
+		// TASK-4800 (INTENT-048): overlay live NUT-06 icon_url ผ่าน discovery
+		// flow (tap เดียวกับ validate — ไม่ใช่ loop, ไม่เสี่ยง 429).
+		// validateMintUrl (mint-validation.ts — นอก slice) ไม่ส่งผ่าน icon_url;
+		// discoverMintEndpoints (mintInfoToConfig) ส่งผ่าน verbatim + เขียนลง
+		// store ทุกครั้งที่ GET /v1/info สำเร็จ. พัง/ไม่มี icon → คงผล validate
+		// (preview ใช้วงกลมตัวย่อ).
+		try {
+			const disc = await discoverMintEndpoints(addUrl);
+			if (disc && disc.success && disc.config && validatedConfig) {
+				validatedConfig = { ...validatedConfig, icon_url: disc.config.icon_url };
+			}
+		} catch {
+			// keep validateMintUrl result — icon falls back to initial circle
+		}
+
 		validating = false;
 	}
 
@@ -455,12 +500,14 @@
 			     ลบใน list คงเดิม + handler (handleRemoveMint/isDefaultMint) เดิม ไม่แตะ. -->
 			<div class="active-head">
 				<div class="active-id">
-				{#if activeIconUrl(mint)}
+				{#if iconVisible(activeIconUrl(mint))}
 					<img
 						class="active-logo"
 						src={activeIconUrl(mint)}
 						alt=""
 						loading="lazy"
+						referrerpolicy="no-referrer"
+						onerror={(e) => markIconFailed((e.currentTarget as HTMLImageElement).src)}
 					/>
 				{:else}
 					<span class="active-fallback" aria-hidden="true">{activeInitial(mint)}</span>
@@ -549,12 +596,14 @@
 						     ใช้วงกลม logo/fallback ลายเดียวกับการ์ด active/discover.
 						     icon_url มีโชว์จริง ไม่มี fallback ตัวย่อ (reuse activeIconUrl/
 						     activeInitial — ไม่ยิงเพิ่ม, ไม่แตะ logic default). -->
-						{#if activeIconUrl(mint)}
+						{#if iconVisible(activeIconUrl(mint))}
 							<img
 								class="mint-logo"
 								src={activeIconUrl(mint)}
 								alt=""
 								loading="lazy"
+								referrerpolicy="no-referrer"
+								onerror={(e) => markIconFailed((e.currentTarget as HTMLImageElement).src)}
 							/>
 						{:else}
 							<span class="mint-fallback" aria-hidden="true">{activeInitial(mint)}</span>
@@ -658,12 +707,14 @@
 					<Card variant="basic" padding="sm">
 						<div class="validated-info">
 							<div class="validated-head">
-								{#if previewIconUrl}
+								{#if iconVisible(previewIconUrl)}
 									<img
 										class="validated-logo"
 										src={previewIconUrl}
 										alt=""
 										loading="lazy"
+										referrerpolicy="no-referrer"
+										onerror={(e) => markIconFailed((e.currentTarget as HTMLImageElement).src)}
 									/>
 								{:else}
 									<span class="validated-fallback" aria-hidden="true">{previewInitial}</span>
@@ -721,12 +772,14 @@
 							aria-label={m.name || displayUrl(m)}
 							onclick={() => selectDiscovered(m)}
 						>
-						{#if m.icon_url}
+						{#if iconVisible(discoverIconUrl(m))}
 								<img
 									class="mint-logo"
-									src={m.icon_url}
+									src={discoverIconUrl(m)}
 									alt=""
 									loading="lazy"
+									referrerpolicy="no-referrer"
+									onerror={(e) => markIconFailed((e.currentTarget as HTMLImageElement).src)}
 								/>
 							{:else}
 								<span class="mint-fallback" aria-hidden="true">{initialOf(m)}</span>

@@ -56,6 +56,11 @@ export function mintInfoToConfig(mintUrl: string, mintInfo: MintInfo): MintConfi
 
 	const { cached_endpoints, ttl } = parseNut19(mintInfo);
 
+	// TASK-4800 (INTENT-048) — preserve live NUT-06 icon_url verbatim.
+	// Trim only; empty/whitespace/non-string/absent → undefined (UI falls
+	// back to the initial circle). No hard-coding, no Nostr picture.
+	const rawIcon = typeof mintInfo.icon_url === 'string' ? mintInfo.icon_url.trim() : '';
+
 	return {
 		url: mintUrl.replace(/\/+$/, ''),
 		name: mintInfo.name ?? '',
@@ -64,7 +69,8 @@ export function mintInfoToConfig(mintUrl: string, mintInfo: MintInfo): MintConfi
 		supported_nuts,
 		cached_endpoints,
 		ttl,
-		last_info_fetch: Date.now()
+		last_info_fetch: Date.now(),
+		icon_url: rawIcon ? rawIcon : undefined
 	};
 }
 

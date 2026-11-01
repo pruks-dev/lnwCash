@@ -34,6 +34,13 @@ export interface MintConfig {
 	/** Timestamp (ms) of the last successful /v1/info fetch — 0 if never fetched */
 	last_info_fetch: number;
 
+	/**
+	 * TASK-4800 (INTENT-048) — NUT-06 `icon_url` verbatim from live /v1/info.
+	 * Optional: mint without icon_url → undefined (UI renders initial-circle
+	 * fallback). Never hard-coded, never from Nostr/relay avatar.
+	 */
+	icon_url?: string;
+
 	/** TASK-311: Timestamp (ms) of the last NUT capability check — undefined if never checked */
 	capability_checked_at?: number;
 }
