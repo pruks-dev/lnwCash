@@ -41,8 +41,12 @@ describe('bolt11 regression — decodeBolt11 behavior unchanged', () => {
 		expect((decodeBolt11(V2) as { timestamp: number }).timestamp).toBe(1496314658);
 	});
 
-	it('defaults expiry to 3600 seconds', () => {
+	it('defaults expiry to 3600 seconds when the invoice carries NO x tag (V1: p+d only — proven by independent reference decode)', () => {
 		expect((decodeBolt11(V1) as { expiry: number }).expiry).toBe(3600);
+	});
+
+	it('TASK-4910: reads expiry 60s from the spec coffee vector (V2 carries x=[1,28] — old parser returned the 3600 default here)', () => {
+		expect((decodeBolt11(V2) as { expiry: number }).expiry).toBe(60);
 	});
 
 	it('returns a Map for the tags field', () => {

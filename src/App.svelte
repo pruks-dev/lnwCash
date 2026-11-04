@@ -27,11 +27,12 @@
 
 	// Background mint polling: check pending mint transactions every 5s
 	import { getTransactions, updateTransaction, compareAndSetTransactionStatus } from '$lib/storage/db';
-	import { checkMintQuote } from '$lib/cashu/client';
+	import { checkMintQuote, checkMeltQuote } from '$lib/cashu/client';
 	import { completeMint } from '$lib/wallet/mint';
 	import { fetchAndCacheKeysets } from '$lib/cashu/keyset';
 	import { withTransactionGuard } from '$lib/wallet/autolock';
-	import { resolvePendingTransactions } from '$lib/wallet/pending-tx-resolver';
+	import { resolvePendingTransactions, extractMeltQuoteId } from '$lib/wallet/pending-tx-resolver';
+	import { markSpent, clearReserved } from '$lib/wallet/proofsDb';
 	import { get } from 'svelte/store';
 	// TASK-4300/4301 (INTENT-043): central-pause flag — true while Receive
 	// shows an open invoice QR (Receive owns that round, central must skip).
@@ -190,7 +191,7 @@
 
 	// ─── Background mint polling ──────────────────────────────
 	// TASK-4301 (INTENT-043): central collector — PAID/ISSUED → claim
-	// (compare-and-set pending→minting, loser retreats silently) → full
+	// (compare-and-set pending→checking, loser retreats silently) → full
 	// completeMint → success confirms+notifies (Home reloads balance via
 	// mintConfirmed). Locked → back to pending ONLY (never failed).
 	// EXPIRED → failed (unchanged). Receive-open round → skip entirely.
@@ -206,6 +207,18 @@
 	const COOLDOWN_DEFAULT_MS = 30_000;
 	const COOLDOWN_MAX_MS = 300_000;
 	const mintCooldownUntil = new Map<string, number>();
+
+	// TASK-4902 (M1 melt on-demand poll): slower cadence than the 5s central
+	// round — one quote re-check per melt tx per MELT_POLL_INTERVAL_MS.
+	// TASK-4911 (failed-policy ใหม่): NO invoice-dead fail — verdicts come
+	// from mint quote states only (PAID → confirmed; mint-FAILED/EXPIRED →
+	// failed + released; UNPAID/PENDING/unknown → pending, no deadline).
+	// Shares the stagger / cooldown / 429-park regime above — no separate
+	// pacing system. UNPAID stays pending here on purpose: proving it needs
+	// checkState over input secrets, which races an in-flight meltFlow —
+	// that proof belongs to the owner reconcile (melt.ts) + boot resolver.
+	const MELT_POLL_INTERVAL_MS = 15_000;
+	const lastMeltPollAt = new Map<string, number>();
 
 	const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -244,7 +257,14 @@
 				if (get(receiveInvoiceOpen)) return;
 				const allTxs = await getTransactions();
 				const pendingTxs = allTxs.filter(tx => tx.type === 'mint' && tx.status === 'pending');
-				if (pendingTxs.length === 0) return;
+				// TASK-4909: melt list hoisted above the empty-round guard —
+				// the guard below must see BOTH lists.
+				const meltTxs = allTxs.filter(tx => tx.type === 'melt' && tx.status === 'pending');
+				// TASK-4909: guard the WHOLE round only when mint AND melt are
+				// both empty — an empty mint list alone must NOT skip the melt
+				// section below (gate 1: on-demand timedOut leftovers + gate 2:
+				// boot-reconcile leftovers stay pending → central keeps checking).
+				if (pendingTxs.length === 0 && meltTxs.length === 0) return;
 
 				for (let i = 0; i < pendingTxs.length; i++) {
 					const tx = pendingTxs[i];
@@ -263,10 +283,10 @@
 						const state = quote.state ?? (quote.paid ? 'PAID' : 'UNPAID');
 
 						if (state === 'PAID' || state === 'ISSUED') {
-							// TASK-4301 claim: atomic compare-and-set pending → minting.
+							// TASK-4301 claim: atomic compare-and-set pending → checking.
 							// Loser (already claimed/confirmed elsewhere) retreats
 							// silently — single notify guaranteed.
-							const claimed = await compareAndSetTransactionStatus(tx.id, 'pending', 'minting');
+							const claimed = await compareAndSetTransactionStatus(tx.id, 'pending', 'checking');
 							if (!claimed) continue;
 							// Mid-round QR open → release the claim, let Receive own it (no fight).
 							if (get(receiveInvoiceOpen)) {
@@ -315,14 +335,84 @@
 						console.warn(`[mint-poll] Error checking mint tx ${tx.id}:`, txErr);
 					}
 				}
+
+				// TASK-4902 (M1 melt on-demand poll — same pacing regime, slower
+				// cadence): pending melt txs with quote-bound ids are re-checked
+				// at MELT_POLL_INTERVAL_MS, invoice-bound, sharing stagger /
+				// cooldown / 429-park with the mint section above. Claim via
+				// CAS pending→checking (loser retreats silently); release back
+				// to pending whenever the round proves nothing.
+				// TASK-4909: meltTxs is hoisted above the empty-round guard — reused here.
+				for (let i = 0; i < meltTxs.length; i++) {
+					const tx = meltTxs[i];
+					// Orphan/req-local ids carry no quote — the boot resolver
+					// owns the warning; the central poll must not mint-call junk.
+					const meltQuoteId = extractMeltQuoteId(tx.id);
+					if (meltQuoteId === null) continue;
+					// Shared per-mint cooldown: parked mint → skip ONLY it.
+					const meltCooledUntil = mintCooldownUntil.get(tx.mint_url);
+					if (meltCooledUntil !== undefined) {
+						if (Date.now() < meltCooledUntil) continue;
+						mintCooldownUntil.delete(tx.mint_url);
+					}
+					// Slow cadence gate: at most one check per tx per interval.
+					const lastMeltCheck = lastMeltPollAt.get(tx.id) ?? 0;
+					if (Date.now() - lastMeltCheck < MELT_POLL_INTERVAL_MS) continue;
+					// Shared per-tx stagger (no burst).
+					if (i > 0) await sleep(staggerDelayMs());
+					try {
+						const claimed = await compareAndSetTransactionStatus(tx.id, 'pending', 'checking');
+						if (!claimed) continue;
+						const meltQuote = await checkMeltQuote(tx.mint_url, meltQuoteId);
+						lastMeltPollAt.set(tx.id, Date.now());
+						const meltState = meltQuote.state ?? (meltQuote.paid ? 'PAID' : 'UNPAID');
+
+						if (meltState === 'PAID') {
+							// Paid at the mint. The counter already advanced
+							// past the consumed B_ (advance-on-submit), so no
+							// B_ is reused; any unrecovered change belongs to
+							// NUT-9 restore. Confirm here.
+							await updateTransaction(tx.id, { status: 'confirmed' });
+							// TASK-4911: consume the bound reservation on the
+							// central-confirm path (no stuck lock; legacy txs
+							// bind none → no-op). Best-effort — never break
+							// the round.
+							try { await markSpent(tx.proofIds ?? []); } catch { /* best-effort */ }
+							lastMeltPollAt.delete(tx.id);
+							console.log(`[melt-poll] Melt confirmed: ${tx.id}`);
+						} else if (/failed/i.test(meltState) || meltState === 'EXPIRED') {
+							// TASK-4911: mint-declared non-payment (FAILED /
+							// EXPIRED quote states — NOT invoice expiry) →
+							// failed NOW + coins released to the pool.
+							// History reflects truth immediately.
+							try { await clearReserved(tx.proofIds ?? []); } catch { /* best-effort */ }
+							await updateTransaction(tx.id, { status: 'failed' });
+							lastMeltPollAt.delete(tx.id);
+							console.log(`[melt-poll] Melt failed (mint reports ${meltState}): ${tx.id}`);
+						} else {
+							// TASK-4911: UNPAID / PENDING / unknown → release
+							// the claim, stay pending for next round. No
+							// invoice-dead fail: failed ⟺ proven non-payment
+							// only (stuck-Pending has no deadline).
+							await updateTransaction(tx.id, { status: 'pending' });
+						}
+					} catch (meltErr) {
+						// Shared 429 park (ONLY this mint) + release to pending.
+						// Never failed on uncertainty.
+						parkMintOnRateLimit(tx.mint_url, meltErr);
+						console.warn(`[melt-poll] Error checking melt tx ${tx.id}:`, meltErr);
+						await updateTransaction(tx.id, { status: 'pending' }).catch(() => {});
+					}
+				}
 			} catch (err) {
 				console.warn('[mint-poll] Poll iteration error:', err);
 			}
 		}
 
 		// TASK-4301: boot resolver — wire once (single call, no interval).
-		// Stale >30min → failed inside the resolver; fresh PAID mint quotes are
-		// left pending there so THIS central poll mints them for real.
+		// TASK-4911: no time-based fail inside the resolver (failed ⟺ proven
+		// non-payment via quote state + checkState); fresh PAID mint quotes
+		// are left pending there so THIS central poll mints them for real.
 		resolvePendingTransactions().catch(() => {});
 		poll();
 		pollInterval = setInterval(poll, 5_000);

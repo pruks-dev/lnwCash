@@ -3,7 +3,7 @@
  *
  * Covers ONLY the compare-and-set transition helper in ../db (pure
  * IndexedDB, no network, no mint logic). The central poll contract:
- *   pending --(claim win)--> minting --(success)--> confirmed (+notify)
+ *   pending --(claim win)--> checking --(success)--> confirmed (+notify)
  *                                  \--(lock/fail)--> pending (retry, never failed/float)
  */
 import 'fake-indexeddb/auto';
@@ -37,52 +37,52 @@ describe('compareAndSetTransactionStatus (TASK-4301 claim)', () => {
 		resetDB();
 	});
 
-	it('winner claims pending → minting', async () => {
+	it('winner claims pending → checking', async () => {
 		await addTransaction(makeTx({ id: 'mint-q1' }));
-		const won = await compareAndSetTransactionStatus('mint-q1', 'pending', 'minting');
+		const won = await compareAndSetTransactionStatus('mint-q1', 'pending', 'checking');
 		expect(won).toBe(true);
-		expect((await getTransactionById('mint-q1'))!.status).toBe('minting');
+		expect((await getTransactionById('mint-q1'))!.status).toBe('checking');
 	});
 
 	it('loser (already claimed) retreats silently — returns false, status untouched', async () => {
 		await addTransaction(makeTx({ id: 'mint-q2' }));
-		expect(await compareAndSetTransactionStatus('mint-q2', 'pending', 'minting')).toBe(true);
+		expect(await compareAndSetTransactionStatus('mint-q2', 'pending', 'checking')).toBe(true);
 		// Second contender (e.g. Receive tab racing the central poll):
-		const lost = await compareAndSetTransactionStatus('mint-q2', 'pending', 'minting');
+		const lost = await compareAndSetTransactionStatus('mint-q2', 'pending', 'checking');
 		expect(lost).toBe(false);
-		expect((await getTransactionById('mint-q2'))!.status).toBe('minting');
+		expect((await getTransactionById('mint-q2'))!.status).toBe('checking');
 	});
 
 	it('wrong expected status returns false', async () => {
 		await addTransaction(makeTx({ id: 'mint-q3', status: 'confirmed' }));
-		const ok = await compareAndSetTransactionStatus('mint-q3', 'pending', 'minting');
+		const ok = await compareAndSetTransactionStatus('mint-q3', 'pending', 'checking');
 		expect(ok).toBe(false);
 		expect((await getTransactionById('mint-q3'))!.status).toBe('confirmed');
 	});
 
 	it('missing id returns false', async () => {
 		await expect(
-			compareAndSetTransactionStatus('mint-nope', 'pending', 'minting')
+			compareAndSetTransactionStatus('mint-nope', 'pending', 'checking')
 		).resolves.toBe(false);
 	});
 
-	it('lock path: minting → pending (retry, never failed)', async () => {
+	it('lock path: checking → pending (retry, never failed)', async () => {
 		await addTransaction(makeTx({ id: 'mint-q4' }));
-		expect(await compareAndSetTransactionStatus('mint-q4', 'pending', 'minting')).toBe(true);
-		expect(await compareAndSetTransactionStatus('mint-q4', 'minting', 'pending')).toBe(true);
+		expect(await compareAndSetTransactionStatus('mint-q4', 'pending', 'checking')).toBe(true);
+		expect(await compareAndSetTransactionStatus('mint-q4', 'checking', 'pending')).toBe(true);
 		expect((await getTransactionById('mint-q4'))!.status).toBe('pending');
 	});
 
-	it('success path: minting → confirmed', async () => {
+	it('success path: checking → confirmed', async () => {
 		await addTransaction(makeTx({ id: 'mint-q5' }));
-		expect(await compareAndSetTransactionStatus('mint-q5', 'pending', 'minting')).toBe(true);
-		expect(await compareAndSetTransactionStatus('mint-q5', 'minting', 'confirmed')).toBe(true);
+		expect(await compareAndSetTransactionStatus('mint-q5', 'pending', 'checking')).toBe(true);
+		expect(await compareAndSetTransactionStatus('mint-q5', 'checking', 'confirmed')).toBe(true);
 		expect((await getTransactionById('mint-q5'))!.status).toBe('confirmed');
 	});
 
 	it('claimed tx is invisible to the central pending filter', async () => {
 		await addTransaction(makeTx({ id: 'mint-q6' }));
-		expect(await compareAndSetTransactionStatus('mint-q6', 'pending', 'minting')).toBe(true);
+		expect(await compareAndSetTransactionStatus('mint-q6', 'pending', 'checking')).toBe(true);
 		const pending = await getTransactions({ status: 'pending' });
 		expect(pending.find((t) => t.id === 'mint-q6')).toBeUndefined();
 	});

@@ -6,7 +6,7 @@
 	 */
 	import { _ } from 'svelte-i18n';
 	import { getTransactions } from '$lib/storage/db';
-	import type { Transaction, TransactionType, TransactionStatus, TransactionFilter, TransactionProtocol } from '$lib/types';
+	import type { Transaction, TransactionType, TransactionFilter, TransactionProtocol } from '$lib/types';
 
 	// TASK-050 Design System Components
 	import Card from '$lib/components/ui/Card.svelte';
@@ -138,13 +138,26 @@
 		}
 	}
 
-	function statusLabel(status: TransactionStatus): string {
+	function statusLabel(status: string): string {
 		switch (status) {
-			case 'pending': return $_('screen.history.status_pending');
+			case 'pending':
+			// TASK-4917 (INTENT-049): display-only — transient claim state
+			// 'checking' + legacy 'minting' read as pending on screen.
+			// Stored status untouched — verdict logic unchanged.
+			case 'checking':
+			case 'minting':
+				return $_('screen.history.status_pending');
 			case 'confirmed': return $_('screen.history.status_confirmed');
 			case 'failed': return $_('screen.history.status_failed');
 			default: return status;
 		}
+	}
+
+	// TASK-4917 (INTENT-049): display-only pending-like — transient claim
+	// state 'checking' + legacy 'minting' render as pending (orange pulse).
+	// Stored status untouched — verdict logic unchanged.
+	function isPendingLike(status: string): boolean {
+		return status === 'pending' || status === 'checking' || status === 'minting';
 	}
 
 	// TASK-142: 2-category mapping (send/receive) — unified <Iconly>
@@ -390,7 +403,7 @@
 											     กลับ tx-pending-indicator (icon Time + ส้ม accent + pulse +
 											     pending-text) — ห้ามลาม list/filter/detail — ห้าม inline style.
 											     คำบอส L-P008 verbatim: 'badge ที่ transaction ไม่เหมือนเดิม ใหญ่เกินไป' -->
-											{#if tx.status === 'pending'}
+											{#if isPendingLike(tx.status)}
 												<span class="tx-pending-indicator" aria-label={$_('screen.history.pending_text')}>
 													<Iconly name="Time" size={14} />
 													<span class="pending-text">{$_('screen.history.pending_text')}</span>

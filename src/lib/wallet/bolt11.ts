@@ -152,55 +152,79 @@ function parseTaggedFields(data: Uint8Array): { tags: Map<number, Uint8Array>; t
 /**
  * Parse tagged fields from 5-bit data groups.
  * This is the primary parsing method.
+ *
+ * BOLT #11 (https://github.com/lightning/bolts/blob/master/11-payment-encoding.md):
+ *   - timestamp: first 7 x 5-bit groups = 35-bit big-endian integer
+ *   - tagged fields: type (5 bits) + data_length (10 bits = TWO 5-bit
+ *     groups, big-endian count of 5-bit data groups) + data
+ *   - tagged fields run until the 512-bit signature at the end
+ *     (104 x 5-bit groups). The spec defines NO terminator: a type-0
+ *     group is an ordinary value, never an end-marker.
+ *
+ * TASK-4910: previous revisions used a single-group length with a `31`
+ * escape rule the spec has no trace of, plus a zero-break on type 0 —
+ * both desynced parsing on real invoices (e.g. the BOLT #11 coffee
+ * vector: `p` length field (1,20)=52 was misread as 1, then the first
+ * zero data group killed the whole parse → empty hash/desc + default
+ * expiry). This rewrite follows the spec exactly.
  */
 function parseTagsFrom5Bit(data5bit: number[]): { tags: Map<number, Uint8Array>; timestamp: number; signatureStart: number } | null {
 	if (data5bit.length < 7) return null;
 
-	// Timestamp: first 7 x 5-bit groups = 35 bits
+	// Timestamp: first 7 x 5-bit groups = 35-bit big-endian integer.
+	// (Multiply-add, not bit-shift: 35 bits overflow JS 32-bit ops
+	// past 2038; 35 bits are exactly representable as a double.)
 	let timestamp = 0;
 	for (let i = 0; i < 7; i++) {
-		timestamp = (timestamp << 5) | data5bit[i];
+		timestamp = timestamp * 32 + data5bit[i];
 	}
+
+	// Tagged section ends where the trailing 104-group signature begins.
+	const SIGNATURE_GROUPS = 104;
+	const tagsEnd = data5bit.length - SIGNATURE_GROUPS;
+	if (tagsEnd < 7) return null;
 
 	let pos = 7;
 	const tags = new Map<number, Uint8Array>();
 
-	while (pos + 3 <= data5bit.length) {
+	while (pos + 3 <= tagsEnd) {
 		const tagType = data5bit[pos];
-		pos++;
+		// data_length: TWO 5-bit groups = 10-bit big-endian count.
+		// No escape rule, no zero-break — spec has neither.
+		const length = data5bit[pos + 1] * 32 + data5bit[pos + 2];
+		pos += 3;
 
-		if (tagType === 0) {
-			// End of tagged fields - remainder is signature
-			break;
-		}
-
-		// Read length — bolt11 tagged field data_length encoding:
-		// - if < 31: single 5-bit value
-		// - if >= 31: first 5-bit = 31, then 10 more bits (2×5-bit groups)
-		//   data_length = 31 + (second << 5) + third
-		const firstLen5 = data5bit[pos];
-		pos++;
-		let length: number;
-
-		if (firstLen5 < 31) {
-			// Short length: 5 bits (0–30)
-			length = firstLen5;
-		} else if (firstLen5 === 31 && pos + 1 < data5bit.length) {
-			// Extended length: 10 more bits (handles up to ~1054)
-			const second = data5bit[pos];
-			const third = data5bit[pos + 1];
-			pos += 2;
-			length = 31 + (second << 5) + third;
-		} else {
-			// Invalid length
-			break;
-		}
-
-		// Read value (length × 5-bit groups)
-		if (pos + length > data5bit.length) break;
+		// Truncated field — stop, keep what parsed so far.
+		if (pos + length > tagsEnd) break;
 
 		const value5bit = data5bit.slice(pos, pos + length);
 		pos += length;
+
+		if (tagType === 6) {
+			// `x` (expiry): BOLT #11 encodes the seconds as a big-endian
+			// integer OVER THE 5-BIT GROUPS directly (same base-32 fold as
+			// the timestamp), not as bytes. E.g. groups [1,28] = 60s
+			// (byte-folding those groups would wrongly give 15).
+			// Store the minimal big-endian byte form so the generic
+			// bytes→int expiry read below yields the true value.
+			// A zero-length `x` is malformed — leave it absent so the
+			// 3600 default applies.
+			if (value5bit.length === 0) continue;
+			let v = 0;
+			for (const g of value5bit) v = v * 32 + g;
+			const be: number[] = [];
+			if (v === 0) {
+				be.push(0);
+			} else {
+				let n = v;
+				while (n > 0) {
+					be.unshift(n % 256);
+					n = Math.floor(n / 256);
+				}
+			}
+			tags.set(tagType, new Uint8Array(be));
+			continue;
+		}
 
 		// Convert value from 5-bit groups to 8-bit bytes (no padding — bolt11 pads with zeros)
 		const valueBytes = convertBits(value5bit, 5, 8, false);
@@ -209,7 +233,7 @@ function parseTagsFrom5Bit(data5bit: number[]): { tags: Map<number, Uint8Array>;
 		}
 	}
 
-	return { tags, timestamp, signatureStart: pos };
+	return { tags, timestamp, signatureStart: tagsEnd };
 }
 
 // ─── Hex Conversion ────────────────────────────────────────
@@ -289,11 +313,20 @@ export function decodeBolt11(invoice: string): Bolt11Decoded | Bolt11Error {
 	// Also check for description hash (tag 'h' = 104)
 	// (no human-readable form for hash-based descriptions)
 
-	// Extract expiry (tag 6)
-	let expiry = 3600; // default: 1 hour
+	// Extract expiry (tag 6) — BOLT #11: `x` data is the seconds as a
+	// big-endian integer OVER THE 5-BIT GROUPS (base-32 fold, same as the
+	// timestamp — e.g. groups [1,28] = 60s). parseTagsFrom5Bit above
+	// already folds the groups and stores the minimal big-endian byte
+	// form, so reading ANY length here as a bytes big-endian int yields
+	// the true value. Default 3600 applies ONLY when tag x is absent
+	// (TASK-4908: the old `>= 4 bytes` gate is gone; TASK-4910: the fold
+	// moved into the parser where the raw groups are visible).
+	let expiry = 3600; // default: 1 hour (no `x` tag)
 	const expiryBytes = tags.get(6);
-	if (expiryBytes && expiryBytes.length >= 4) {
-		expiry = ((expiryBytes[0] << 24) | (expiryBytes[1] << 16) | (expiryBytes[2] << 8) | expiryBytes[3]) >>> 0;
+	if (expiryBytes && expiryBytes.length > 0) {
+		let v = 0;
+		for (const b of expiryBytes) v = v * 256 + b;
+		expiry = v;
 	}
 
 	return {

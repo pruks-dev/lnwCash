@@ -26,7 +26,9 @@
  *   (a) 3 blanks sent, mint signs 2 → counter advances by 2
  *   (b) 7 blanks sent, mint signs 5 → counter advances by 5
  *   (c) 3 blanks sent, mint signs 0 → counter advances by 0
- *   (d) 3 blanks sent, mint signs 6 (anomaly) → throws, counter UNCHANGED
+ *   (d) 3 blanks sent, mint signs 6 (anomaly) → throws, counter advances by
+ *       DERIVED count (TASK-4902: the B_ were consumed on the wire — freezing
+ *       would make the retry reuse signed B_ → 11003)
  *   (e) State machine: 3 sequential melts with varying signed counts — final
  *       counter = initial + sum(signed) (NOT sum(derived))
  */
@@ -288,13 +290,15 @@ describe('TASK-313: counter_k per-signed advance (CRITICAL — money-loss bug)',
 	});
 
 	// ────────────────────────────────────────────────────────────
-	// (d) 6 blanks sent, mint signs 7 (anomaly) → throws, counter UNCHANGED
-	//     Mint cannot legally sign MORE outputs than we asked for. If it does,
-	//     abort BEFORE corrupting the counter (otherwise the next melt would
-	//     skip even more counters and the 11003 loop would widen).
+	// (d) 6 blanks sent, mint signs 7 (anomaly) → throws, counter ADVANCES BY 6
+	//     Mint cannot legally sign MORE outputs than we asked for. The melt
+	//     still aborts (no change is stored) — but the 6 derived B_ WERE
+	//     consumed on the wire, so the counter MUST advance past them.
+	//     TASK-4902 advance-on-submit: freezing here would make the retry
+	//     re-derive the same B_ the mint already signed → 11003 (WINDOW-1).
 	//     Setup: spentTotal = 162, changeAmount = 62 → blanks = 6; mint signs 7.
 	// ────────────────────────────────────────────────────────────
-	it('d) 6 blanks sent, mint signs 7 (anomaly) → throws, counter UNCHANGED', async () => {
+	it('d) 6 blanks sent, mint signs 7 (anomaly) → throws, counter advances by derived 6', async () => {
 		await addProofs([makeProof('d1', 162)], MINT_URL, KEYSET_ID);
 		setCounterK(KEYSET_ID, 100);
 
@@ -307,14 +311,15 @@ describe('TASK-313: counter_k per-signed advance (CRITICAL — money-loss bug)',
 			makeInput(makeProof('d1', 162))
 		];
 
-		// Sanity guard throws BEFORE incrementing counter.
+		// Sanity guard throws (no change is stored) — but advance-on-submit
+		// (TASK-4902, finally) already moved the counter past the consumed B_.
 		// completeMelt's outer try/catch converts the throw into a structured
 		// failure result — the error message is preserved on result.error.
 		const result = await completeMelt(MINT_URL, 'melt-quote-xyz', inputs, 'lnbc...', 100, 0);
 		expect(result.success).toBe(false);
 		expect(result.error).toMatch(/Mint anomaly/);
 
-		expect(getCounterK(KEYSET_ID)).toBe(100); // UNCHANGED — counter not corrupted
+		expect(getCounterK(KEYSET_ID)).toBe(106); // 100 + 6 derived (consumed on the wire)
 	});
 
 	// ────────────────────────────────────────────────────────────

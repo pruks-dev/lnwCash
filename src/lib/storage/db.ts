@@ -145,12 +145,12 @@ export async function updateTransaction(id: string, patch: Partial<Transaction>)
  * Single-readwrite-transaction read-check-write: swaps `status` only when the
  * stored value still equals `expected`. Returns true on swap (claim won),
  * false when another owner already moved it (claim lost → retreat silently,
- * no notify). The transient 'minting' state marks an in-flight central mint
+ * no notify). The transient 'checking' state marks an in-flight central mint
  * so the central 5s poll and the Receive 3s poll never double-mint one quote.
  */
 
 /** Transient claim state — never final, always resolved within the round. */
-export type MintClaimState = 'minting';
+export type MintClaimState = 'checking';
 
 export async function compareAndSetTransactionStatus(
 	id: string,

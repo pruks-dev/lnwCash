@@ -297,6 +297,14 @@ interface RequestOptions {
 	method?: 'GET' | 'POST';
 	body?: unknown;
 	timeout?: number;
+	/**
+	 * TASK-4902: when false, transient 5xx (502/503/504) is thrown immediately
+	 * instead of retried inline. Melt POST sets this false (WINDOW-3: a blind
+	 * re-POST of the same B_ after an already-signed 502 collides with 11003;
+	 * retry lives in melt.ts with reconcile-first + backoff + cap).
+	 * Default true (existing behavior for all other calls).
+	 */
+	retryTransient?: boolean;
 }
 
 /** Transient HTTP statuses worth retrying (belt-and-suspenders vs intermittent 502). */
@@ -307,6 +315,28 @@ const MAX_ATTEMPTS = 3;
 
 /** Exponential backoff base (ms) — doubles each retry: 250ms, 500ms. */
 const RETRY_BACKOFF_BASE_MS = 250;
+
+// ─── TASK-4902 (INTENT-049): melt POST timeout + poll cadence ───
+//
+// NUT-05: a melt is synchronous but the mint may take a long time (it pays a
+// Lightning invoice before answering). Cutting the POST at 15s aborts
+// client-side while the mint keeps going → failed-vs-PENDING split (WINDOW-1).
+// The melt POST therefore uses a LONG timeout (never the 15s default) and
+// NEVER retries transient 5xx inline: a blind re-POST of the same B_ after a
+// 502-that-already-signed collides with "outputs already signed" (WINDOW-3).
+// Retries happen one layer up (melt.ts) with reconcile-first (quote state +
+// checkState) + backoff + cap — never hammer.
+
+/** Melt POST timeout (ms) — long per NUT-05, never the 15s default. */
+export const MELT_POST_TIMEOUT_MS = 120_000;
+
+/** Melt on-demand poll cadence: slow start (ms) — deliberately slower than
+ *  the central 5s mint poll (M1). */
+export const MELT_POLL_INITIAL_MS = 8_000;
+/** Melt on-demand poll cadence cap (ms). */
+export const MELT_POLL_MAX_MS = 30_000;
+/** Melt on-demand poll budget (ms) — bounded handoff to the central poll. */
+export const MELT_ONDEMAND_POLL_MAX_MS = 20_000;
 
 function sleep(ms: number): Promise<void> {
 	return new Promise(resolve => setTimeout(resolve, ms));
@@ -320,7 +350,7 @@ async function fetchFromMint<T>(
 	// Direct fetch to the absolute mint URL. The mint sends
 	// `Access-Control-Allow-Origin: *`, so no dev-server proxy is needed.
 	const url = `${normalizeMintUrl(mintUrl)}${path}`;
-	const { method = 'GET', body, timeout = 15000 } = options;
+	const { method = 'GET', body, timeout = 15000, retryTransient = true } = options;
 
 	const headers: Record<string, string> = {
 		Accept: 'application/json'
@@ -385,7 +415,9 @@ async function fetchFromMint<T>(
 
 				// Retry transient 5xx (502/503/504) with exponential backoff,
 				// unless this was the final attempt.
-				if (TRANSIENT_5XX.has(response.status) && attempt < MAX_ATTEMPTS) {
+				// TASK-4902: skipped when retryTransient === false (melt POST —
+				// the caller reconciles before any re-send, never hammers).
+				if (retryTransient !== false && TRANSIENT_5XX.has(response.status) && attempt < MAX_ATTEMPTS) {
 					lastTransientError = err;
 					await sleep(RETRY_BACKOFF_BASE_MS * 2 ** (attempt - 1));
 					continue;
@@ -688,23 +720,102 @@ export async function requestMeltQuote(
 /**
  * POST — melt tokens (spend proofs, get change).
  *
+ * TASK-4902: long timeout per NUT-05 (never the 15s default) + NO inline
+ * transient-5xx retry (WINDOW-3). A 502-that-already-signed must NOT be
+ * re-POSTed blindly — retry lives in melt.ts with reconcile-first
+ * (quote state + checkState) + backoff + cap.
+ *
  * @param mintInfo Optional — when provided, the operation path is resolved from
  *   NUT-19 cached_endpoints. Falls back to /v1/melt/bolt11.
+ * @param options Optional — timeoutMs (default MELT_POST_TIMEOUT_MS),
+ *   retryTransient (default false for melt).
  */
 export async function meltTokens(
 	mintUrl: string,
 	quoteId: string,
 	inputs: unknown[],
 	outputs?: unknown[],
-	mintInfo?: MintInfo
+	mintInfo?: MintInfo,
+	options?: { timeoutMs?: number; retryTransient?: boolean }
 ): Promise<PostMeltResponse> {
 	const body: Record<string, unknown> = { quote: quoteId, inputs };
 	if (outputs && outputs.length > 0) body.outputs = outputs;
 	const path = resolveEndpointPath(mintInfo, 'melt_operation');
 	return fetchFromMint<PostMeltResponse>(mintUrl, path, {
 		method: 'POST',
-		body
+		body,
+		timeout: options?.timeoutMs ?? MELT_POST_TIMEOUT_MS,
+		retryTransient: options?.retryTransient ?? false
 	});
+}
+
+/**
+ * TASK-4902 (INTENT-049, M1): poll a melt quote until terminal or deadline.
+ *
+ * Mint-agnostic: the only NUT-guaranteed terminal melt state is PAID (UNPAID /
+ * PENDING mean "not yet"). Any other state string is treated as non-terminal
+ * (kept polling, never failed on) — EXCEPT when the deadline passes, in which
+ * case one final check runs (check-once) and the result is returned with
+ * `timedOut: true` for the caller to decide (proven-unpaid only when the final
+ * check itself proves it).
+ *
+ * Cadence is deliberately slow (MELT_POLL_INITIAL_MS start, ×1.5, capped at
+ * MELT_POLL_MAX_MS). HTTP 429 is honored via shared backoff (Retry-After or
+ * the poll cap, never hammering); other fetch errors propagate to the caller
+ * (never kill on uncertainty).
+ *
+ * @param deadlineMs Epoch ms of invoice-expiry+grace — the poll stops here.
+ * @param budgetMs Max total poll time (default MELT_ONDEMAND_POLL_MAX_MS) —
+ *   the earlier of budget/deadline wins; both hand off to the central poll.
+ */
+export async function pollMeltQuoteUntilTerminal(
+	mintUrl: string,
+	quoteId: string,
+	deadlineMs: number | null,
+	budgetMs: number = MELT_ONDEMAND_POLL_MAX_MS
+): Promise<{ quote: MeltQuote; terminal: boolean; timedOut: boolean }> {
+	const startMs = Date.now();
+	const endMs = Math.min(
+		startMs + Math.max(0, budgetMs),
+		deadlineMs ?? Number.POSITIVE_INFINITY
+	);
+	let interval = MELT_POLL_INITIAL_MS;
+
+	for (;;) {
+		let quote: MeltQuote;
+		try {
+			quote = await checkMeltQuote(mintUrl, quoteId);
+		} catch (err) {
+			// Shared 429 backoff: park for Retry-After (or the poll cap),
+			// still bounded by endMs — never hammer, never kill on uncertainty.
+			if (err instanceof RateLimitedError) {
+				const wait429 = Math.min(err.retryAfterMs ?? MELT_POLL_MAX_MS, MELT_POLL_MAX_MS);
+				const now429 = Date.now();
+				if (now429 >= endMs) {
+					throw err;
+				}
+				await new Promise((resolve) =>
+					setTimeout(resolve, Math.min(wait429, Math.max(0, endMs - now429)))
+				);
+				continue;
+			}
+			throw err;
+		}
+		const state = quote.state ?? (quote.paid ? 'PAID' : 'UNPAID');
+		if (state === 'PAID') {
+			return { quote, terminal: true, timedOut: false };
+		}
+		const now = Date.now();
+		if (now >= endMs) {
+			// Deadline/budget reached — the check above WAS the check-once.
+			return { quote, terminal: false, timedOut: true };
+		}
+		const waitMs = Math.min(interval, Math.max(0, endMs - now));
+		if (waitMs > 0) {
+			await new Promise((resolve) => setTimeout(resolve, waitMs));
+		}
+		interval = Math.min(interval * 1.5, MELT_POLL_MAX_MS);
+	}
 }
 
 /**

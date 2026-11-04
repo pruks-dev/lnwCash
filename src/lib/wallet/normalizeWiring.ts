@@ -166,6 +166,20 @@ function extractShare(coins: number[], sum: number): { share: number[]; rest: nu
 }
 
 /**
+ * TASK-4918: true ONLY for NUT code 11002 (numeric or string) — the one
+ * double-spent code that collides with the transient melt-lock (reserved
+ * coin on the wire in a sibling flight). 11005 never collides (no lock
+ * path produces it) so it always quarantines.
+ */
+function is11002Code(err: unknown): boolean {
+	if (err !== null && typeof err === 'object' && 'code' in err) {
+		const code = (err as { code?: unknown }).code;
+		return code === 11002 || code === '11002';
+	}
+	return false;
+}
+
+/**
  * Swap ONE (mint, keyset) group for exactly `amounts` denominations.
  *
  * Counter invariants (NUT-13 Option A — กฎเดิม):
@@ -238,11 +252,20 @@ async function swapGroup(
 		// continue with the remaining groups. Network errors / the benign
 		// idempotent family (11003/20002) / unknown errors are NOT evidence of
 		// dead coins — they propagate untouched (boundary tests both ways).
+		// TASK-4918 (INTENT-049, P5 fix): 11002 whose inputs carry the
+		// reserved flag (melt-lock ชั่วคราว — the coin is on the wire in an
+		// UNCONFIRMED melt/swap, outcome unknown) is NOT evidence of dead
+		// coins either — the sibling flight may still settle. Propagate
+		// untouched as a benign abort (เหมือน 11003) — ห้าม quarantine.
+		// 11002 on NON-reserved inputs still quarantines (dead จริง).
 		let swapResult: Awaited<ReturnType<typeof clientMod.swapProofs>>;
 		try {
 			swapResult = await clientMod.swapProofs(mintUrl, swapInputs, outputs);
 		} catch (err) {
 			if (isDoubleSpentFamilyError(err)) {
+				if (is11002Code(err) && inputs.some((p) => p.reserved === true)) {
+					throw err;
+				}
 				const deadIds = inputs.map((p) => p.local_id);
 				// TASK-1501 (F-050-001): record the mint's reject alongside
 				// the quarantined ids so the flush SUCCESS leg can backfill
@@ -410,7 +433,11 @@ export function createAutoNormalizeDeps(): AutoNormalizeDeps {
 		// consolidate it; T1/T2 treat pending as money too (if a pending pile
 		// lingers, an auto run consolidates it). Spending itself remains gated
 		// by selectProofs/getUnspentProofs (P3 layer 1+2).
-		getProofs: () => getUnspentProofsIncludingPending(),
+		// TASK-4918 (INTENT-049, defense in depth): re-filter reserved here
+		// even though getUnspentProofsIncludingPending already excludes it —
+		// a coin already on the wire (melt-lock ชั่วคราว) must never enter
+		// the swap pile even via a stale snapshot.
+		getProofs: async () => (await getUnspentProofsIncludingPending()).filter((p) => !p.reserved),
 		swapFn: boundSwapFn
 	};
 }

@@ -45,7 +45,10 @@ export function selectProofs(proofs: StoredProof[], amount: number): StoredProof
 	// !pending_normalize && !quarantined) — quarantined (mint double-spent
 	// family reject, dead coins) and orphaned (keyset-unknown) are excluded
 	// here even for raw pools.
-	const unspent = proofs.filter(p => !p.spent && !p.pending_normalize && !p.quarantined && !p.orphaned);
+	// TASK-4906: reserved (in-flight melt/swap, outcome unknown) is excluded
+	// too — a stale snapshot must never let a second send/melt pick a coin
+	// that is already on the wire. Mirrors the proofsDb layer-1 filter.
+	const unspent = proofs.filter(p => !p.spent && !p.pending_normalize && !p.quarantined && !p.orphaned && !p.reserved);
 
 	// Check total balance
 	const totalAvailable = unspent.reduce((sum, p) => sum + p.amount, 0);

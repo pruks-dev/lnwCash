@@ -13,11 +13,12 @@ import { fetchAndCacheKeysets, getAllKeysets, getKeysetById, getMintPubkey } fro
 import { getPrivateKey } from './state';
 import { deriveSecretAndR, getActiveSeed } from './nut13';
 import { getCounterK, incrementCounterK, withKeysetLock } from './counterK';
-import { getUnspentProofsByMint, addProofs, markSpent, getAllProofs, type StoredProof } from './proofsDb';
+import { getUnspentProofsByMint, addProofs, markSpent, markReserved, clearReserved, getAllProofs, type StoredProof } from './proofsDb';
 import { selectProofs, sumProofs } from './proofs';
 import { decomposeAmount } from './mint';
 import { hasNUT08 } from './capabilities';
 import { addTransaction, updateTransaction } from '../storage/db';
+import { decodeBolt11 } from './bolt11';
 import type { TokenProof, MeltQuote, PostMeltResponse, Transaction } from '../types';
 import { InsufficientFundsError, QuoteExpiredError, MintUnreachableError } from './errors';
 // TASK-316: i18n for NUT-08 warning strings (en + th, see src/locales/*.json)
@@ -45,6 +46,145 @@ function safeT(key: string, fallback: string): string {
 	}
 }
 
+// ─── TASK-4902 (INTENT-049): reconcile-before-settle + invoice-bound ──
+//
+// Pillar 2 (settle guard): after an unknown submit the flow reconciles FIRST
+// (melt quote state + NUT-07 checkState of the inputs) — never hammer.
+// Pillar 3 (no false failed): failed ONLY on proven non-payment, never on a
+// timeout/client error alone.
+//
+// TASK-4911 (failed-policy ใหม่ตามกฎบอส): invoice expiry is NOT a signal —
+// the deadline/expiry-fail step is CUT. failed ⟺ the mint declares FAILED
+// (or the owner verifies UNPAID + all inputs UNSPENT); PENDING quotes stay
+// pending with no time limit anywhere in the fail path.
+//
+// TASK-4913 (INTENT-049, BLUEPRINT-049 v4 + Commander ORDER rev58): the
+// auto re-send path is CUT entirely — retryable ⟹ failed. When reconcile
+// finds quote UNPAID/PENDING + ALL inputs UNSPENT, meltFlow fails at once +
+// releases the coins (clearReserved) so History shows failed and the user
+// starts over manually with a FRESH quote (never reuse the old quote id).
+// No second POST leaves this wallet on its own — the user sends it.
+
+// TASK-4913: the re-send attempts/backoff constants are DELETED (no
+// auto second POST exists anymore — one submit only). The poll/central timings
+// below are UNTOUCHED (MELT_POST 120s / on-demand poll 20s / central 15s).
+/** Invoice-expiry grace (ms) — RETAINED export (TASK-4911: no fail path
+ * consults it anymore; kept for isMeltInvoiceDead compat + external callers). */
+export const MELT_INVOICE_GRACE_MS = 60_000;
+
+/**
+ * TASK-4902: resolve the poll deadline (ms epoch) from the LNBC invoice:
+ * deadline = (timestamp + expiry) * 1000 + MELT_INVOICE_GRACE_MS.
+ * Pure offline decode — no network call (precedent: pending-tx-resolver
+ * getLnbcExpiryMs, TASK-4406).
+ *
+ * RETAINED export (TASK-4911: no fail path calls it anymore — the owner
+ * poll passes null; kept so external/test importers keep compiling).
+ *
+ * @returns deadlineMs, or null when the invoice is missing/undecodable
+ *          (caller treats as "no invoice bound" — polls within budget only).
+ */
+export function getMeltInvoiceDeadlineMs(invoice: string | null | undefined): number | null {
+	if (!invoice) return null;
+	const decoded = decodeBolt11(invoice);
+	if ('code' in decoded) return null;
+	return (decoded.timestamp + decoded.expiry) * 1000 + MELT_INVOICE_GRACE_MS;
+}
+
+/** Outcome of one reconcile check (mint-agnostic — NUT-guaranteed only).
+ * TASK-4913: no 'retryable' outcome exists — quote UNPAID/PENDING + all
+ * inputs UNSPENT is proven non-payment ⟹ 'failed' at once (the user sends
+ * again manually with a fresh quote; this wallet never POSTs a second time
+ * on its own). */
+export type MeltReconcileOutcome = 'paid' | 'failed' | 'unknown';
+
+export interface MeltReconcileResult {
+	outcome: MeltReconcileOutcome;
+	quoteState: string;
+	detail: string;
+}
+
+/**
+ * TASK-4902 pillar 2: reconcile AFTER an unknown submit (single check, no
+ * follow-up POST — TASK-4913 cut the auto re-send path entirely).
+ *
+ * 1. checkMeltQuote → PAID means the mint paid (confirm, never POST again).
+ * 2. A FAILED-ish quote state means proven non-payment (fail, never POST again).
+ * 3. Otherwise checkState(inputs): all UNSPENT + quote UNPAID/PENDING means
+ *    the POST never took effect ⟹ proven non-payment ⟹ 'failed' at once
+ *    (TASK-4913: the caller fails the tx + clearReserved immediately; the
+ *    user starts over manually with a FRESH quote — this wallet never
+ *    re-uses the old quote id on its own).
+ *    Any PENDING/SPENT input, any check failure, or any unknown quote state
+ *    means "do NOT settle here" (poll instead — never hammer, never kill).
+ *
+ * TASK-4911: NO invoice-expiry step — an expired invoice with a PENDING (or
+ * UNPAID-but-unproven) quote stays pending; failed ⟺ proven non-payment
+ * only (mint-FAILED above, or UNPAID/PENDING + all inputs UNSPENT here).
+ * The `invoice` parameter is retained for signature stability and is NOT
+ * consulted for any verdict.
+ *
+ * Mint-agnostic: only UNPAID/PENDING/PAID + checkState + error codes are
+ * trusted. Unknown state strings are never terminal.
+ */
+export async function reconcileMeltAttempt(
+	mintUrl: string,
+	quoteId: string,
+	inputs: SelectedProofInfo[],
+	invoice?: string | null
+): Promise<MeltReconcileResult> {
+	let quoteState = 'UNKNOWN';
+	try {
+		const quote = await checkMeltQuote(mintUrl, quoteId);
+		quoteState = quote.state ?? (quote.paid ? 'PAID' : 'UNPAID');
+	} catch (err) {
+		// Quote check itself failed (network/429) — uncertainty, never settle
+		// on it and never POST again on it.
+		return {
+			outcome: 'unknown',
+			quoteState,
+			detail: `quote check failed: ${humanErrorMessage(err)}`
+		};
+	}
+
+	if (quoteState === 'PAID') {
+		return { outcome: 'paid', quoteState, detail: 'mint reports PAID — confirm, never POST again' };
+	}
+	if (/failed/i.test(quoteState)) {
+		return { outcome: 'failed', quoteState, detail: `mint reports ${quoteState} — proven non-payment` };
+	}
+
+	// Quote UNPAID/PENDING (or an unknown state string): the inputs decide.
+	// TASK-4913: all UNSPENT ⟹ the POST never took effect ⟹ proven
+	// non-payment ⟹ 'failed' at once (fail + clearReserved at the caller;
+	// the user retries manually with a fresh quote — no second POST here).
+	try {
+		const stateCheck = await checkState(
+			mintUrl,
+			inputs.map((p) => ({ secret: p.secret, C: p.C }))
+		);
+		const states = stateCheck.states.map((s) => s.state);
+		if (states.length > 0 && states.every((s) => s === 'UNSPENT')) {
+			return {
+				outcome: 'failed',
+				quoteState,
+				detail: `quote ${quoteState} + all ${states.length} inputs UNSPENT — POST took no effect, proven non-payment: fail now, user retries manually with a fresh quote`
+			};
+		}
+		return {
+			outcome: 'unknown',
+			quoteState,
+			detail: `quote ${quoteState} + inputs [${states.join(',')}] — mint may hold them, poll instead of settling`
+		};
+	} catch (err) {
+		return {
+			outcome: 'unknown',
+			quoteState,
+			detail: `inputs check failed: ${humanErrorMessage(err)} — poll instead of settling`
+		};
+	}
+}
+
 // ─── Types ───────────────────────────────────────────────────
 
 export interface MeltResult {
@@ -59,6 +199,12 @@ export interface MeltResult {
 	/** TASK-FIX-320: true fee paid after NUT-08 mint overpaid return.
 	 *  Propagated from completeMelt() for Send.svelte success UI display. */
 	actualFee?: number;
+	/**
+	 * TASK-4902: true when the melt outcome is UNKNOWN (submitted but
+	 * unconfirmed) and the tx was left pending for auto-reconcile (M1/M2).
+	 * Send.svelte needs no change — it already renders result.error.
+	 */
+	pending?: boolean;
 	error?: string;
 }
 
@@ -100,6 +246,16 @@ export interface MeltCompleteResult {
 	 *  success UI to show "Fee: X sats (reserve: Y sats)" when actualFee < feeReserve.
 	 *  Matches TransactionDetailSheet UX (TASK-314). */
 	actualFee?: number;
+	/**
+	 * TASK-4902: true when proofs/outputs were actually submitted to the mint
+	 * but the outcome is UNKNOWN (postMelt threw, anomaly, or local
+	 * persistence broke after payment). The caller must NOT mark failed on
+	 * this alone — reconcile (quote + checkState) first, poll until terminal
+	 * (no invoice deadline — TASK-4911), and fail only on proven non-payment.
+	 * False/absent means nothing was submitted (deterministic pre-submit
+	 * abort) — failing is safe there.
+	 */
+	unknownOutcome?: boolean;
 	error?: string;
 }
 
@@ -465,8 +621,21 @@ export async function completeMelt(
 	feeReserve: number,
 	pendingTxId?: string
 ): Promise<MeltCompleteResult> {
+	// TASK-4902: visible to the catch below — true once a POST actually left
+	// this wallet (set inside try). Anything thrown after a submit is
+	// uncertainty (mint may have paid) → unknownOutcome, never failed alone.
+	let meltSubmitted = false;
 	try {
 		getPrivateKey(); // throws if wallet is locked
+
+		// TASK-4906: reserve the inputs the moment this submit starts — the
+		// coins are on the wire from here until a terminal settle. Idempotent
+		// (meltFlow already marked them; standalone callers get covered here).
+		// Unknown local_ids (unit-test stubs) are skipped inside markReserved.
+		// Release contract: success consumes via markSpent (clears the flag);
+		// deterministic pre-submit failure clears below (meltSubmitted=false);
+		// unknown outcome KEEPS the lock for reconcile (never fail blind).
+		await markReserved(inputs.map(p => p.local_id));
 
 		// TASK-312 (NUT-08): Detect NUT-08 support before computing change.
 		// Mint returns all overpaid sats as change (min_fee_estimate = 0) if NUT-08
@@ -515,6 +684,7 @@ export async function completeMelt(
 		let outputs: Array<{ amount: number; id: string; B_: string; secret: string; blindingFactor: string }> = [];
 		let changeProofs: TokenProof[] = [];
 		let response: PostMeltResponse;
+		// (meltSubmitted is function-scoped for the catch — see above.)
 
 		if (changeAmount > 0) {
 			const changeKeysetId = inputs[0].id;
@@ -600,45 +770,53 @@ export async function completeMelt(
 					B_: o.B_
 				}));
 
-				const meltResponse = await postMelt(mintUrl, quoteId, inputBodies, outputBodies);
+				// TASK-4902 advance-on-submit (precedent mint.ts:389-391):
+				// incrementCounterK lives in `finally` AFTER the actual send —
+				// never before it, never outside `finally`. If postMelt throws
+				// (routing/timeout/5xx/11002/20004/DLEQ-path), the mint may
+				// still have signed our B_ — freezing the counter would make
+				// the retry re-derive the SAME B_ → 11003 (WINDOW-1/C4).
+				// Advance amount: the ACTUAL signed count when the mint
+				// answered (TASK-313, incl. 0), else the FULL derived count
+				// when the outcome is unknown (safe direction: a counter gap
+				// is recoverable via NUT-9, a B_ reuse is money-loss).
+				// The mint anomaly (signed > derived) still throws — but the
+				// counter advances by the derived count first, because those
+				// B_ were consumed on the wire regardless.
+				let meltResponse: PostMeltResponse;
+				let submittedCount = 0;
+				let signedCount = -1; // -1 = postMelt never returned (unknown)
+				try {
+					submittedCount = outputs.length;
+					meltSubmitted = true;
+					meltResponse = await postMelt(mintUrl, quoteId, inputBodies, outputBodies);
+					signedCount = meltResponse.change?.length ?? 0;
 
-				// TASK-313 (CRITICAL — money-loss bug prevention): advance counter_k
-				// by the ACTUAL signed count (meltResponse.change.length), NOT the
-				// derived output count (outputs.length — blanks in NUT-08 mode,
-				// decomposed denominations in legacy mode).
-				//
-				// Why this matters: the mint may sign FEWER change outputs than we
-				// derived. With NUT-08, the mint only signs the overpaid amount
-				// and may pick a different denomination breakdown (or no change at
-				// all if the fee consumed everything). If we advance by derived
-				// count, counter_k desyncs past what the mint actually consumed →
-				// the next melt reuses a B_ the mint already signed → mint returns
-				// 11003 "outputs already signed" → DOUBLE-SPEND / money loss.
-				const signedCount = meltResponse.change?.length ?? 0;
-
-				// Sanity guard: mint anomaly — signed MORE outputs than we derived.
-				// This should be impossible (mint cannot create outputs we didn't
-				// ask for), but if it happens we must abort BEFORE corrupting the
-				// counter — otherwise the next melt would skip even more counters
-				// and the 11003 loop would widen. Throw to abort the melt.
-				if (signedCount > outputs.length) {
-					throw new Error(
-						`Mint anomaly: signed ${signedCount} change outputs but we derived only ${outputs.length} — ` +
-						`aborting to prevent counter_k desync. Mint URL: ${mintUrl}`
-					);
+					// Sanity guard: mint anomaly — signed MORE outputs than we
+					// derived. This should be impossible (mint cannot create
+					// outputs we didn't ask for). Throw to abort the melt, but
+					// the `finally` below still advances past the consumed B_.
+					if (signedCount > outputs.length) {
+						throw new Error(
+							`Mint anomaly: signed ${signedCount} change outputs but we derived only ${outputs.length} — ` +
+							`aborting to prevent counter_k desync. Mint URL: ${mintUrl}`
+						);
+					}
+				} finally {
+					if (submittedCount > 0) {
+						incrementCounterK(
+							changeKeysetId,
+							signedCount >= 0 ? Math.min(signedCount, submittedCount) : submittedCount
+						);
+					}
 				}
-
-				// Advance by ACTUAL signed count (0 if mint signed nothing, which
-				// is fine — no B_ was consumed). The next melt will re-derive the
-				// same B_ at the same counter, which the mint will accept as a
-				// re-issuance of a previously unsigned request (no double-spend).
-				incrementCounterK(changeKeysetId, signedCount);
 
 				return meltResponse;
 			});
 		} else {
 			// No change output — nothing derived from the counter, so no lock needed.
 			const outputBodies: Array<{ amount: number; id: string; B_: string }> = [];
+			meltSubmitted = true;
 			response = await postMelt(mintUrl, quoteId, inputBodies, outputBodies);
 		}
 
@@ -741,6 +919,9 @@ export async function completeMelt(
 				});
 			} else {
 				// Standalone: create a new transaction record
+				// TASK-4906: bind the consumed inputs so the resolver can
+				// settle the reservation on any path (meltFlow passes
+				// pendingTxId and already binds its own proofIds).
 				await addTransaction({
 					id: `melt-${quoteId}`,
 					type: 'melt',
@@ -753,7 +934,8 @@ export async function completeMelt(
 					status: 'confirmed',
 					protocol: 'lightning',
 					fee: feeReserve,
-					actual_fee: actualFee
+					actual_fee: actualFee,
+					proofIds: inputs.map(p => p.local_id)
 				} as Transaction);
 			}
 			txStatus = 'Transaction recorded: ✅';
@@ -775,6 +957,17 @@ export async function completeMelt(
 		};
 	} catch (error) {
 		const msg = humanErrorMessage(error);
+		// TASK-4902 pillar 3: failed ONLY on proven non-payment. meltSubmitted
+		// means a POST left this wallet — the mint may have paid, so this is
+		// uncertainty (unknownOutcome), never a failure verdict on its own.
+		// TASK-4906: nothing was submitted (meltSubmitted=false — counter
+		// guard, deterministic mint reject, pre-submit abort) → the coins
+		// never left: release the reservation so they return to the pool.
+		// Submitted-but-unknown KEEPS the lock for reconcile (meltFlow +
+		// pending-tx-resolver settle it via quote/checkState, never blind).
+		if (!meltSubmitted) {
+			try { await clearReserved(inputs.map(p => p.local_id)); } catch { /* best-effort — never break the fail path */ }
+		}
 		if (msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('network') || msg.toLowerCase().includes('unreachable')) {
 			return {
 				success: false,
@@ -782,6 +975,7 @@ export async function completeMelt(
 				spentAmount: 0,
 				inputFeePpk: 0,
 				calculatedFee: 0,
+				unknownOutcome: meltSubmitted,
 				error: `Mint unreachable: ${mintUrl}`
 			};
 		}
@@ -791,6 +985,7 @@ export async function completeMelt(
 			spentAmount: 0,
 			inputFeePpk: 0,
 			calculatedFee: 0,
+			unknownOutcome: meltSubmitted,
 			error: msg
 		};
 	}
@@ -814,8 +1009,51 @@ export async function meltFlow(
 	invoice: string,
 	amount: number
 ): Promise<MeltResult> {
-	// Create pending transaction at start (best-effort — don't break the flow)
-	const txId = `melt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+	// Phase 1: Request (nothing submitted yet — a failure here is proven
+	// non-payment, so failing is safe and no reconcile is needed).
+	const reqResult = await requestMelt(mintUrl, invoice, amount);
+	if (!reqResult.success) {
+		// No quote exists, so the tx id cannot bind one — record the failed
+		// attempt under a local-only id the resolver recognises as
+		// non-reconcilable (see extractMeltQuoteId in pending-tx-resolver).
+		const reqTxId = `melt-req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+		try {
+			await addTransaction({
+				id: reqTxId,
+				type: 'melt',
+				protocol: 'lightning',
+				amount,
+				mint_url: mintUrl,
+				timestamp: Date.now(),
+				token_hash: null,
+				invoice,
+				status: 'failed',
+				fee: 0
+			} as Transaction);
+		} catch {
+			// Best-effort: silently ignore — don't break the melt flow
+		}
+		return {
+			success: false,
+			change: [],
+			spentAmount: 0,
+			inputFeePpk: 0,
+			calculatedFee: 0,
+			error: reqResult.error
+		};
+	}
+
+	// TASK-4902 pillar 4: txid = melt-{quoteId} — extractMeltQuoteId can
+	// always recover the quote for reconcile (closes the orphan gap where
+	// melt-{timestamp}-{rand} left melt txs nobody could follow up).
+	// TASK-4906: reserve the selected inputs NOW (they leave the wallet on
+	// the first completeMelt POST) and bind their local_ids to the pending
+	// tx (proofIds trail — the pending-tx-resolver releases/consumes the
+	// reservation on its own terminal settles). completeMelt re-marks
+	// idempotently at its own entry for standalone callers.
+	const txId = `melt-${reqResult.quote}`;
+	const reservedIds = reqResult.selectedProofs.map(p => p.local_id);
+	try { await markReserved(reservedIds); } catch { /* best-effort — the submit still guards via checkState */ }
 	try {
 		await addTransaction({
 			id: txId,
@@ -827,60 +1065,137 @@ export async function meltFlow(
 			token_hash: null,
 			invoice,
 			status: 'pending',
-			fee: 0
+			fee: 0,
+			proofIds: reservedIds
 		} as Transaction);
 	} catch {
-		// Best-effort: silently ignore — don't break the melt flow
+		// Best-effort: silently ignore — don't break the melt flow.
+		// NOTE: addTransaction throws on duplicate id — a retry of the same
+		// quote reuses the existing pending tx (idempotent by construction).
 	}
 
+	const failTx = async () => {
+		try { await updateTransaction(txId, { status: 'failed' }); } catch { /* best-effort */ }
+	};
+
 	try {
-		// Phase 1: Request
-		const reqResult = await requestMelt(mintUrl, invoice, amount);
-		if (!reqResult.success) {
-			// Phase 1 failed → update pending tx to failed (best-effort)
-			try { await updateTransaction(txId, { status: 'failed' }); } catch { /* best-effort */ }
+		// Phase 2: Complete + single reconcile settle (TASK-4913: exactly ONE
+		// submit — no loop, no second POST. Reconcile decides once: PAID ⟹
+		// confirm, proven non-payment (mint-FAILED, or UNPAID/PENDING + all
+		// inputs UNSPENT) ⟹ failed + coins released, else TASK-4914 returns
+		// pending IMMEDIATELY (no on-demand poll — central+M2 own it).
+		// The user retries manually with a FRESH quote — this wallet never
+		// re-uses the old quote id.)
+		{
+			const completeResult = await completeMelt(
+				mintUrl,
+				reqResult.quote,
+				reqResult.selectedProofs,
+				invoice,
+				amount,
+				reqResult.feeReserve,
+				txId  // pass pending tx ID — completeMelt will update it to 'confirmed'
+			);
+
+			if (completeResult.success) {
+				// On success: completeMelt already updated the pending tx to 'confirmed'
+				return {
+					success: true,
+					change: completeResult.change,
+					preimage: completeResult.preimage,
+					spentAmount: completeResult.spentAmount,
+					feeReserve: completeResult.feeReserve,
+					inputFeePpk: reqResult.inputFeePpk,
+					calculatedFee: reqResult.calculatedFee,
+					actualFee: completeResult.actualFee  // TASK-FIX-320: propagate for Send.svelte
+				};
+			}
+
+			// Proven non-payment (nothing was submitted — e.g. counter guard,
+			// deterministic mint reject) → fail immediately, no reconcile.
+			// TASK-4906: the coins never left — release them to the pool.
+			if (!completeResult.unknownOutcome) {
+				try { await clearReserved(reservedIds); } catch { /* best-effort */ }
+				await failTx();
+				return {
+					success: false,
+					change: [],
+					spentAmount: 0,
+					inputFeePpk: reqResult.inputFeePpk,
+					calculatedFee: reqResult.calculatedFee,
+					error: completeResult.error
+				};
+			}
+
+			// Unknown outcome (a POST left this wallet) → reconcile first.
+			const reconciled = await reconcileMeltAttempt(
+				mintUrl,
+				reqResult.quote,
+				reqResult.selectedProofs,
+				invoice
+			);
+
+			if (reconciled.outcome === 'paid') {
+				// The mint DID pay (response was lost). Confirm the tx — the
+				// user's intent (pay the invoice) is achieved. Change proofs
+				// were never unblinded/stored; the advanced counter keeps B_
+				// fresh and NUT-9 restore recovers any change later.
+				// TASK-4906: the inputs are consumed at the mint — mark them
+				// spent (clears the reservation; no stuck lock).
+				try { await markSpent(reservedIds); } catch { /* best-effort */ }
+				try { await updateTransaction(txId, { status: 'confirmed' }); } catch { /* best-effort */ }
+				console.warn(`[melt] reconcile: quote ${reqResult.quote} is PAID — confirmed without change (recover via restore): ${reconciled.detail}`);
+				return {
+					success: true,
+					change: [],
+					spentAmount: amount + reqResult.feeReserve,
+					feeReserve: reqResult.feeReserve,
+					inputFeePpk: reqResult.inputFeePpk,
+					calculatedFee: reqResult.calculatedFee,
+					actualFee: reqResult.feeReserve,
+					error: undefined
+				};
+			}
+
+			if (reconciled.outcome === 'failed') {
+				// Proven non-payment — TWO shapes, one verdict (TASK-4913):
+				// (a) mint-declared FAILED state (TASK-4911: no expiry step
+				// anymore), or (b) quote UNPAID/PENDING + ALL inputs UNSPENT
+				// (the POST never took effect). Fail NOW + release the coins
+				// to the pool (History shows failed; the user starts over
+				// manually with a FRESH quote — never reuse this quote id).
+				try { await clearReserved(reservedIds); } catch { /* best-effort */ }
+				await failTx();
+				return {
+					success: false,
+					change: [],
+					spentAmount: 0,
+					inputFeePpk: reqResult.inputFeePpk,
+					calculatedFee: reqResult.calculatedFee,
+					error: `${completeResult.error} (reconcile: ${reconciled.detail})`
+				};
+			}
+
+			// TASK-4914 (INTENT-049, BLUEPRINT-049 v4 + Commander ORDER rev59):
+			// on-demand poll CUT - no second poller competes with central+M2.
+			// reconcile=>unknown returns pending IMMEDIATELY: the tx stays
+			// pending (reservation KEPT), and the central 15s poll + M2 resolver
+			// own it from here. NEVER failed on uncertainty.
+			console.warn(`[melt] unknown outcome - handoff-to-central: quote ${reqResult.quote} kept pending for central+M2 (reconcile: ${reconciled.detail})`);
 			return {
 				success: false,
 				change: [],
 				spentAmount: 0,
-				inputFeePpk: 0,
-				calculatedFee: 0,
-				error: reqResult.error
+				inputFeePpk: reqResult.inputFeePpk,
+				calculatedFee: reqResult.calculatedFee,
+				pending: true,
+				error: `${completeResult.error} (payment status unknown — kept pending, auto-reconcile will settle it; quote ${reqResult.quote})`
 			};
 		}
-
-		// Phase 2: Complete
-		const completeResult = await completeMelt(
-			mintUrl,
-			reqResult.quote,
-			reqResult.selectedProofs,
-			invoice,
-			amount,
-			reqResult.feeReserve,
-			txId  // pass pending tx ID — completeMelt will update it to 'confirmed'
-		);
-
-		if (!completeResult.success) {
-			// Phase 2 failed → update pending tx to failed (best-effort)
-			try { await updateTransaction(txId, { status: 'failed' }); } catch { /* best-effort */ }
-		}
-		// On success: completeMelt already updated the pending tx to 'confirmed'
-
-		return {
-			success: completeResult.success,
-			change: completeResult.change,
-			preimage: completeResult.preimage,
-			spentAmount: completeResult.spentAmount,
-			feeReserve: completeResult.feeReserve,
-			inputFeePpk: reqResult.inputFeePpk,
-			calculatedFee: reqResult.calculatedFee,
-			actualFee: completeResult.actualFee,  // TASK-FIX-320: propagate for Send.svelte
-			error: completeResult.error
-		};
 	} catch (error) {
-		// Unexpected error → update pending tx to failed (best-effort)
-		try { await updateTransaction(txId, { status: 'failed' }); } catch { /* best-effort */ }
-
+		// Unexpected error AFTER a quote exists: the outcome may be unknown —
+		// leave pending for M1/M2 instead of failing blind (pillar 3).
+		// (Phase-1 failures return earlier and never reach here.)
 		const msg = humanErrorMessage(error);
 		if (msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('network') || msg.toLowerCase().includes('unreachable')) {
 			return {
@@ -889,7 +1204,8 @@ export async function meltFlow(
 				spentAmount: 0,
 				inputFeePpk: 0,
 				calculatedFee: 0,
-				error: `Mint unreachable: ${mintUrl}`
+				pending: true,
+				error: `Mint unreachable: ${mintUrl} (kept pending, auto-reconcile will settle it)`
 			};
 		}
 		return {
@@ -898,7 +1214,8 @@ export async function meltFlow(
 			spentAmount: 0,
 			inputFeePpk: 0,
 			calculatedFee: 0,
-			error: msg
+			pending: true,
+			error: `${msg} (kept pending, auto-reconcile will settle it)`
 		};
 	}
 }

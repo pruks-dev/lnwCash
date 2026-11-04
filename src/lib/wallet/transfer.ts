@@ -14,7 +14,7 @@ import { fetchAndCacheKeysets, getMintPubkey, resolveKeysetId } from '../cashu/k
 import { verifyDleqAlice, DleqVerifyFailedError } from '../cashu/dleq';
 import { getPrivateKey } from './state';
 import { selectProofs, sumProofs } from './proofs';
-import { getUnspentProofsByMint, addProofs, markSpent, type StoredProof } from './proofsDb';
+import { getUnspentProofsByMint, addProofs, markSpent, markReserved, clearReserved, type StoredProof } from './proofsDb';
 import { addTransaction } from '../storage/db';
 import { decomposeAmount } from './mint';
 import { completeSet } from './completeSet';
@@ -135,6 +135,11 @@ export async function sendTokens(
 				B_: b.B_
 			}));
 
+			// TASK-4906: reserve the swap input while it is on the wire —
+			// a concurrent send/melt must not pick the same coin. Released
+			// on the fall-back path below; consumed (markSpent) on success
+			// and on DLEQ-failure (the mint already took the input).
+			await markReserved([swapProof.local_id]);
 			const swapResult = await swapProofs(mintUrl, [swapProof], outputs);
 
 			// CHANGE outputs are now mint-signed — advance counter_k by the number
@@ -194,9 +199,17 @@ export async function sendTokens(
 			// swallowing it would fall through to sending the ORIGINAL proofs
 			// (which the mint has ALREADY consumed in the swap) — surface it.
 			if (err instanceof DleqVerifyFailedError) {
+				// TASK-4906: the mint consumed the swap input (the swap
+				// itself succeeded — only local verification failed), so the
+				// coin is NOT back in the pool: consume it (clears the
+				// reservation) instead of releasing, then surface the error.
+				try { await markSpent([swapProof.local_id]); } catch { /* best-effort — never mask the DLEQ error */ }
 				throw err;
 			}
 			// Swap failed — fall back
+			// TASK-4906: the input never left (network/mint reject before
+			// consume) — release it back to the spendable pool.
+			try { await clearReserved([swapProof.local_id]); } catch { /* best-effort — fall-back must proceed */ }
 		}
 		}
 	}

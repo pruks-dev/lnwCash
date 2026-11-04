@@ -138,10 +138,23 @@
 	function statusLabel(status: string): string {
 		switch (status) {
 			case 'confirmed': return $_('screen.history.status_confirmed');
-			case 'pending': return $_('screen.history.status_pending');
+			case 'pending':
+			// TASK-4917 (INTENT-049): display-only — transient claim state
+			// 'checking' + legacy 'minting' read as pending on screen.
+			// Stored status untouched — verdict logic unchanged.
+			case 'checking':
+			case 'minting':
+				return $_('screen.history.status_pending');
 			case 'failed': return $_('screen.history.status_failed');
 			default: return status;
 		}
+	}
+
+	// TASK-4917 (INTENT-049): display-only pending-like — transient claim
+	// state 'checking' + legacy 'minting' render as pending (orange pulse).
+	// Stored status untouched — verdict logic unchanged.
+	function isPendingLike(status: string): boolean {
+		return status === 'pending' || status === 'checking' || status === 'minting';
 	}
 
 	// ─── Actions ──────────────────────────────────────
@@ -506,7 +519,7 @@
 				     pending = indicator ส้ม (Time icon + accent + pulse) ตรง History.svelte
 				     .tx-pending-indicator — ไม่ใช่ badge เทา; confirmed/failed = badge โปร่งแสง -->
 				<div class="field-value">
-					{#if tx.status === 'pending'}
+					{#if isPendingLike(tx.status)}
 						<span class="status-pending-indicator" aria-label={statusLabel(tx.status)}>
 							<Iconly name="Time" size={14} />
 							<span class="pending-text">{statusLabel(tx.status)}</span>
@@ -524,7 +537,7 @@
 				</div>
 
 				<!-- Check Payment Button (pending mint only) -->
-				{#if tx.type === 'mint' && tx.status === 'pending'}
+				{#if tx.type === 'mint' && isPendingLike(tx.status)}
 					<div class="detail-row">
 						<button class="check-btn" onclick={checkPayment}>
 							{checking ? 'กำลังตรวจสอบ...' : $_('detail.check_payment')}

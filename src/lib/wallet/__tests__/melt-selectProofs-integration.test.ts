@@ -304,7 +304,7 @@ describe('TASK-1305: melt integration — 4-step selectProofs + change pipeline 
 		expect(getCounterK(KEYSET_ID)).toBe(5); // 3 + signedCount(2)
 	});
 
-	it('anomaly guard คงเดิม (:624) — mint เซ็นมากกว่าที่ derive (6 > 4) → abort ก่อนแตะ counter', async () => {
+	it('anomaly guard (TASK-4902 — abort แต่ counter ขยับ): mint เซ็นมากกว่าที่ derive (6 > 4) → abort แต่ advance-on-submit ขยับ counter ตาม derived', async () => {
 		await addPile([20, 6]);
 		const inputs: SelectedProofInfo[] = [
 			makeInput(makeProof('ano1', 20)),
@@ -316,8 +316,10 @@ describe('TASK-1305: melt integration — 4-step selectProofs + change pipeline 
 
 		expect(res.success).toBe(false);
 		expect(res.error).toContain('Mint anomaly: signed 6 change outputs but we derived only 4');
-		// counter survives intact (guard aborted BEFORE any advance):
-		expect(getCounterK(KEYSET_ID)).toBe(3);
+		// TASK-4902 advance-on-submit: the 4 derived B_ were consumed on the
+		// wire — the counter advances past them (3 + 4) so the retry never
+		// re-derives B_ the mint already signed (→ 11003). No change stored.
+		expect(getCounterK(KEYSET_ID)).toBe(7);
 		// no change got stored (abort before unblind/store):
 		const unspent = (await getAllProofs()).filter((p) => !p.spent);
 		expect(unspent).toHaveLength(2); // the two stub inputs only

@@ -1,6 +1,8 @@
 /**
  * TASK-4406 (INTENT-044) — RESOLVER-LNBC-EXPIRY, amended by TASK-4407
- * RESOLVER-EXPIRY-CHECK-ONCE (COMMANDER_ORDER fix-forward rev8).
+ * RESOLVER-EXPIRY-CHECK-ONCE (COMMANDER_ORDER fix-forward rev8),
+ * SUPERSEDED in the 4 legacy-fallback cases by TASK-4912 (INTENT-049,
+ * failed-policy ใหม่ — SUPERSEDED-BY-4911 disposition).
  *
  * Per-invoice LNBC expiry is the fail criterion, BUT an expired invoice is
  * NEVER failed without one final mint check (boss edge: app closed + paid
@@ -10,12 +12,20 @@
  *  3. expired-lnbc + network error → pending (never kill on uncertainty)
  *  4. fresh-lnbc + network error (429) → pending (wall-clock old must NOT fail)
  *  5. fresh-lnbc mint PAID → pending for central collector (no confirm here)
- *  6. legacy no-invoice → 30-min fallback + legacy-fallback log
- *  7. decode-invalid invoice → 30-min fallback + legacy-fallback log
+ *  6. legacy no-invoice + wall-clock OLD + UNPAID → pending (TASK-4912:
+ *     30-min fallback GONE — no invoice read, no wall-clock, mint IS checked)
+ *  7. legacy no-invoice melt PAID → confirmed (TASK-4912: verdict from quote
+ *     state, no legacy-fallback log)
+ *  8. decode-invalid invoice + wall-clock OLD + UNPAID → pending (TASK-4912:
+ *     invoice NEVER decoded for a verdict, mint IS checked)
+ *  9. decode-invalid invoice + mint-EXPIRED → failed (TASK-4912:
+ *     mint-declared proven non-payment, no legacy-fallback log)
  *
  * decodeBolt11 is partially mocked: sentinel invoices return controlled
  * timestamp/expiry; every other input delegates to the REAL decoder
  * (so the V1 spec-vector test below exercises the true offline path).
+ * Under TASK-4911 the resolver never consults the decoder for verdicts —
+ * the sentinels now only prove the "expired/fresh invoice" premise.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
@@ -212,24 +222,28 @@ describe('TASK-4406 — per-invoice LNBC expiry', () => {
 		expect(mockUpdateTransaction).not.toHaveBeenCalled();
 	});
 
-	it('legacy no-invoice + wall-clock OLD → 30-min fallback fail + legacy-fallback log', async () => {
+	it('legacy no-invoice + wall-clock OLD + mint-UNPAID → stays pending (no wall-clock fail, invoice never read — TASK-4912)', async () => {
+		// TASK-4912 (SUPERSEDED-BY-4911): the 30-min legacy fallback is gone —
+		// no invoice read, no wall-clock in any verdict. A 31-min-old tx with
+		// quote UNPAID stays pending and IS checked against the mint.
 		const legacyTx = tx({
 			id: 'mint-legacyold',
 			type: 'mint',
-			timestamp: Date.now() - 31 * 60 * 1000, // 31 min ago
+			timestamp: Date.now() - 31 * 60 * 1000, // 31 min ago — irrelevant now
 			// no invoice field at all
 		});
 		mockGetTransactions.mockResolvedValue([legacyTx]);
+		mockCheckMintQuote.mockResolvedValue({ state: 'UNPAID' });
 
 		const result = await resolvePendingTransactions();
 
-		expect(result).toBe(1);
-		expect(mockUpdateTransaction).toHaveBeenCalledWith('mint-legacyold', { status: 'failed' });
-		expect(mockCheckMintQuote).not.toHaveBeenCalled();
-		expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('legacy-fallback'));
+		expect(result).toBe(0);
+		expect(mockCheckMintQuote).toHaveBeenCalledWith(MINT_URL, 'legacyold');
+		expect(mockUpdateTransaction).not.toHaveBeenCalled();
+		expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('legacy-fallback'));
 	});
 
-	it('legacy no-invoice + wall-clock FRESH → fallback does NOT fail, network check runs', async () => {
+	it('legacy no-invoice melt PAID → confirmed (verdict from quote state, no legacy-fallback log — TASK-4912)', async () => {
 		const legacyTx = tx({ id: 'melt-legacyfresh', type: 'melt' }); // 1 min ago, no invoice
 		mockGetTransactions.mockResolvedValue([legacyTx]);
 		mockCheckMeltQuote.mockResolvedValue({ state: 'PAID' });
@@ -241,36 +255,41 @@ describe('TASK-4406 — per-invoice LNBC expiry', () => {
 		expect(mockUpdateTransaction).toHaveBeenCalledWith('melt-legacyfresh', {
 			status: 'confirmed',
 		});
-		expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('legacy-fallback'));
+		expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('legacy-fallback'));
 	});
 
-	it('decode-invalid invoice + wall-clock OLD → 30-min fallback fail + legacy-fallback log', async () => {
+	it('decode-invalid invoice + wall-clock OLD + mint-UNPAID → stays pending (invoice never decoded — TASK-4912)', async () => {
+		// TASK-4912: the invoice is never even decoded for a verdict — a
+		// garbage invoice with quote UNPAID stays pending and IS checked.
 		const badTx = tx({
 			id: 'mint-badinv',
 			type: 'mint',
-			timestamp: Date.now() - 45 * 60 * 1000, // 45 min ago
-			invoice: 'not-an-invoice', // real decodeBolt11 → invalid_network error
+			timestamp: Date.now() - 45 * 60 * 1000, // 45 min ago — irrelevant now
+			invoice: 'not-an-invoice', // never decoded under the new policy
 		});
 		mockGetTransactions.mockResolvedValue([badTx]);
+		mockCheckMintQuote.mockResolvedValue({ state: 'UNPAID' });
 
 		const result = await resolvePendingTransactions();
 
-		expect(result).toBe(1);
-		expect(mockUpdateTransaction).toHaveBeenCalledWith('mint-badinv', { status: 'failed' });
-		expect(mockCheckMintQuote).not.toHaveBeenCalled();
-		expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('legacy-fallback'));
+		expect(result).toBe(0);
+		expect(mockCheckMintQuote).toHaveBeenCalledWith(MINT_URL, 'badinv');
+		expect(mockUpdateTransaction).not.toHaveBeenCalled();
+		expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('legacy-fallback'));
 	});
 
-	it('decode-invalid invoice + wall-clock FRESH → fallback does NOT fail, network check runs', async () => {
+	it('decode-invalid invoice + mint-EXPIRED → failed (mint-declared — TASK-4912)', async () => {
+		// TASK-4912: mint-EXPIRED = proven non-payment regardless of invoice
+		// content — the invoice is never decoded, the quote decides.
 		const badTx = tx({ id: 'mint-badinvfresh', type: 'mint', invoice: 'lnbc1abc' });
 		mockGetTransactions.mockResolvedValue([badTx]);
 		mockCheckMintQuote.mockResolvedValue({ state: 'EXPIRED' });
 
 		const result = await resolvePendingTransactions();
 
-		expect(result).toBe(0);
+		expect(result).toBe(1);
 		expect(mockCheckMintQuote).toHaveBeenCalledWith(MINT_URL, 'badinvfresh');
-		expect(mockUpdateTransaction).not.toHaveBeenCalled();
-		expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('legacy-fallback'));
+		expect(mockUpdateTransaction).toHaveBeenCalledWith('mint-badinvfresh', { status: 'failed' });
+		expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('legacy-fallback'));
 	});
 });

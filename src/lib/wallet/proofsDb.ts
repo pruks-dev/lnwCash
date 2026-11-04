@@ -43,6 +43,19 @@ export interface StoredProof extends TokenProof {
 	 * user's money — the mint already counted it as spent).
 	 */
 	quarantined?: boolean;
+	/**
+	 * TASK-4906 (INTENT-049): in-flight reservation flag — true while the
+	 * proof is submitted to the mint in an UNCONFIRMED melt/swap (POST left
+	 * this wallet, outcome unknown). Reserved proofs are excluded from the
+	 * spendable pool (getUnspentProofs / getUnspentProofsByMint) AND from the
+	 * selectProofs layer-2 guard, so a second send/melt can never pick a coin
+	 * that is already on the wire. Released (false) on every terminal path:
+	 * success consumes via markSpent (which also clears it), proven
+	 * non-payment releases via clearReserved (back to the pool), and the
+	 * pending-tx-resolver settles via the tx proofIds trail. Mint-agnostic:
+	 * only checkState/quote/error-codes drive the release, never mint lore.
+	 */
+	reserved?: boolean;
 }
 
 // ─── DB Setup ────────────────────────────────────────────────
@@ -147,7 +160,10 @@ export async function getUnspentProofs(): Promise<StoredProof[]> {
 	// INTENT-015 (TASK-1510): balance queries ALSO read this pool (spendable
 	// only — pending/failed excluded). getUnspentProofsIncludingPending stays
 	// as the T3 FLUSH-pile API only (normalizeWiring.ts:413).
-	return all.filter(p => !p.spent && !p.orphaned && !p.pending_normalize && !p.quarantined);
+	// TASK-4906: reserved (in-flight melt/swap, outcome unknown) is NEVER
+	// spendable — excluded here so balance never counts a locked coin and no
+	// second selection can pick it.
+	return all.filter(p => !p.spent && !p.orphaned && !p.pending_normalize && !p.quarantined && !p.reserved);
 }
 
 /**
@@ -156,11 +172,15 @@ export async function getUnspentProofs(): Promise<StoredProof[]> {
  * (ห้ามหายเงียบ) even though they cannot be selected for spending.
  * TASK-1316 (P5): quarantined proofs are EXCLUDED — the mint has already
  * counted them as spent; counting them would lie about the user's money.
+ * TASK-4918 (INTENT-049): reserved (in-flight melt/swap, outcome unknown)
+ * is EXCLUDED too — the swap must never pick a coin that is already on the
+ * wire (melt-lock ชั่วคราว). pending_normalize stays INCLUDED (T3 flush
+ * pile — รับแค่กอง pending ไม่เอาของ in-flight).
  */
 export async function getUnspentProofsIncludingPending(): Promise<StoredProof[]> {
 	const db = await getDB();
 	const all = await db.getAll(STORE_NAME);
-	return all.filter(p => !p.spent && !p.orphaned && !p.quarantined);
+	return all.filter(p => !p.spent && !p.orphaned && !p.quarantined && !p.reserved);
 }
 
 export async function getProofsByMint(mintUrl: string): Promise<StoredProof[]> {
@@ -176,7 +196,9 @@ export async function getUnspentProofsByMint(mintUrl: string): Promise<StoredPro
 	// (mint double-spent family reject — dead coins, 'failed แบบไหนก็ไม่ควร
 	// เอามาใช้ได้') are NEVER spendable. Callers: melt.ts:284, transfer.ts:61,
 	// tokenStore.ts:617 sendTokens — all gated at once by this filter.
-	return proofs.filter(p => !p.spent && !p.orphaned && !p.pending_normalize && !p.quarantined);
+	// TASK-4906: reserved (in-flight, outcome unknown) excluded too — a coin
+	// already submitted to the mint must not fund a second spend.
+	return proofs.filter(p => !p.spent && !p.orphaned && !p.pending_normalize && !p.quarantined && !p.reserved);
 }
 
 export async function getProofById(localId: string): Promise<StoredProof | undefined> {
@@ -195,6 +217,8 @@ export async function removeProofs(localIds: string[]): Promise<void> {
 
 /**
  * Mark proofs as spent (instead of deleting, for audit trail).
+ * TASK-4906: spending CONSUMES any in-flight reservation — the flag is
+ * cleared here so no terminal-success path can leave a stuck lock.
  */
 export async function markSpent(localIds: string[]): Promise<void> {
 	const db = await getDB();
@@ -204,6 +228,7 @@ export async function markSpent(localIds: string[]): Promise<void> {
 		const proof = await tx.store.get(id);
 		if (proof) {
 			proof.spent = true;
+			proof.reserved = false;
 			await tx.store.put(proof);
 		}
 	}
@@ -511,4 +536,57 @@ export async function clearPendingNormalize(localIds: string[]): Promise<void> {
 		}
 	}
 	await tx.done;
+}
+
+// ─── TASK-4906 (INTENT-049): in-flight proof reservation ────
+
+/**
+ * TASK-4906: mark proofs as RESERVED (submitted to the mint, outcome
+ * unknown). Idempotent — re-marking an already-reserved proof is a no-op,
+ * and unknown local_ids (stub inputs in unit tests, never-stored secrets)
+ * are skipped silently. Callers: meltFlow/completeMelt (melt submit),
+ * sendTokens (exact-amount swap submit).
+ */
+export async function markReserved(localIds: string[]): Promise<void> {
+	const db = await getDB();
+	const tx = db.transaction(STORE_NAME, 'readwrite');
+	for (const id of localIds) {
+		const stored = await tx.store.get(id);
+		if (stored && !stored.spent) {
+			stored.reserved = true;
+			await tx.store.put(stored);
+		}
+	}
+	await tx.done;
+}
+
+/**
+ * TASK-4906: release the reservation (proven non-payment — the coins are
+ * back in the spendable pool). Idempotent; unknown ids skipped. Callers:
+ * meltFlow deterministic-fail + reconcile-failed paths, completeMelt
+ * pre-submit aborts, sendTokens swap fall-back, pending-tx-resolver
+ * terminal-fail settles (via the tx proofIds trail).
+ */
+export async function clearReserved(localIds: string[]): Promise<void> {
+	const db = await getDB();
+	const tx = db.transaction(STORE_NAME, 'readwrite');
+	for (const id of localIds) {
+		const stored = await tx.store.get(id);
+		if (stored) {
+			stored.reserved = false;
+			await tx.store.put(stored);
+		}
+	}
+	await tx.done;
+}
+
+/**
+ * TASK-4906: all proofs currently carrying the reservation flag
+ * (observability / sweep API — the set must drain to empty on every
+ * terminal path; anything left here after settle is a stuck lock).
+ */
+export async function getReservedProofs(): Promise<StoredProof[]> {
+	const db = await getDB();
+	const all = await db.getAll(STORE_NAME);
+	return all.filter(p => p.reserved === true && !p.spent);
 }

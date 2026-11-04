@@ -66,8 +66,7 @@
 	import { isCashuToken, getTokenAmount, decodeToken } from '$lib/cashu/token';
 	import { CashuError, RateLimitedError, parseRetryAfterMs } from '$lib/cashu/client';
 	import { fetchAndCacheKeysets } from '$lib/cashu/keyset';
-	import { addTransaction, getTransactionById, updateTransaction } from '$lib/storage/db';
-	import type { Transaction } from '$lib/types';
+	import { addTransaction, getTransactionById, updateTransaction, compareAndSetTransactionStatus, type MintClaimState } from '$lib/storage/db';
 	import { getBalance } from '$lib/wallet/balance';
 	import { getPrivateKey, storeSessionPin, unlockWallet } from '$lib/wallet/state';
 	import { WalletLockedError } from '$lib/wallet/errors';
@@ -150,10 +149,11 @@
 		}
 	}
 
-	// TASK-4300 — claim marker: ephemeral, written via cast so
-	// TransactionStatus (pending|confirmed|failed) in types.ts stays untouched.
+	// TASK-4300 — claim marker: the transient MintClaimState ('checking'),
+	// kept OUTSIDE TransactionStatus (pending|confirmed|failed) in types.ts —
+	// no cast, no widening. Written only via compareAndSetTransactionStatus;
 	// confirmed/failed writers overwrite status wholesale, so the marker never leaks.
-	const CLAIM_STATUS = 'minting' as Transaction['status'];
+	const CLAIM_STATUS: MintClaimState = 'checking';
 
 	// ─── Cashu state ─────────────────────────────────────────
 	type CashuState = 'idle' | 'validating' | 'preview' | 'loading' | 'success' | 'error';
@@ -509,9 +509,9 @@
 			const mintUrlClean = mintUrl.trim();
 			getPrivateKey(); // ensure wallet is unlocked (throws WalletLockedError → unlock prompt)
 
-			// TASK-4300 (INTENT-043) — claim pending->minting compare-and-set
+			// TASK-4300 (INTENT-043) — claim pending->checking compare-and-set
 			// BEFORE completeMint: ต่อ 1 invoice มีคนเดียวที่ mint proofs.
-			// Winner flips the pending tx to 'minting' and proceeds to mint
+			// Winner flips the pending tx to 'checking' and proceeds to mint
 			// (ends in received); loser finds non-pending and stops silently —
 			// no toast, no state change (winner drives the UI to received).
 			// Best-effort single-thread CAS: if the record is missing
@@ -527,8 +527,7 @@
 						claimed = true;
 					} else if (existing.status === 'pending') {
 						// compare-and-set: only the first claimant wins
-						await updateTransaction(pendingTxId, { status: CLAIM_STATUS });
-						claimed = true;
+						claimed = await compareAndSetTransactionStatus(pendingTxId, 'pending', CLAIM_STATUS);
 					}
 				}
 			} catch {
