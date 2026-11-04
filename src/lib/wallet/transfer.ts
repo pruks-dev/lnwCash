@@ -137,8 +137,9 @@ export async function sendTokens(
 
 			// TASK-4906: reserve the swap input while it is on the wire —
 			// a concurrent send/melt must not pick the same coin. Released
-			// on the fall-back path below; consumed (markSpent) on success
-			// and on DLEQ-failure (the mint already took the input).
+			// on the fall-back path below (incl. TASK-4920 DLEQ-abort:
+			// Alice-abort leaves local state unchanged); consumed (markSpent)
+			// on success only.
 			await markReserved([swapProof.local_id]);
 			const swapResult = await swapProofs(mintUrl, [swapProof], outputs);
 
@@ -199,11 +200,14 @@ export async function sendTokens(
 			// swallowing it would fall through to sending the ORIGINAL proofs
 			// (which the mint has ALREADY consumed in the swap) — surface it.
 			if (err instanceof DleqVerifyFailedError) {
-				// TASK-4906: the mint consumed the swap input (the swap
-				// itself succeeded — only local verification failed), so the
-				// coin is NOT back in the pool: consume it (clears the
-				// reservation) instead of releasing, then surface the error.
-				try { await markSpent([swapProof.local_id]); } catch { /* best-effort — never mask the DLEQ error */ }
+				// TASK-4920 (B5 fix-forward): Alice-abort leaves local state
+				// UNCHANGED — release the TASK-4906 reservation (clearReserved)
+				// back to the spendable pool, then rethrow so the error ESCAPES
+				// the fall-back path. The swap input stays UNspent locally
+				// (B5 golden: markSpent never runs here) — the abort happens
+				// BEFORE anything is stored, mirroring mint.ts B2 (nothing
+				// stored, counter band untouched by this branch).
+				try { await clearReserved([swapProof.local_id]); } catch { /* best-effort — never mask the DLEQ error */ }
 				throw err;
 			}
 			// Swap failed — fall back

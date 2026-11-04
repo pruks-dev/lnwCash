@@ -260,9 +260,12 @@ describe('TASK-1314: S1 capture goldens + Alice MUST-verify', () => {
 
 		await expect(sendTokens(12, MINT_URL)).rejects.toBeInstanceOf(DleqVerifyFailedError);
 
-		// the swap input was NOT marked spent locally (markSpent never ran)
+		// TASK-4920 truth: Alice-abort leaves local state UNCHANGED — the swap
+		// input was NOT marked spent locally (markSpent never ran); the
+		// TASK-4906 reservation is released back to the spendable pool.
 		const still = await getAllProofs();
 		expect(still.map((p) => p.spent)).toEqual([false]);
+		expect(still.map((p) => p.reserved ?? false)).toEqual([false]);
 	}, 15000);
 
 	// ── melt.ts (change capture + privacy input bodies) ──
