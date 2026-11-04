@@ -142,6 +142,7 @@
 			// TASK-4917 (INTENT-049): display-only — transient claim state
 			// 'checking' + legacy 'minting' read as pending on screen.
 			// Stored status untouched — verdict logic unchanged.
+			// falls through
 			case 'checking':
 			case 'minting':
 				return $_('screen.history.status_pending');
