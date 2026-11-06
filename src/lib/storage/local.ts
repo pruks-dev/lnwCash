@@ -4,6 +4,9 @@
  */
 
 import type { WalletMetadata, WalletSettings, ThemeMode, KeysetCacheEntry } from '../types';
+// TASK-5002 (INTENT-050): validate fiat_currency against the live-rate
+// currency list — rates.ts is dependency-free (fetch + Map only), no cycle.
+import { SUPPORTED_CURRENCIES } from '../fiat/rates';
 
 // ─── Storage Keys ────────────────────────────────────────────
 
@@ -101,7 +104,9 @@ const DEFAULT_SETTINGS: WalletSettings = {
 	theme: 'system',
 	default_mint: '',
 	// TASK-220: PIN keypad shuffle — default OFF per Commander.
-	pin_shuffle: false
+	pin_shuffle: false,
+	// TASK-5002 (INTENT-050, mockup R2 rev13 APPROVED): fiat currency — default THB.
+	fiat_currency: 'THB'
 	// TASK-FIX-321: fee return badge is now always ON (toggle removed from Settings per Commander).
 };
 
@@ -116,7 +121,13 @@ export function getSettings(): WalletSettings {
 		default_mint:
 			typeof data.default_mint === 'string' ? data.default_mint : DEFAULT_SETTINGS.default_mint,
 		pin_shuffle:
-			typeof data.pin_shuffle === 'boolean' ? data.pin_shuffle : DEFAULT_SETTINGS.pin_shuffle
+			typeof data.pin_shuffle === 'boolean' ? data.pin_shuffle : DEFAULT_SETTINGS.pin_shuffle,
+		// TASK-5002 (INTENT-050): fiat code validated — unknown/missing → THB default.
+		fiat_currency:
+			typeof data.fiat_currency === 'string' &&
+			(SUPPORTED_CURRENCIES as readonly string[]).includes(data.fiat_currency)
+				? data.fiat_currency
+				: DEFAULT_SETTINGS.fiat_currency
 		// TASK-FIX-321: legacy show_fee_return field in localStorage is intentionally ignored (no error).
 	};
 }

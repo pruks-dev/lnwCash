@@ -40,6 +40,10 @@
 
 	// TASK-220: Change PIN flow + toast + error types
 	import { showToast } from '$lib/stores/toast';
+	// TASK-5002 (INTENT-050, mockup R2 rev13 APPROVED): fiat currency setting —
+	// 10-currency collapsible dropdown, default THB, persisted in lnwcash_settings.
+	import { getFiatCurrency, setFiatCurrency, CURRENCY_META, DEFAULT_FIAT_CURRENCY } from '$lib/fiat/currency';
+	import { SUPPORTED_CURRENCIES, type FiatCurrency } from '$lib/fiat/rates';
 	import { changePin, deleteWallet } from '$lib/wallet/state';
 	import { InvalidPinError, WalletNotInitializedError } from '$lib/wallet/errors';
 
@@ -63,6 +67,10 @@
 	let autoLockTimeout: number = $state(5); // TASK-210: auto-lock timeout (minutes)
 	// TASK-220: PIN keypad shuffle setting (persisted, default off).
 	let pinShuffle: boolean = $state(false);
+	// TASK-5002 (INTENT-050, mockup R2 rev13 APPROVED): fiat currency dropdown —
+	// default THB, persisted in lnwcash_settings.fiat_currency, collapsed by default.
+	let fiatCurrency: FiatCurrency = $state('THB');
+	let fiatOpen: boolean = $state(false);
 	// TASK-FIX-321: fee return badge toggle removed — always ON per Commander.
 
 	// TASK-220: Change PIN modal state
@@ -103,11 +111,14 @@
 			currentLang = settings.language || 'en';
 			currentTheme = settings.theme || 'system';
 			pinShuffle = settings.pin_shuffle ?? false;
+			// TASK-5002: fiat currency (validated read — unknown codes → THB).
+			fiatCurrency = getFiatCurrency();
 			// TASK-FIX-321: fee return setting removed — badge always ON.
 		} catch {
 			currentLang = 'en';
 			currentTheme = 'system';
 			pinShuffle = false;
+			fiatCurrency = 'THB';
 		}
 
 		// TASK-210: initialise auto-lock from persisted config + arm the timer
@@ -128,6 +139,14 @@
 	function switchTheme(theme: ThemeMode) {
 		currentTheme = theme;
 		setTheme(theme);
+	}
+
+	// TASK-5002 (INTENT-050, mockup R2 rev13 APPROVED): fiat currency select —
+	// persist + notify Home via FIAT_CURRENCY_EVENT, collapse dropdown back.
+	function selectFiatCurrency(currency: FiatCurrency) {
+		fiatCurrency = currency;
+		setFiatCurrency(currency);
+		fiatOpen = false;
 	}
 
 	function handleAutoLockChange() {
@@ -586,6 +605,52 @@
 						{$_('screen.settings.theme_system')}
 					</button>
 				</div>
+			</div>
+		</Card>
+
+		<!-- ─── Fiat Currency Section (TASK-5002, INTENT-050 mockup R2 rev13 APPROVED) ─── -->
+		<!-- Collapsible dropdown (rev4) — 10 currencies, default THB (rev5) — -->
+		<!-- single summary row when collapsed. No ≈ (rev3), no source/time (rev2). -->
+		<Card variant="basic" padding="md">
+			<div class="section">
+				<details class="fiat-dropdown" open={fiatOpen}>
+					<summary
+						onclick={(e) => { e.preventDefault(); fiatOpen = !fiatOpen; }}
+						aria-label={$_('screen.settings.fiat_title')}
+					>
+						<span class="summary-meta">
+							<Heading level="h4">{$_('screen.settings.fiat_title')}</Heading>
+							<Body size="sm" color="secondary">{$_('screen.settings.fiat_description')}</Body>
+						</span>
+						<span class="summary-current">{CURRENCY_META[fiatCurrency].symbol} {fiatCurrency}</span>
+						<span class="chevron" aria-hidden="true">
+							<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m6 9l6 6l6-6"/></svg>
+						</span>
+					</summary>
+					<div class="currency-list" role="listbox" aria-label={$_('screen.settings.fiat_title')}>
+						{#each SUPPORTED_CURRENCIES as cur (cur)}
+							<button
+								type="button"
+								class="currency-row"
+								class:selected={fiatCurrency === cur}
+								role="option"
+								aria-selected={fiatCurrency === cur}
+								onclick={() => selectFiatCurrency(cur)}
+							>
+								<span class="currency-symbol" aria-hidden="true">{CURRENCY_META[cur].symbol}</span>
+								<span class="currency-meta">
+									<span class="currency-name">{$_(`screen.settings.fiat_name_${cur}`)}{#if cur === DEFAULT_FIAT_CURRENCY}<span class="default-pill">{$_('screen.settings.fiat_default')}</span>{/if}</span>
+									<span class="currency-sub">{CURRENCY_META[cur].enName} — {$_(`screen.settings.fiat_decimals_${CURRENCY_META[cur].decimals}`)}</span>
+								</span>
+								{#if fiatCurrency === cur}
+									<span class="check-wrap" aria-hidden="true">
+										<Check size={20} />
+									</span>
+								{/if}
+							</button>
+						{/each}
+					</div>
+				</details>
 			</div>
 		</Card>
 
@@ -1160,5 +1225,149 @@
 		gap: var(--space-sm);
 		justify-content: flex-end;
 		margin-top: var(--space-xs);
+	}
+
+	/* ── TASK-5002 (INTENT-050, mockup R2 rev13 APPROVED): fiat dropdown ── */
+	/* Collapsible <details> — single summary row when collapsed (rev4). */
+	details.fiat-dropdown {
+		display: block;
+	}
+
+	details.fiat-dropdown > summary {
+		list-style: none;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		gap: var(--space-md);
+		padding: var(--space-xs) 0;
+	}
+
+	details.fiat-dropdown > summary::-webkit-details-marker {
+		display: none;
+	}
+
+	details.fiat-dropdown > summary:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
+		border-radius: var(--radius-md);
+	}
+
+	.summary-meta {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-xs);
+	}
+
+	.summary-current {
+		font-size: var(--font-size-sm);
+		font-weight: var(--font-weight-semibold);
+		color: var(--color-primary);
+		white-space: nowrap;
+	}
+
+	.chevron {
+		color: var(--color-text-secondary);
+		display: flex;
+		align-items: center;
+		flex-shrink: 0;
+		transition: transform var(--transition-fast);
+	}
+
+	details.fiat-dropdown[open] .chevron {
+		transform: rotate(180deg);
+	}
+
+	.currency-list {
+		border-top: 1px solid var(--color-divider);
+		margin-top: var(--space-sm);
+		max-height: 320px;
+		overflow-y: auto;
+	}
+
+	.currency-row {
+		display: flex;
+		align-items: center;
+		gap: var(--space-md);
+		width: 100%;
+		padding: var(--space-sm) var(--space-xs);
+		background: none;
+		border: none;
+		border-top: 1px solid var(--color-divider);
+		font: inherit;
+		color: inherit;
+		cursor: pointer;
+		text-align: left;
+		border-radius: var(--radius-md);
+	}
+
+	.currency-row:first-child {
+		border-top: none;
+	}
+
+	.currency-row:hover {
+		background: var(--color-surface-variant);
+	}
+
+	.currency-row:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: -2px;
+	}
+
+	.currency-symbol {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 36px;
+		height: 36px;
+		border-radius: var(--radius-full);
+		flex-shrink: 0;
+		background: var(--color-surface-variant);
+		font-size: var(--font-size-md);
+		font-weight: var(--font-weight-semibold);
+		color: var(--color-text);
+	}
+
+	.currency-row.selected .currency-symbol {
+		background: var(--color-primary);
+		color: var(--color-primary-contrast);
+	}
+
+	.currency-meta {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+
+	.currency-name {
+		font-size: var(--font-size-md);
+		font-weight: var(--font-weight-semibold);
+	}
+
+	.currency-sub {
+		font-size: var(--font-size-sm);
+		color: var(--color-text-secondary);
+	}
+
+	.default-pill {
+		display: inline-block;
+		margin-left: 6px;
+		padding: 1px 8px;
+		border-radius: var(--radius-full);
+		font-size: var(--font-size-xs);
+		font-weight: var(--font-weight-semibold);
+		background: var(--color-surface-variant);
+		color: var(--color-text-secondary);
+		vertical-align: middle;
+	}
+
+	.check-wrap {
+		color: var(--color-success);
+		display: flex;
+		align-items: center;
+		flex-shrink: 0;
 	}
 </style>

@@ -65,6 +65,14 @@ export interface WalletSettings {
 	default_mint: string;
 	/** TASK-220: shuffle PIN keypad button positions (default off per Commander). */
 	pin_shuffle: boolean;
+	/**
+	 * TASK-5002 (INTENT-050, mockup R2 rev13 APPROVED): fiat currency code
+	 * for Home conversion (10 codes, default 'THB'). Plain string, OPTIONAL
+	 * so pre-5002 stored settings / test literals without the field still
+	 * type-check — local.ts validates against SUPPORTED_CURRENCIES and fills
+	 * the THB default on read (unknown/missing → THB).
+	 */
+	fiat_currency?: string;
 }
 
 export interface KeysetCacheEntry {

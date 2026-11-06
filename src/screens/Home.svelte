@@ -15,6 +15,13 @@
 	import { activeMintStore, getActiveMintUrl, getMintConfig } from '$lib/wallet/store';
 	import { mintConfirmed } from '$lib/stores/mint-events';
 
+	// TASK-5002 (INTENT-050, mockup R2 rev13 APPROVED): live fiat conversion —
+	// rates.ts (CoinGecko primary + Binance BTCTHB fallback + cache) × balance.
+	// No hardcoded rate (L-P021), no ≈, no rate line, no time/source in UI.
+	import { getBtcRate } from '$lib/fiat/rates';
+	import type { FiatCurrency } from '$lib/fiat/rates';
+	import { getFiatCurrency, formatFiat, FIAT_CURRENCY_EVENT } from '$lib/fiat/currency';
+
 	let _lastBalance: number = Number(sessionStorage.getItem('lnw_last_balance') || 0);
 	let _initialized: boolean = sessionStorage.getItem('lnw_balance_init') === '1';
 
@@ -43,6 +50,13 @@
 
 	let displayBalance: number = $state(_lastBalance);
 	let animFrame: number | undefined;
+
+	// TASK-5002 (INTENT-050): live fiat — currency from settings (default THB),
+	// price from rates.ts. undefined = first load pending; null = unavailable
+	// (renders "– CUR", never a fake number — L-P021).
+	let fiatCurrency: FiatCurrency = $state('THB');
+	let btcPrice: number | null | undefined = $state(undefined);
+	let fiatText: string = $derived(formatFiat(displayBalance, btcPrice, fiatCurrency));
 	let lastTarget: number = $state(_lastBalance);
 
 	function animateTo(target: number) {
@@ -74,6 +88,16 @@
 			online = status;
 		});
 
+		// TASK-5002: refresh fiat when Settings changes currency (same-tab
+		// event) or another tab writes settings (storage event).
+		fiatCurrency = getFiatCurrency();
+		const onFiatCurrencyChange = () => {
+			fiatCurrency = getFiatCurrency();
+			void loadRates();
+		};
+		window.addEventListener(FIAT_CURRENCY_EVENT, onFiatCurrencyChange);
+		window.addEventListener('storage', onFiatCurrencyChange);
+
 		let init = true;
 		const unsubMint = activeMintStore.subscribe((url: string) => {
 			if (init) { init = false; return; } // skip initial fire
@@ -84,10 +108,13 @@
 		});
 
 		loadAll();
+		void loadRates();
 
 		return () => {
 			cleanupConnectivity();
 			unsubMint();
+			window.removeEventListener(FIAT_CURRENCY_EVENT, onFiatCurrencyChange);
+			window.removeEventListener('storage', onFiatCurrencyChange);
 		};
 	});
 
@@ -138,6 +165,18 @@
 		return new Intl.NumberFormat().format(amount);
 	}
 
+	// TASK-5002 (INTENT-050): live BTC price for the selected currency.
+	// Never throws for fetch failures — rates.ts encodes them in the snapshot;
+	// null price renders "– CUR" via formatFiat (no fake numbers, no stuck loading).
+	async function loadRates() {
+		try {
+			const entry = await getBtcRate(fiatCurrency);
+			btcPrice = entry.price;
+		} catch {
+			btcPrice = null;
+		}
+	}
+
 	// TASK-4001 (INTENT-040, mockup R6 rev16 APPROVE): Mint: line shows mint
 	// NAME (config name || short host fallback — ลอก mint/+page.svelte:424),
 	// full URL lives in the title attr. Reactive via currentMintUrl (:78 subscribe).
@@ -152,11 +191,6 @@
 	let activeMintName: string = $derived(
 		getMintConfig(currentMintUrl)?.name?.trim() || shortMintHost(currentMintUrl)
 	);
-
-	function estimateFiat(sats: number): string {
-		const thb = Math.round(sats * 0.015);
-		return thb.toLocaleString();
-	}
 
 	function navTo(screen: ScreenKey) {
 		navigateTo(screen);
@@ -218,8 +252,9 @@
 						</span>
 						<span class="balance-unit">{$_('screen.balance.sats')}</span>
 					</div>
+					<!-- TASK-5002 (INTENT-050, mockup R2 rev13 APPROVED): single live-fiat line — no ≈, no rate line, no time/source -->
 					<div class="fiat-estimate">
-						≈ {estimateFiat(displayBalance)} THB
+						{fiatText}
 					</div>
 				{/if}
 				</div>

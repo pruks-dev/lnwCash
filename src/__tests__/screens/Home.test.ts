@@ -72,12 +72,70 @@ vi.mock('$lib/wallet/offline', () => ({
 	}
 }));
 
+// TASK-5002 (INTENT-050, mockup R2 rev13): mock live rates — Home must render
+// EXACT values from the mock (mockup demo: 21,500 sats @2,655,537 = 570.94 THB).
+// Never hits network in tests.
+const MOCK_PRICES: Record<string, number | null> = {
+	THB: 2655537,
+	USD: 97500,
+	EUR: 89000,
+	JPY: 14800000,
+	GBP: 77000,
+	CNY: 700000,
+	KRW: 135000000,
+	SGD: 132000,
+	AUD: 150000,
+	MYR: 460000
+};
+interface MockRateEntry {
+	price: number | null;
+	asOf: number | null;
+	where: string;
+	stale: boolean;
+	expired: boolean;
+}
+const mockGetBtcRate = vi.fn(
+	async (currency: string): Promise<MockRateEntry> => ({
+		price: MOCK_PRICES[currency] ?? null,
+		asOf: 1000000,
+		where: 'coingecko',
+		stale: false,
+		expired: false
+	})
+);
+vi.mock('$lib/fiat/rates', () => ({
+	getBtcRate: (...args: unknown[]) =>
+		(mockGetBtcRate as (...a: unknown[]) => unknown)(...args),
+	getBtcRates: vi.fn(),
+	SUPPORTED_CURRENCIES: [
+		'THB',
+		'USD',
+		'EUR',
+		'JPY',
+		'GBP',
+		'CNY',
+		'KRW',
+		'SGD',
+		'AUD',
+		'MYR'
+	]
+}));
+
 describe('Home (TASK-059) — Wallet Page Redesign', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockGetBalanceByMint.mockResolvedValue(0);
 		mockGetTransactions.mockResolvedValue([]);
 		mockNavigateTo.mockClear();
+		// TASK-5002: isolate fiat settings between tests (default THB).
+		window.localStorage.clear();
+		mockGetBtcRate.mockImplementation(async (currency: string) => ({
+			price: MOCK_PRICES[currency] ?? null,
+			asOf: 1000000,
+			where: 'coingecko',
+			stale: false,
+			expired: false
+		}));
 	});
 
 	afterEach(() => {
@@ -138,6 +196,69 @@ describe('Home (TASK-059) — Wallet Page Redesign', () => {
 			const fiat = document.querySelector('.fiat-estimate');
 			expect(fiat).toBeTruthy();
 			expect(fiat?.textContent).toContain('THB');
+		}, { timeout: 3000 });
+	}, 10000);
+
+	// ═══════════════════════════════════════════════════════════════
+	// TASK-5002 (INTENT-050, mockup R2 rev13): live-rate fiat, exact values
+	// ═══════════════════════════════════════════════════════════════
+
+	it('shows exact live fiat from mock rate (21,500 sats @2,655,537 = 570.94 THB)', async () => {
+		mockGetBalanceByMint.mockResolvedValue(21500);
+		render(Home, {});
+		await vi.waitFor(() => {
+			const fiat = document.querySelector('.fiat-estimate');
+			expect(fiat?.textContent?.trim()).toBe('570.94 THB');
+		}, { timeout: 3000 });
+	}, 10000);
+
+	it('fiat line has no ≈ and no rate/time/source (mockup R2 rev1-3)', async () => {
+		mockGetBalanceByMint.mockResolvedValue(21500);
+		render(Home, {});
+		await vi.waitFor(() => {
+			const fiat = document.querySelector('.fiat-estimate');
+			expect(fiat?.textContent?.trim()).toBe('570.94 THB');
+		}, { timeout: 3000 });
+		const fiat = document.querySelector('.fiat-estimate');
+		expect(fiat?.textContent).not.toContain('≈');
+		expect(fiat?.textContent).not.toMatch(/\/\s*BTC|CoinGecko|อัปเดต|Updated/);
+		expect(document.querySelector('.fiat-rate-line')).toBeNull();
+	}, 10000);
+
+	it('switches fiat currency to USD with mock rate (21,500 sats @97,500 = 20.96 USD)', async () => {
+		mockGetBalanceByMint.mockResolvedValue(21500);
+		render(Home, {});
+		await vi.waitFor(() => {
+			expect(document.querySelector('.fiat-estimate')?.textContent?.trim()).toBe('570.94 THB');
+		}, { timeout: 3000 });
+		window.localStorage.setItem('lnwcash_settings', JSON.stringify({ fiat_currency: 'USD' }));
+		window.dispatchEvent(new CustomEvent('lnwcash:fiat-currency', { detail: 'USD' }));
+		await vi.waitFor(() => {
+			expect(document.querySelector('.fiat-estimate')?.textContent?.trim()).toBe('20.96 USD');
+		}, { timeout: 3000 });
+	}, 10000);
+
+	it('formats JPY with 0 decimals from mock rate (21,500 sats @14,800,000 = 3,182 JPY)', async () => {
+		mockGetBalanceByMint.mockResolvedValue(21500);
+		window.localStorage.setItem('lnwcash_settings', JSON.stringify({ fiat_currency: 'JPY' }));
+		render(Home, {});
+		await vi.waitFor(() => {
+			expect(document.querySelector('.fiat-estimate')?.textContent?.trim()).toBe('3,182 JPY');
+		}, { timeout: 3000 });
+	}, 10000);
+
+	it('renders dash (no fake number) when rate is unavailable', async () => {
+		mockGetBalanceByMint.mockResolvedValue(21500);
+		mockGetBtcRate.mockResolvedValueOnce({
+			price: null,
+			asOf: null,
+			where: 'cache',
+			stale: true,
+			expired: true
+		});
+		render(Home, {});
+		await vi.waitFor(() => {
+			expect(document.querySelector('.fiat-estimate')?.textContent?.trim()).toBe('– THB');
 		}, { timeout: 3000 });
 	}, 10000);
 

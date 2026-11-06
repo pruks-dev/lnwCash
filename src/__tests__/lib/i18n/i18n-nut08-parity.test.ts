@@ -109,7 +109,7 @@ const REQUIRED_NUT08_KEYS = [
 	'nut08.error.derive'
 ] as const;
 
-const TOTAL_KEYS = 430; // 432 (INTENT-042) minus 2 = TASK-4502 orphan sweep of the irreversible pair (TH/EN symmetric deletion).
+const TOTAL_KEYS = 444; // 432 (INTENT-042) minus 2 = TASK-4502 orphan sweep of the irreversible pair (TH/EN symmetric deletion).
 
 describe('TASK-316: i18n NUT-08 namespace + parity', () => {
 	beforeAll(() => {
