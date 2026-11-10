@@ -118,24 +118,44 @@ function validDecode() {
 
 describe('Send unified button (TASK-297)', () => {
 	let fetchMock: ReturnType<typeof vi.fn>;
+	// TASK-5220 (B2): deterministic quote-failure flag. The old
+	// mockImplementationOnce(throw) raced the onMount fiat preload (whichever
+	// fetch ran first consumed it); a quote-URL-conditional throw fails the
+	// quote deterministically regardless of preload order/cache state.
+	let failNextQuote = false;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		failNextQuote = false;
 		mockMeltFlow.mockResolvedValue({ success: true, preimage: 'ab', feeReserve: 0, spentAmount: 1 });
 		mockDecodeBolt11.mockReturnValue(validDecode());
 		fetchMock = vi.fn(async (input: string | URL | Request) => {
 			const url = typeof input === 'string' ? input : input.toString();
+			// TASK-5220 (B2): allowlisted fiat-rate preload (D22 secondary-always —
+			// onMount loadFiatRate hits CoinGecko; Binance is the prod fallback leg).
+			// The no-fetch contract below still holds for everything else: assert
+			// via nonFiatCalls(), never via the raw mock.
+			if (url.includes('api.coingecko.com')) return jsonResponse({ bitcoin: { thb: 1500000, usd: 45000 } });
+			if (url.includes('api.binance.com')) return jsonResponse({ price: '1500000.00' });
 			if (url.includes('/.well-known/lnurlp/')) return jsonResponse(PAY_INFO);
 			if (url.includes('service.com')) return jsonResponse(PAY_INFO);
 			if (url.includes('/callback')) return jsonResponse({ pr: 'lnbc1testinvoice' });
 			// TASK-4600: auto-quote — melt quote endpoint serves fee_reserve: 2
-			if (url.includes('/v1/melt/quote/bolt11')) return jsonResponse({ quote: 'q-test', amount: 1, fee_reserve: 2, state: 'UNPAID' });
+			if (url.includes('/v1/melt/quote/bolt11')) {
+				if (failNextQuote) {
+					failNextQuote = false;
+					throw new Error('fetch failed: mint unreachable');
+				}
+				return jsonResponse({ quote: 'q-test', amount: 1, fee_reserve: 2, state: 'UNPAID' });
+			}
 			throw new Error('unexpected fetch: ' + url);
 		});
 		vi.stubGlobal('fetch', fetchMock);
 	});
 
 	const quoteCalls = () => fetchMock.mock.calls.filter((c) => String(c[0]).includes('/v1/melt/quote/bolt11'));
+	const isFiatPreloadUrl = (u: string) => u.includes('api.coingecko.com') || u.includes('api.binance.com');
+	const nonFiatCalls = () => fetchMock.mock.calls.filter((c) => !isFiatPreloadUrl(String(c[0])));
 
 	afterEach(() => {
 		cleanup();
@@ -152,7 +172,7 @@ describe('Send unified button (TASK-297)', () => {
 		await fireEvent.click(sendButton);
 
 		// no resolve, no validation, no error surfaced
-		expect(fetchMock).not.toHaveBeenCalled();
+		expect(nonFiatCalls()).toHaveLength(0);
 		expect(mockDecodeBolt11).not.toHaveBeenCalled();
 		expect(screen.queryByText('screen.send.error_invalid_invoice')).toBeNull();
 		expect(document.querySelector('[data-flow="send-lnurl"]')).toBeNull();
@@ -167,7 +187,7 @@ describe('Send unified button (TASK-297)', () => {
 		// Send button shown for the address (typing did NOT auto-resolve)
 		const sendButton = screen.getByRole('button', { name: 'screen.send.lnaddr.send_button' });
 		expect(sendButton).toBeTruthy();
-		expect(fetchMock).not.toHaveBeenCalled();
+		expect(nonFiatCalls()).toHaveLength(0);
 
 		// click Send → resolveLnurlInput
 		await fireEvent.click(sendButton);
@@ -186,7 +206,7 @@ describe('Send unified button (TASK-297)', () => {
 
 		const sendButton = screen.getByRole('button', { name: 'screen.send.lnaddr.send_button' });
 		expect(sendButton).toBeTruthy();
-		expect(fetchMock).not.toHaveBeenCalled();
+		expect(nonFiatCalls()).toHaveLength(0);
 
 		// click Send → resolveLnurlInput handles the LA after strip
 		await fireEvent.click(sendButton);
@@ -227,7 +247,7 @@ describe('Send unified button (TASK-297)', () => {
 		mockDecodeBolt11.mockClear();
 		await fireEvent.click(sendButton);
 		expect(mockDecodeBolt11).toHaveBeenCalled();
-		expect(fetchMock).not.toHaveBeenCalled();
+		expect(nonFiatCalls()).toHaveLength(0);
 	});
 
 	// TASK-4600: valid bolt11 auto-quotes exactly once per distinct invoice.
@@ -263,9 +283,7 @@ describe('Send unified button (TASK-297)', () => {
 	});
 
 	it('valid bolt11 + failed quote → check_fee stays for retry (error, fee=0)', async () => {
-		fetchMock.mockImplementationOnce(async () => {
-			throw new Error('fetch failed: mint unreachable');
-		});
+		failNextQuote = true;
 		render(Send, { defaultMintUrl: 'https://mint.lnw.cash' });
 		await tick();
 		const textarea = document.querySelector('.paste-textarea') as HTMLTextAreaElement;
@@ -333,7 +351,7 @@ describe('Send unified button (TASK-297)', () => {
 		expect(sendButton).toBeTruthy();
 
 		await fireEvent.click(sendButton);
-		expect(fetchMock).not.toHaveBeenCalled();
+		expect(nonFiatCalls()).toHaveLength(0);
 		expect(mockDecodeBolt11).not.toHaveBeenCalled();
 		expect(screen.queryByText('screen.send.error_invalid_invoice')).toBeNull();
 		expect(document.querySelector('[data-flow="send-lnurl"]')).toBeNull();

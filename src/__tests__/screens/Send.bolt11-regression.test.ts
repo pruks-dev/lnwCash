@@ -76,8 +76,24 @@ describe('Send bolt11 regression (TASK-280)', () => {
 		vi.clearAllMocks();
 		// TASK-4600: the melt-quote fetch IS expected (auto-quote, once per
 		// distinct invoice). Anything LNURL-shaped still fails loudly.
+		// TASK-5220 (B2): allowlisted fiat-rate preload (D22 secondary-always —
+		// onMount loadFiatRate hits CoinGecko; Binance is the prod fallback leg).
+		// The no-fetch contract below still holds for everything else: assert
+		// via nonFiatCalls(), never via the raw mock.
 		fetchMock = vi.fn(async (input: string | URL | Request) => {
 			const url = typeof input === 'string' ? input : input.toString();
+			if (url.includes('api.coingecko.com')) {
+				return new Response(JSON.stringify({ bitcoin: { thb: 1500000, usd: 45000 } }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				});
+			}
+			if (url.includes('api.binance.com')) {
+				return new Response(JSON.stringify({ price: '1500000.00' }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				});
+			}
 			if (url.includes('/v1/melt/quote/bolt11')) {
 				return new Response(JSON.stringify({ quote: 'q-test', amount: 250000, fee_reserve: 2, state: 'UNPAID' }), {
 					status: 200,
@@ -90,10 +106,9 @@ describe('Send bolt11 regression (TASK-280)', () => {
 	});
 
 	const quoteCalls = () => fetchMock.mock.calls.filter((c) => String(c[0]).includes('/v1/melt/quote/bolt11'));
-	const lnurlCalls = () => fetchMock.mock.calls.filter((c) => {
-		const u = String(c[0]);
-		return !u.includes('/v1/melt/quote/bolt11');
-	});
+	const isFiatPreloadUrl = (u: string) => u.includes('api.coingecko.com') || u.includes('api.binance.com');
+	const nonFiatCalls = () => fetchMock.mock.calls.filter((c) => !isFiatPreloadUrl(String(c[0])));
+	const lnurlCalls = () => nonFiatCalls().filter((c) => !String(c[0]).includes('/v1/melt/quote/bolt11'));
 
 	afterEach(() => {
 		cleanup();
@@ -139,7 +154,7 @@ describe('Send bolt11 regression (TASK-280)', () => {
 		expect(await screen.findByText('screen.send.error_invalid_invoice')).toBeTruthy();
 		expect(document.querySelector('[data-flow="send-lnurl"]')).toBeNull();
 		expect(screen.queryByText('screen.send.lnaddr.resolving')).toBeNull();
-		expect(fetchMock).not.toHaveBeenCalled();
+		expect(nonFiatCalls()).toHaveLength(0);
 	});
 
 	it('lnbcrt-prefixed input → routed to bolt11 path (not lnurl)', async () => {
@@ -151,6 +166,6 @@ describe('Send bolt11 regression (TASK-280)', () => {
 		expect(await screen.findByText('screen.send.error_invalid_invoice')).toBeTruthy();
 		expect(document.querySelector('[data-flow="send-lnurl"]')).toBeNull();
 		expect(screen.queryByText('screen.send.lnaddr.resolving')).toBeNull();
-		expect(fetchMock).not.toHaveBeenCalled();
+		expect(nonFiatCalls()).toHaveLength(0);
 	});
 });

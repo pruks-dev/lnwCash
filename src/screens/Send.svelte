@@ -1,3 +1,15 @@
+<script module lang="ts">
+	// TASK-5218 ZERO-DISPLAY — fiat 0 → "0 sats", never dash (display-only).
+	// Pure helper so fiat-toggle tests can vector it directly (THB/USD/JPY/KRW
+	// + no-entry). secondaryFor() calls it FIRST, before !entry and before
+	// resolveFiatQuote — quote path (resolveAmountSats / dust / block) untouched.
+	// Empty/blank input is NOT zero (stays dash); Number('')===0 trap avoided.
+	export function zeroSatsDisplay(raw: string, satsWord: string): string | null {
+		if (raw.trim() !== '' && Number(raw) === 0) return `0 ${satsWord}`;
+		return null;
+	}
+</script>
+
 <script lang="ts">
 	/**
 	 * Send Screen — TASK-066 Complete Redesign
@@ -40,6 +52,20 @@
 		LnurlError,
 		type LnurlPayInfo
 	} from '$lib/wallet/lnurl';
+	// TASK-5203 (INTENT-052 / BLUEPRINT v2, mockup option B unit-tap APPROVED):
+	// fiat input mode — sats→fiat display (currency.ts) + live rate (rates.ts)
+	// + fiat→sats floor conversion (convert.ts, ported verbatim from ARX
+	// TASK-5201). Mint unit stays sat; conversion happens only at input edge.
+	import { getBtcRate, type FiatCurrency, type RateEntry } from '$lib/fiat/rates';
+	import {
+		getFiatCurrency,
+		formatFiat,
+		FIAT_CURRENCY_EVENT
+	} from '$lib/fiat/currency';
+	import {
+		CURRENCY_META as FIAT_INPUT_META,
+		resolveFiatQuote
+	} from '$lib/fiat/convert';
 
 	import Card from '$lib/components/ui/Card.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
@@ -139,9 +165,125 @@
 		return s === 'loading';
 	}
 	let cashuAmount: string = $state('0');
+	// TASK-5203: integer sats snapshot for the preview card in fiat mode
+	// (mint unit sat — preview_token_msg keeps the sats wording).
+	let cashuPreviewSats: number = $state(0);
 	let cashuToken: string = $state('');
 	let cashuError: string = $state('');
 	let cashuSendResult: SendResult | null = $state(null);
+
+	// ─── Fiat input mode (TASK-5203, mockup option B unit-tap) ──
+	// Per-point mode (lnurl / cashu independent) — toggle resets input to
+	// '0' so a sats figure can never be mis-sent as fiat (or vice versa).
+	// Currency follows Settings fiat_currency (default THB); mint unit sat.
+	type AmountMode = 'sat' | 'fiat';
+	let lnurlMode: AmountMode = $state('sat');
+	let cashuMode: AmountMode = $state('sat');
+	let fiatCurrency: FiatCurrency = $state('THB');
+	// Live rate entry for the selected currency (null price = UNAVAILABLE →
+	// fiat mode blocked, never a fabricated number — D2).
+	let fiatEntry = $state<RateEntry | null>(null);
+	let fiatDecimals: number = $derived(FIAT_INPUT_META[fiatCurrency].decimals);
+	let fiatBlocked: boolean = $derived(fiatEntry !== null && fiatEntry.price === null);
+
+	async function loadFiatRate(): Promise<void> {
+		try {
+			fiatEntry = await getBtcRate(fiatCurrency);
+		} catch {
+			fiatEntry = null;
+		}
+	}
+
+	// Lazy rate load (no network until the user opts into fiat — the Send
+	// screen must stay fully offline-capable in sat mode, same as before).
+	// Returns true when fiat mode is usable (rate entry with a price).
+	async function ensureFiatUsable(): Promise<boolean> {
+		if (fiatEntry === null) await loadFiatRate();
+		return fiatEntry !== null && fiatEntry.price !== null;
+	}
+
+	async function toggleLnurlMode(): Promise<void> {
+		if (lnurlMode === 'sat') {
+			if (!(await ensureFiatUsable())) {
+				lnurlError = $_('screen.send.error_fiat_unavailable');
+				return;
+			}
+			lnurlMode = 'fiat';
+		} else {
+			lnurlMode = 'sat';
+		}
+		lnurlAmount = '0';
+		lnurlError = '';
+	}
+
+	async function toggleCashuMode(): Promise<void> {
+		if (cashuMode === 'sat') {
+			if (!(await ensureFiatUsable())) {
+				cashuError = $_('screen.send.error_fiat_unavailable');
+				cashuState = 'error';
+				return;
+			}
+			cashuMode = 'fiat';
+		} else {
+			cashuMode = 'sat';
+		}
+		cashuAmount = '0';
+		cashuError = '';
+		cashuState = 'idle';
+		cashuToken = '';
+	}
+
+	// Secondary (sub-line, home pattern D3): the *other* unit, dim.
+	// Sat mode → fiat estimate (formatFiat renders "– CUR" without rate).
+	// Fiat mode → floored sats, or "– sats" when not convertible (dust/invalid).
+	// Pure on explicit params so $derived call sites track every dep.
+	function secondaryFor(
+		raw: string,
+		mode: AmountMode,
+		entry: RateEntry | null,
+		satsWord: string
+	): string {
+		if (mode === 'sat') {
+			const n = Number(raw);
+			if (!Number.isFinite(n) || n < 0) return `– ${fiatCurrency}`;
+			return formatFiat(Math.floor(n), entry?.price, fiatCurrency);
+		}
+		// TASK-5218 ZERO-DISPLAY: fiat 0 → 0 sats immediately — before !entry
+		// (no-entry 0 → 0 sats) and before resolveFiatQuote (dust rule of 5201
+		// stays on the quote path only; display never blocks on dust).
+		// Covers BOTH Numpad points (lnurl + cashu share this function).
+		const zero = zeroSatsDisplay(raw, satsWord);
+		if (zero !== null) return zero;
+		if (!entry) return `– ${satsWord}`;
+		const q = resolveFiatQuote(raw, fiatCurrency, entry);
+		if (!q.ok) return `– ${satsWord}`;
+		return `${formatSat(q.sats)} ${satsWord}`;
+	}
+
+	let lnurlSecondary: string = $derived(
+		secondaryFor(lnurlAmount, lnurlMode, fiatEntry, $_('screen.balance.sats'))
+	);
+	let cashuSecondary: string = $derived(
+		secondaryFor(cashuAmount, cashuMode, fiatEntry, $_('screen.balance.sats'))
+	);
+
+	// Resolve the Numpad string to integer sats for the mint path (sat unit
+	// preserved). Fiat mode: floor via convert lib (dust → failure, never 0
+	// sent to mint — D4). Returns null when the input is not sendable.
+	function resolveAmountSats(
+		raw: string,
+		mode: AmountMode
+	): { ok: true; sats: number } | { ok: false; code: string } {
+		if (mode === 'sat') {
+			const f = parseFloat(raw);
+			if (isNaN(f) || f <= 0) return { ok: false, code: 'INVALID' };
+			return { ok: true, sats: Math.floor(f) };
+		}
+		if (!fiatEntry) return { ok: false, code: 'UNAVAILABLE' };
+		const q = resolveFiatQuote(raw, fiatCurrency, fiatEntry);
+		if (!q.ok) return { ok: false, code: q.code };
+		return { ok: true, sats: q.sats };
+	}
 
 	// ─── Toast ───────────────────────────────────────────────
 	let toastMessage: string = $state('');
@@ -229,6 +371,32 @@
 		}
 
 		return unsub;
+	});
+
+	// TASK-5203: fiat input mode init — currency follows Settings (default
+	// THB, same source as Home).
+	// TASK-5219 SECONDARY-ALWAYS: background preload on mount so both sat
+	// sub-lines (lnurl + cashu) show a fiat estimate as soon as the rate
+	// resolves (no await — Numpad never blocked; sat stays offline-capable,
+	// entry null → "–" until the rate lands). getBtcRate cache (fresh 60s) +
+	// single-flight in rates.ts dedups this with the toggle paths, so the
+	// first toggle after preload issues zero extra fetches. No new
+	// timers/polling.
+	onMount(() => {
+		fiatCurrency = getFiatCurrency();
+		if (fiatEntry === null) void loadFiatRate();
+		const onFiatCurrencyChange = () => {
+			fiatCurrency = getFiatCurrency();
+			// Refresh whenever the currency changes — both sub-lines are on
+			// screen in sat mode too. Cache/single-flight dedups no-ops.
+			void loadFiatRate();
+		};
+		window.addEventListener(FIAT_CURRENCY_EVENT, onFiatCurrencyChange);
+		window.addEventListener('storage', onFiatCurrencyChange);
+		return () => {
+			window.removeEventListener(FIAT_CURRENCY_EVENT, onFiatCurrencyChange);
+			window.removeEventListener('storage', onFiatCurrencyChange);
+		};
 	});
 
 	function showToast(message: string, type: 'info' | 'success' | 'error' = 'info') {
@@ -571,13 +739,21 @@
 			return;
 		}
 
-		const amountSatFloat = parseFloat(lnurlAmount);
-		if (isNaN(amountSatFloat) || amountSatFloat <= 0) {
-			lnurlError = $_('screen.send.lnaddr.error_no_amount');
+		// TASK-5203: sat mode keeps the exact path below (parseFloat +
+		// Math.floor); fiat mode resolves via convert lib (floor + dust
+		// blocked, never 0 sent to mint — D4). Mint unit stays sat.
+		const resolved = resolveAmountSats(lnurlAmount, lnurlMode);
+		if (!resolved.ok) {
+			lnurlError =
+				resolved.code === 'DUST_ZERO_SAT'
+					? $_('screen.send.error_fiat_dust')
+					: resolved.code === 'UNAVAILABLE' || resolved.code === 'RATE_UNAVAILABLE'
+						? $_('screen.send.error_fiat_unavailable')
+						: $_('screen.send.lnaddr.error_no_amount');
 			lnurlFlowState = 'error';
 			return;
 		}
-		const amountSat = Math.floor(amountSatFloat);
+		const amountSat = resolved.sats;
 		const amountMsat = satToMsat(amountSat);
 
 		// amount_sat * 1000 ∈ [minSendable, maxSendable]
@@ -786,18 +962,28 @@
 	}
 
 	function handlePreviewToken() {
-		const amount = parseFloat(cashuAmount);
-		if (isNaN(amount) || amount <= 0) {
-			cashuError = $_('screen.send.amount_required');
+		// TASK-5203: fiat mode converts to floored sats for the preview —
+		// preview_token_msg keeps showing sats (mint unit unchanged).
+		const resolved = resolveAmountSats(cashuAmount, cashuMode);
+		if (!resolved.ok) {
+			cashuError =
+				resolved.code === 'DUST_ZERO_SAT'
+					? $_('screen.send.error_fiat_dust')
+					: resolved.code === 'UNAVAILABLE' || resolved.code === 'RATE_UNAVAILABLE'
+						? $_('screen.send.error_fiat_unavailable')
+						: $_('screen.send.amount_required');
 			cashuState = 'error';
 			return;
 		}
+		cashuPreviewSats = resolved.sats;
 		cashuState = 'preview';
 	}
 
 	async function handleCreateToken() {
-		const amount = parseFloat(cashuAmount);
-		if (isNaN(amount) || amount <= 0) return;
+		// TASK-5203: re-resolve at confirm time (rate may have moved) —
+		// Math.floor path preserved, mint still receives integer sats.
+		const resolved = resolveAmountSats(cashuAmount, cashuMode);
+		if (!resolved.ok) return;
 		if (!mintUrl.trim()) {
 			cashuError = $_('common.error_mint_url_required');
 			cashuState = 'error';
@@ -808,7 +994,7 @@
 		cashuError = '';
 
 		try {
-			const result = await sendTokens(Math.floor(amount), mintUrl.trim());
+			const result = await sendTokens(Math.floor(resolved.sats), mintUrl.trim());
 			cashuSendResult = result;
 			cashuToken = result.token;
 			// Refresh balance after token creation (proofs were marked spent)
@@ -832,6 +1018,7 @@
 	function resetCashu() {
 		cashuState = 'idle';
 		cashuAmount = '0';
+		cashuPreviewSats = 0;
 		cashuToken = '';
 		cashuError = '';
 		cashuSendResult = null;
@@ -1047,11 +1234,31 @@
 								{/if}
 							</div>
 
+								<!-- TASK-5203 (mockup option B unit-tap): compact unit toggle
+								     top-right of the display + dual display (primary
+								     per mode, secondary dim below — home pattern D3).
+								     comment-section + preview path below unchanged. -->
 								<div class="amount-section">
-									<Body size="sm" color="secondary">{$_('screen.send.amount_label')}</Body>
+									<div class="amount-label-row">
+										<Body size="sm" color="secondary" truncate>{lnurlMode === 'fiat' ? `${$_('screen.send.amount')} (${fiatCurrency})` : $_('screen.send.amount_label')}</Body>
+										<button
+											type="button"
+											class="unit-toggle"
+											onclick={toggleLnurlMode}
+											disabled={fiatBlocked}
+											aria-label={lnurlMode === 'sat' ? fiatCurrency : $_('screen.balance.sats')}
+											title={fiatBlocked ? $_('screen.send.error_fiat_unavailable') : ''}
+										>{lnurlMode === 'sat' ? $_('screen.balance.sats') : fiatCurrency} ⇄</button>
+									</div>
 									<div class="amount-display" aria-live="polite">
 										<span class="amount-value">{lnurlAmount === '0' ? '0' : lnurlAmount}</span>
-										<span class="amount-unit">{$_('screen.balance.sats')}</span>
+										<span class="amount-unit">{lnurlMode === 'sat' ? $_('screen.balance.sats') : fiatCurrency}</span>
+									</div>
+									<div class="amount-secondary" aria-live="polite">
+										<span>{lnurlSecondary}</span>
+										{#if lnurlMode === 'fiat' && fiatEntry && fiatEntry.price !== null && fiatEntry.stale}
+											<span class="stale-badge">{$_('screen.send.fiat_stale')}</span>
+										{/if}
 									</div>
 								</div>
 
@@ -1061,6 +1268,7 @@
 									onconfirm={handleLnurlRequestInvoice}
 									confirmLabel={lnurlFlowState === 'requesting' ? $_('screen.send.lnaddr.requesting_invoice') : $_('screen.send.lnaddr.request_invoice')}
 									disabled={lnurlFlowState === 'requesting'}
+									maxDecimals={lnurlMode === 'fiat' ? fiatDecimals : 2}
 								>
 									{#snippet children()}
 										{#if lnurlCommentAllowed > 0}
@@ -1154,11 +1362,29 @@
 		<div class="tab-content" role="tabpanel">
 			{#if cashuState === 'idle' || cashuState === 'error' || cashuState === 'preview'}
 				<Card variant="basic" padding="lg">
+					<!-- TASK-5203 (mockup option B unit-tap): same toggle +
+					     dual display as LNURL point — consistency 3 จุด. -->
 					<div class="amount-section">
-						<Body size="sm" color="secondary">{$_('screen.send.amount_label')}</Body>
+						<div class="amount-label-row">
+							<Body size="sm" color="secondary" truncate>{cashuMode === 'fiat' ? `${$_('screen.send.amount')} (${fiatCurrency})` : $_('screen.send.amount_label')}</Body>
+							<button
+								type="button"
+								class="unit-toggle"
+								onclick={toggleCashuMode}
+								disabled={fiatBlocked}
+								aria-label={cashuMode === 'sat' ? fiatCurrency : $_('screen.balance.sats')}
+								title={fiatBlocked ? $_('screen.send.error_fiat_unavailable') : ''}
+							>{cashuMode === 'sat' ? $_('screen.balance.sats') : fiatCurrency} ⇄</button>
+						</div>
 						<div class="amount-display" aria-live="polite">
 							<span class="amount-value">{cashuAmount === '0' ? '0' : cashuAmount}</span>
-							<span class="amount-unit">{$_('screen.balance.sats')}</span>
+							<span class="amount-unit">{cashuMode === 'sat' ? $_('screen.balance.sats') : fiatCurrency}</span>
+						</div>
+						<div class="amount-secondary" aria-live="polite">
+							<span>{cashuSecondary}</span>
+							{#if cashuMode === 'fiat' && fiatEntry && fiatEntry.price !== null && fiatEntry.stale}
+								<span class="stale-badge">{$_('screen.send.fiat_stale')}</span>
+							{/if}
 						</div>
 					</div>
 				</Card><Numpad
@@ -1167,11 +1393,12 @@
 					onconfirm={handlePreviewToken}
 					confirmLabel={$_('screen.send.preview_token')}
 					disabled={isCashuDisabled()}
+					maxDecimals={cashuMode === 'fiat' ? fiatDecimals : 2}
 				/>{#if cashuState === 'preview'}
 					<Card variant="basic" padding="md">
 						<div class="preview-details">
 							<Body size="sm" color="secondary">
-								{$_('screen.send.preview_token_msg', { values: { amount: cashuAmount } })}
+								{$_('screen.send.preview_token_msg', { values: { amount: cashuMode === 'fiat' ? formatSat(cashuPreviewSats) : cashuAmount } })}
 							</Body>
 							<div class="detail-row">
 								<Body size="sm" color="secondary">{$_('screen.send.mint_url_label')}</Body>
@@ -1515,6 +1742,18 @@
 	}
 
 	/* ─── Amount Display ──────────────── */
+	/* TASK-5215 (EDGE+SIZE, rev14 D18 Commander ORDER fix): positioning
+	   context SPLIT per point —
+	   · cashu point: context MOVED from .amount-section to the amount Card
+	     (Card holds ONLY the amount block, no back button — Card corner
+	     safe). Toggle pins 8px from Card border (TASK-5216 REDESIGN-A).
+	   · lnurl point: context STAYS .amount-section (relative) — the LNURL
+	     Card also holds the back button at its top, so Card-relative would
+	     collide with back. Section corner keeps toggle clear of back.
+	   (Replaces 5214 single section-relative rule.) */
+	.tab-content > :global(.card):has(.amount-section) {
+		position: relative;
+	}
 	.amount-section {
 		display: flex;
 		flex-direction: column;
@@ -1545,6 +1784,95 @@
 		font-size: var(--font-size-md);
 		font-weight: var(--font-weight-medium);
 		color: var(--color-text-secondary);
+	}
+
+	/* ─── Fiat toggle (TASK-5203 mockup option B unit-tap + TASK-5215
+	   EDGE+SIZE rev14 D18 Commander ORDER fix) ──
+	   positioning context SPLIT per point —
+	   · cashu: amount Card (relative) — toggle top:8px right:8px pins to
+	     the Card top-right corner (Card holds ONLY amount, no back).
+	   · lnurl: .amount-section stays relative (see .lnurl-card rule below) —
+	     toggle pins to the section corner, clear of the back button.
+	   NO translateY (mid-row centering REMOVED — no dead CSS left).
+	   label centered; 360px guard truncate + max-width 94px keeps it clear
+	   of the toggle zone (TASK-5216 REDESIGN-A). Theme tokens only — no hardcoded colors/sizes. */
+	.amount-label-row {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 100%;
+		/* TASK-5212 SLIM-V2: section-level right gap (toggle right:8px
+		   untouched — gap lives here, not in toggle padding). */
+		padding-right: 4px;
+	}
+
+	/* 360px no-overlap guard (label yields, never slides under toggle).
+	   TASK-5216 REDESIGN-A rev16 D19: 90px → 94px (toggle ~70px wide + margin) —
+	   single rule covers BOTH lnurl + cashu points. */
+	.amount-label-row :global(.truncate) {
+		min-width: 0;
+		max-width: calc(100% - 94px);
+	}
+
+	.unit-toggle {
+		position: absolute;
+		/* TASK-5216 REDESIGN-A: 8px from corner (was 2px) — Card corner on cashu
+		   point, section corner on lnurl point (see context comments).
+		   (was top:50% + translateY(-50%) mid-row — removed, no dead CSS). */
+		top: 8px;
+		right: 8px;
+		font-family: var(--font-family);
+		font-size: var(--font-size-sm);
+		font-weight: var(--font-weight-semibold);
+		color: var(--color-primary);
+		background: transparent;
+		/* TASK-5217 BORDER-CYAN: border primary ตั้งแต่แรก (was --color-border).
+		   rule เดียวคลุม 2 จุด (lnurl+cashu) — disabled override เทาคงเดิม. */
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-full);
+		/* TASK-5216 REDESIGN-A rev16 D19: 0 10px → 4px 12px
+		   (โปร่งขึ้น ~70px wide × ~23px high). border 1px + min-height:0 kept. */
+		padding: 4px 12px;
+		/* TASK-5213 MIN-HEIGHT-UNSET: beat global coarse 44px (tokens.css
+		   @media pointer:coarse button rule) — scoped wins, others keep 44px. */
+		min-height: 0;
+		cursor: pointer;
+		/* TASK-5216 REDESIGN-A: line-height 1.0 kept — ~23px high with 4px padding. */
+		line-height: 1.0;
+		flex-shrink: 0;
+		white-space: nowrap;
+	}
+
+	.unit-toggle:hover:not(:disabled) {
+		border-color: var(--color-primary);
+	}
+
+	.unit-toggle:disabled {
+		color: var(--color-text-disabled);
+		border-color: var(--color-border);
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	/* Dual display sub-line (D3 home pattern — mirrors Home .fiat-estimate:
+	   plain centered sm secondary line, no flex box, no reserved height). */
+	.amount-secondary {
+		font-family: var(--font-family);
+		font-size: var(--font-size-sm);
+		color: var(--color-text-secondary);
+		text-align: center;
+	}
+
+	.stale-badge {
+		display: inline-block;
+		margin-left: var(--space-xs);
+		font-size: var(--font-size-xs);
+		font-weight: var(--font-weight-semibold);
+		color: var(--color-text-secondary);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-full);
+		padding: 0 var(--space-xs);
+		line-height: var(--line-height-tight);
 	}
 
 	/* ─── LNURL comment input (TASK-280) ── */
@@ -1619,6 +1947,10 @@
 	   `margin-top: var(--space-lg)` (24px). The preview↔amount gap now lives on
 	   .lnaddr-preview (single gap system). This only sets the amount→numpad gap. */
 	.lnurl-card .amount-section {
+		/* TASK-5215 EDGE+SIZE: lnurl point KEEPS section-relative context
+		   (base .amount-section is static for the cashu→Card split) —
+		   toggle pins to the section corner, clear of the back button. */
+		position: relative;
 		margin-bottom: var(--space-sm);
 	}
 

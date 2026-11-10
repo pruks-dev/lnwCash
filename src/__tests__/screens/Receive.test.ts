@@ -77,9 +77,11 @@ describe('Receive (TASK-066 + TASK-091)', () => {
 	// AC: Lightning tab — amount input
 	// ════════════════════════════════════════════════════
 
+	// D14 APPROVED (TASK-5211): sat mode uses receive.amount (with sats),
+	// not receive.amount_label (bare label is fiat-mode only).
 	it('should show amount label in Lightning tab', () => {
 		render(Receive, {});
-		expect(screen.getByText('screen.receive.amount_label')).toBeTruthy();
+		expect(screen.getByText('screen.receive.amount')).toBeTruthy();
 	});
 
 	it('should show "sats" unit label', () => {

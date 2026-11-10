@@ -39,6 +39,16 @@
 	export function resetPollDelay(): number {
 		return RECEIVE_POLL_BASE_MS;
 	}
+
+	// TASK-5218 ZERO-DISPLAY — fiat 0 → "0 sats", never dash (display-only).
+	// Pure helper so fiat-toggle tests can vector it directly (THB/USD/JPY/KRW
+	// + no-entry). secondaryFor() calls it FIRST, before !entry and before
+	// resolveFiatQuote — quote path (resolveAmountSats / dust / block) untouched.
+	// Empty/blank input is NOT zero (stays dash); Number('')===0 trap avoided.
+	export function zeroSatsDisplay(raw: string, satsWord: string): string | null {
+		if (raw.trim() !== '' && Number(raw) === 0) return `0 ${satsWord}`;
+		return null;
+	}
 </script>
 
 <script lang="ts">
@@ -92,6 +102,21 @@
 
 	// TASK-159 Iconly wrapper — unified icon system
 	import Iconly from '$lib/iconly/Iconly.svelte';
+	// TASK-5202R (INTENT-052 / BLUEPRINT v2, mockup option B unit-tap APPROVED):
+	// fiat input mode — sats→fiat display (currency.ts) + live rate (rates.ts)
+	// + fiat→sats floor conversion (convert.ts, ported verbatim from ARX
+	// TASK-5201 — diff empty vs ARX). Mint unit stays sat; conversion happens
+	// only at input edge. Mirrors TASK-5203 Send.svelte pattern (single point).
+	import { getBtcRate, type FiatCurrency, type RateEntry } from '$lib/fiat/rates';
+	import {
+		getFiatCurrency,
+		formatFiat,
+		FIAT_CURRENCY_EVENT
+	} from '$lib/fiat/currency';
+	import {
+		CURRENCY_META as FIAT_INPUT_META,
+		resolveFiatQuote
+	} from '$lib/fiat/convert';
 
 	interface Props {
 		defaultMintUrl?: string;
@@ -112,8 +137,100 @@
 		return s === 'loading' || s === 'polling';
 	}
 	let lightningAmount: string = $state('0');
-	let lightningInvoice: string = $state('');
-	let lightningQrData: string = $state('');
+	// ─── Fiat input mode (TASK-5202R, mockup option B unit-tap) ──
+	// Single point (lightning only — Cashu tab is redeem/paste, no amount
+	// input). Toggle resets input to '0' so a sats figure can never be
+	// mis-quoted as fiat (or vice versa). Currency follows Settings
+	// fiat_currency (default THB); mint unit stays sat.
+	type AmountMode = 'sat' | 'fiat';
+	let lightningMode: AmountMode = $state('sat');
+	let fiatCurrency: FiatCurrency = $state('THB');
+	// Live rate entry for the selected currency (null price = UNAVAILABLE →
+	// fiat mode blocked, never a fabricated number — D2).
+	let fiatEntry = $state<RateEntry | null>(null);
+	let fiatDecimals: number = $derived(FIAT_INPUT_META[fiatCurrency].decimals);
+	let fiatBlocked: boolean = $derived(fiatEntry !== null && fiatEntry.price === null);
+
+	async function loadFiatRate(): Promise<void> {
+		try {
+			fiatEntry = await getBtcRate(fiatCurrency);
+		} catch {
+			fiatEntry = null;
+		}
+	}
+
+	// Lazy rate load (no network until the user opts into fiat — the Receive
+	// screen must stay fully offline-capable in sat mode, same as before).
+	// Returns true when fiat mode is usable (rate entry with a price).
+	async function ensureFiatUsable(): Promise<boolean> {
+		if (fiatEntry === null) await loadFiatRate();
+		return fiatEntry !== null && fiatEntry.price !== null;
+	}
+
+	async function toggleLightningMode(): Promise<void> {
+		if (lightningMode === 'sat') {
+			if (!(await ensureFiatUsable())) {
+				lightningError = $_('screen.receive.error_fiat_unavailable');
+				lightningState = 'error';
+				return;
+			}
+			lightningMode = 'fiat';
+		} else {
+			lightningMode = 'sat';
+		}
+		lightningAmount = '0';
+		lightningError = '';
+		if (lightningState === 'error') lightningState = 'idle';
+	}
+
+	// Secondary (sub-line, home pattern D3): the *other* unit, dim.
+	// Sat mode → fiat estimate (formatFiat renders "– CUR" without rate).
+	// Fiat mode → floored sats, or "– sats" when not convertible (dust/invalid).
+	// Pure on explicit params so $derived call sites track every dep.
+	function secondaryFor(
+		raw: string,
+		mode: AmountMode,
+		entry: RateEntry | null,
+		satsWord: string
+	): string {
+		if (mode === 'sat') {
+			const n = Number(raw);
+			if (!Number.isFinite(n) || n < 0) return `– ${fiatCurrency}`;
+			return formatFiat(Math.floor(n), entry?.price, fiatCurrency);
+		}
+		// TASK-5218 ZERO-DISPLAY: fiat 0 → 0 sats immediately — before !entry
+		// (no-entry 0 → 0 sats) and before resolveFiatQuote (dust rule of 5201
+		// stays on the quote path only; display never blocks on dust).
+		const zero = zeroSatsDisplay(raw, satsWord);
+		if (zero !== null) return zero;
+		if (!entry) return `– ${satsWord}`;
+		const q = resolveFiatQuote(raw, fiatCurrency, entry);
+		if (!q.ok) return `– ${satsWord}`;
+		return `${formatSat(q.sats)} ${satsWord}`;
+	}
+
+	let lightningSecondary: string = $derived(
+		secondaryFor(lightningAmount, lightningMode, fiatEntry, $_('screen.balance.sats'))
+	);
+
+	// Resolve the Numpad string to integer sats for the mint quote path (sat
+	// unit preserved). Fiat mode: floor via convert lib (dust → failure, never
+	// 0 sent to mint — D4). Returns null when the input is not quotable.
+	function resolveAmountSats(
+		raw: string,
+		mode: AmountMode
+	): { ok: true; sats: number } | { ok: false; code: string } {
+		if (mode === 'sat') {
+			const f = parseFloat(raw);
+			if (isNaN(f) || f <= 0) return { ok: false, code: 'INVALID' };
+			return { ok: true, sats: Math.floor(f) };
+		}
+		if (!fiatEntry) return { ok: false, code: 'UNAVAILABLE' };
+		const q = resolveFiatQuote(raw, fiatCurrency, fiatEntry);
+		if (!q.ok) return { ok: false, code: q.code };
+		return { ok: true, sats: q.sats };
+	}
+	let lightningInvoice: string = $state('');	let lightningQrData: string = $state('');
 	let lightningError: string = $state('');
 	let lightningResult: MintResult | null = $state(null);
 	let pollCount: number = $state(0);
@@ -242,6 +359,31 @@
 		document.removeEventListener('visibilitychange', handleVisibilityChange);
 	});
 
+	// TASK-5202R: fiat input mode init — currency follows Settings (default
+	// THB, same source as Home/Send).
+	// TASK-5219 SECONDARY-ALWAYS: background preload on mount so the sat
+	// sub-line shows a fiat estimate as soon as the rate resolves (no await
+	// — Numpad never blocked; sat stays offline-capable, entry null → "–"
+	// until the rate lands). getBtcRate cache (fresh 60s) + single-flight in
+	// rates.ts dedups this with the toggle path, so the first toggle after
+	// preload issues zero extra fetches. No new timers/polling.
+	onMount(() => {
+		fiatCurrency = getFiatCurrency();
+		if (fiatEntry === null) void loadFiatRate();
+		const onFiatCurrencyChange = () => {
+			fiatCurrency = getFiatCurrency();
+			// Refresh whenever the currency changes — the sub-line is always
+			// on screen in sat mode too. Cache/single-flight dedups no-ops.
+			void loadFiatRate();
+		};
+		window.addEventListener(FIAT_CURRENCY_EVENT, onFiatCurrencyChange);
+		window.addEventListener('storage', onFiatCurrencyChange);
+		return () => {
+			window.removeEventListener(FIAT_CURRENCY_EVENT, onFiatCurrencyChange);
+			window.removeEventListener('storage', onFiatCurrencyChange);
+		};
+	});
+
 	function showToast(message: string, type: 'info' | 'success' | 'error' = 'info') {
 		toastMessage = message;
 		toastType = type;
@@ -356,13 +498,22 @@
 	 * Phase 2 will start via polling after invoice display.
 	 */
 	async function handleCreateInvoice() {
-		const amount = parseFloat(lightningAmount);
-		if (isNaN(amount) || amount <= 0) {
-			lightningError = $_('screen.receive.amount_required');
+		// TASK-5202R: sat mode keeps the exact path below (parseFloat +
+		// Math.floor); fiat mode resolves via convert lib (floor + dust
+		// blocked, never 0 sent to mint — D4). Mint unit stays sat.
+		const resolved = resolveAmountSats(lightningAmount, lightningMode);
+		if (!resolved.ok) {
+			lightningError =
+				resolved.code === 'DUST_ZERO_SAT'
+					? $_('screen.receive.error_fiat_dust')
+					: resolved.code === 'UNAVAILABLE' || resolved.code === 'RATE_UNAVAILABLE'
+						? $_('screen.receive.error_fiat_unavailable')
+						: $_('screen.receive.amount_required');
 			lightningState = 'error';
 			receiveInvoiceOpen.set(false); // TASK-4300: exit path — flag stays down
 			return;
 		}
+		const amount = resolved.sats;
 		if (!mintUrl.trim()) {
 			lightningError = $_('common.error_mint_url_required');
 			lightningState = 'error';
@@ -798,12 +949,31 @@
 	{#if activeTab === 'lightning'}
 		<div class="tab-content" role="tabpanel">
 			{#if lightningState === 'idle' || lightningState === 'error'}
+				<!-- TASK-5202R (mockup option B unit-tap): compact unit toggle
+				     top-right of the display + dual display (primary
+				     per mode, secondary dim below — home pattern D3). -->
 				<Card variant="basic" padding="lg">
 					<div class="amount-section">
-						<Body size="sm" color="secondary">{$_('screen.receive.amount_label')}</Body>
+						<div class="amount-label-row">
+							<Body size="sm" color="secondary" truncate>{lightningMode === 'fiat' ? `${$_('screen.receive.amount_label')} (${fiatCurrency})` : $_('screen.receive.amount')}</Body>
+							<button
+								type="button"
+								class="unit-toggle"
+								onclick={toggleLightningMode}
+								disabled={fiatBlocked}
+								aria-label={lightningMode === 'sat' ? fiatCurrency : $_('screen.balance.sats')}
+								title={fiatBlocked ? $_('screen.receive.error_fiat_unavailable') : ''}
+							>{lightningMode === 'sat' ? $_('screen.balance.sats') : fiatCurrency} ⇄</button>
+						</div>
 						<div class="amount-display" aria-live="polite">
 							<span class="amount-value">{lightningAmount === '0' ? '0' : lightningAmount}</span>
-							<span class="amount-unit">{$_('screen.balance.sats')}</span>
+							<span class="amount-unit">{lightningMode === 'sat' ? $_('screen.balance.sats') : fiatCurrency}</span>
+						</div>
+						<div class="amount-secondary" aria-live="polite">
+							<span>{lightningSecondary}</span>
+							{#if lightningMode === 'fiat' && fiatEntry && fiatEntry.price !== null && fiatEntry.stale}
+								<span class="stale-badge">{$_('screen.receive.fiat_stale')}</span>
+							{/if}
 						</div>
 					</div>
 				</Card>
@@ -814,6 +984,7 @@
 					onconfirm={handleCreateInvoice}
 					confirmLabel={$_('screen.receive.create_invoice')}
 					disabled={isLightningDisabled()}
+					maxDecimals={lightningMode === 'fiat' ? fiatDecimals : 2}
 				/>
 
 				{#if lightningState === 'error' && lightningError}
@@ -1194,6 +1365,15 @@
 	}
 
 	/* ─── Amount Display ──────────────── */
+	/* TASK-5215 (EDGE+SIZE, rev14 D18 Commander ORDER fix): positioning
+	   context MOVED from .amount-section to the amount Card — toggle pins
+	   to the Card top-right corner (top:8px right:8px — TASK-5216 REDESIGN-A,
+	   8px from Card border inside its padding zone). This Card holds
+	   ONLY the amount block (no back button), so Card corner is safe.
+	   (Replaces 5214 section-relative.) */
+	.tab-content > :global(.card):has(.amount-section) {
+		position: relative;
+	}
 	.amount-section {
 		display: flex;
 		flex-direction: column;
@@ -1224,6 +1404,92 @@
 		font-size: var(--font-size-md);
 		font-weight: var(--font-weight-medium);
 		color: var(--color-text-secondary);
+	}
+
+	/* ─── Fiat toggle (TASK-5202R mockup option B unit-tap + TASK-5215
+	   EDGE+SIZE rev14 D18 Commander ORDER fix) ──
+	   positioning context is now the amount Card (relative) — toggle
+	   absolute top:8px right:8px pins to the Card top-right corner,
+	   NO translateY (mid-row centering REMOVED — no dead CSS left).
+	   label stays centered like before fiat. 360px guard: label truncate +
+	   max-width 94px keeps it clear of the toggle zone (TASK-5216 REDESIGN-A).
+	   Mirrors Send.svelte cashu point. */
+	.amount-label-row {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 100%;
+		/* TASK-5212 SLIM-V2: section-level right gap (toggle right:8px
+		   untouched — gap lives here, not in toggle padding). */
+		padding-right: 4px;
+	}
+
+	/* 360px no-overlap guard (label yields, never slides under toggle).
+	   TASK-5216 REDESIGN-A rev16 D19: 90px → 94px (toggle ~70px wide + margin). */
+	.amount-label-row :global(.truncate) {
+		min-width: 0;
+		max-width: calc(100% - 94px);
+	}
+
+	.unit-toggle {
+		position: absolute;
+		/* TASK-5216 REDESIGN-A: 8px from Card top-right corner (was 2px). */
+		top: 8px;
+		right: 8px;
+		font-family: var(--font-family);
+		font-size: var(--font-size-sm);
+		font-weight: var(--font-weight-semibold);
+		color: var(--color-primary);
+		background: transparent;
+		/* TASK-5217 BORDER-CYAN: border primary ตั้งแต่แรก (was --color-border).
+		   scoped .unit-toggle เท่านั้น — disabled ยัง override เป็น --color-border
+		   ข้างล่าง (selector :disabled ชนะเพราะ specificity + มาทีหลัง). */
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-full);
+		/* TASK-5216 REDESIGN-A rev16 D19: 0 10px → 4px 12px
+		   (โปร่งขึ้น ~70px wide × ~23px high: 4+4 vertical + lh 1.0 +
+		   border 1px). border 1px + min-height:0 + lh 1.0 kept. */
+		padding: 4px 12px;
+		/* TASK-5213 MIN-HEIGHT-UNSET: beat global coarse 44px (tokens.css
+		   @media pointer:coarse button rule) — scoped wins, others keep 44px. */
+		min-height: 0;
+		cursor: pointer;
+		/* TASK-5216 REDESIGN-A: line-height 1.0 kept — ~23px high with 4px padding. */
+		line-height: 1.0;
+		flex-shrink: 0;
+		white-space: nowrap;
+	}
+
+	.unit-toggle:hover:not(:disabled) {
+		border-color: var(--color-primary);
+	}
+
+	.unit-toggle:disabled {
+		color: var(--color-text-disabled);
+		border-color: var(--color-border);
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	/* Dual display sub-line (D3 home pattern — mirrors Home .fiat-estimate:
+	   plain centered sm secondary line, no flex box, no reserved height). */
+	.amount-secondary {
+		font-family: var(--font-family);
+		font-size: var(--font-size-sm);
+		color: var(--color-text-secondary);
+		text-align: center;
+	}
+
+	.stale-badge {
+		display: inline-block;
+		margin-left: var(--space-xs);
+		font-size: var(--font-size-xs);
+		font-weight: var(--font-weight-semibold);
+		color: var(--color-text-secondary);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-full);
+		padding: 0 var(--space-xs);
+		line-height: var(--line-height-tight);
 	}
 
 	/* ─── Invoice Section ─────────────── */

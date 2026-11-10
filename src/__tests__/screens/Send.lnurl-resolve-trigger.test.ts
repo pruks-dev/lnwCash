@@ -107,6 +107,12 @@ describe('Send LNURL resolve trigger (TASK-290)', () => {
 		});
 		fetchMock = vi.fn(async (input: string | URL | Request) => {
 			const url = typeof input === 'string' ? input : input.toString();
+			// TASK-5220 (B2): allowlisted fiat-rate preload (D22 secondary-always —
+			// onMount loadFiatRate hits CoinGecko; Binance is the prod fallback leg).
+			// The no-resolve contract below still holds for everything else: assert
+			// via nonFiatCalls(), never via the raw mock.
+			if (url.includes('api.coingecko.com')) return jsonResponse({ bitcoin: { thb: 1500000, usd: 45000 } });
+			if (url.includes('api.binance.com')) return jsonResponse({ price: '1500000.00' });
 			if (url.includes('/.well-known/lnurlp/')) return jsonResponse(PAY_INFO);
 			if (url.includes('service.com')) return jsonResponse(PAY_INFO);
 			if (url.includes('/callback')) return jsonResponse({ pr: 'lnbc1testinvoice' });
@@ -114,6 +120,9 @@ describe('Send LNURL resolve trigger (TASK-290)', () => {
 		});
 		vi.stubGlobal('fetch', fetchMock);
 	});
+
+	const isFiatPreloadUrl = (u: string) => u.includes('api.coingecko.com') || u.includes('api.binance.com');
+	const nonFiatCalls = () => fetchMock.mock.calls.filter((c) => !isFiatPreloadUrl(String(c[0])));
 
 	afterEach(() => {
 		cleanup();
@@ -131,7 +140,7 @@ describe('Send LNURL resolve trigger (TASK-290)', () => {
 		}
 
 		// no LNURL resolve was kicked off during typing, no error surfaced
-		expect(fetchMock).not.toHaveBeenCalled();
+		expect(nonFiatCalls()).toHaveLength(0);
 		expect(screen.queryByText('screen.send.lnaddr.resolving')).toBeNull();
 		expect(screen.queryByText('screen.send.lnaddr.error_resolve')).toBeNull();
 		// textarea still present for continued typing
@@ -144,7 +153,7 @@ describe('Send LNURL resolve trigger (TASK-290)', () => {
 
 		await fireEvent.input(textarea, { target: { value: 'PrukS@coinos.io' } });
 		// typing only → no resolve yet
-		expect(fetchMock).not.toHaveBeenCalled();
+		expect(nonFiatCalls()).toHaveLength(0);
 		expect(screen.queryByText('screen.send.lnaddr.resolving')).toBeNull();
 
 		// press Enter → resolve
@@ -220,6 +229,6 @@ describe('Send LNURL resolve trigger (TASK-290)', () => {
 		await fireEvent.input(textareaAfterError, { target: { value: 'user@bad.invalidX' } });
 		await waitFor(() => expect(screen.queryByText('screen.send.lnaddr.error_resolve')).toBeNull());
 		expect(document.querySelector('.paste-textarea')).toBeTruthy();
-		expect(fetchMock).toHaveBeenCalledTimes(1); // no auto re-resolve on typing
+		expect(nonFiatCalls()).toHaveLength(1); // no auto re-resolve on typing
 	});
 });

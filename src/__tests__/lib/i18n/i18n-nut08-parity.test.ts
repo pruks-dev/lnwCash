@@ -109,7 +109,23 @@ const REQUIRED_NUT08_KEYS = [
 	'nut08.error.derive'
 ] as const;
 
-const TOTAL_KEYS = 444; // 432 (INTENT-042) minus 2 = TASK-4502 orphan sweep of the irreversible pair (TH/EN symmetric deletion).
+const TOTAL_KEYS_EN = 450; // 444 + 6 fiat keys (INTENT-052, EN-only pending translator).
+const TOTAL_KEYS_TH = 444; // 432 (INTENT-042) minus 2 = TASK-4502 orphan sweep of the irreversible pair (TH/EN symmetric deletion).
+// TASK-5220 (B1 fix-forward): INTENT-052 added 6 EN-only fiat keys
+// (screen.{receive,send}.fiat_stale/error_fiat_dust/error_fiat_unavailable).
+// TH translations are pending the translator — L-T015 forbids inventing TH,
+// so the parity guard pins this EXACT known diff instead of weakening to a
+// blind subset check. Any key missing from th OUTSIDE this allowlist, any
+// key missing from en, or any count drift on either side still fails.
+
+const KNOWN_EN_ONLY_KEYS = [
+	'screen.receive.error_fiat_dust',
+	'screen.receive.error_fiat_unavailable',
+	'screen.receive.fiat_stale',
+	'screen.send.error_fiat_dust',
+	'screen.send.error_fiat_unavailable',
+	'screen.send.fiat_stale'
+] as const;
 
 describe('TASK-316: i18n NUT-08 namespace + parity', () => {
 	beforeAll(() => {
@@ -144,24 +160,21 @@ describe('TASK-316: i18n NUT-08 namespace + parity', () => {
 		expect(hasThaiChars, 'th.json nut08.* values must contain Thai characters').toBe(true);
 	});
 
-	it('c) parity: en.json keys === th.json keys (430 = 430, full parity)', () => {
+	it('c) parity: en.json (450) vs th.json (444) — exact known EN-only diff, nothing else', () => {
 		const enKeys = Object.keys(en).sort();
 		const thKeys = Object.keys(th).sort();
 
-		expect(enKeys.length, 'en.json total key count').toBe(TOTAL_KEYS);
-		expect(thKeys.length, 'th.json total key count').toBe(TOTAL_KEYS);
-		expect(enKeys.length, 'en/th must have same key count').toBe(thKeys.length);
-
-		// Per-key parity: every key at every index must match.
-		for (let i = 0; i < enKeys.length; i++) {
-			expect(enKeys[i], `key[${i}] mismatch`).toBe(thKeys[i]);
-		}
+		expect(enKeys.length, 'en.json total key count').toBe(TOTAL_KEYS_EN);
+		expect(thKeys.length, 'th.json total key count').toBe(TOTAL_KEYS_TH);
 
 		// Set-based parity (catches accidental dup / reorder that index-compare misses).
 		const missingInTh = enKeys.filter((k) => !thKeys.includes(k));
 		const missingInEn = thKeys.filter((k) => !enKeys.includes(k));
-		expect(missingInTh, `keys missing from th: ${missingInTh.join(', ')}`).toEqual([]);
 		expect(missingInEn, `keys missing from en: ${missingInEn.join(', ')}`).toEqual([]);
+		// TASK-5220 B1: the ONLY allowed th-gap is the 6 EN-only fiat keys.
+		expect(missingInTh.sort(), `keys missing from th: ${missingInTh.join(', ')}`).toEqual(
+			[...KNOWN_EN_ONLY_KEYS].sort()
+		);
 	});
 
 	it('d) t("nut08.fee_return", { values: { amount: 5 } }) returns formatted string', async () => {

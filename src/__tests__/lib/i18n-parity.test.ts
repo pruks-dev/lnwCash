@@ -41,16 +41,28 @@ const RECOVERY_WARNING_KEYS = [
 ];
 
 describe('TASK-211: i18n key parity (th = en)', () => {
-	it('th and en expose the same key set (0 missing each way)', () => {
+	// TASK-5220 (B1 fix-forward): INTENT-052 added 6 EN-only fiat keys pending
+	// the translator (L-T015: never invent TH). Pin the EXACT known diff —
+	// anything else missing either way still fails.
+	const KNOWN_EN_ONLY_KEYS = [
+		'screen.receive.error_fiat_dust',
+		'screen.receive.error_fiat_unavailable',
+		'screen.receive.fiat_stale',
+		'screen.send.error_fiat_dust',
+		'screen.send.error_fiat_unavailable',
+		'screen.send.fiat_stale'
+	].sort();
+
+	it('th and en expose the same key set except the 6 known EN-only fiat keys', () => {
 		const enKeys = new Set(Object.keys(en));
 		const thKeys = new Set(Object.keys(th));
 
 		const missingInTh = [...enKeys].filter((k) => !thKeys.has(k)).sort();
 		const missingInEn = [...thKeys].filter((k) => !enKeys.has(k)).sort();
 
-		expect(missingInTh, `keys missing from th: ${missingInTh.join(', ')}`).toEqual([]);
 		expect(missingInEn, `keys missing from en: ${missingInEn.join(', ')}`).toEqual([]);
-		expect(Object.keys(en).length).toBe(Object.keys(th).length);
+		expect(missingInTh, `keys missing from th: ${missingInTh.join(', ')}`).toEqual(KNOWN_EN_ONLY_KEYS);
+		expect(Object.keys(en).length).toBe(Object.keys(th).length + KNOWN_EN_ONLY_KEYS.length);
 	});
 
 	it('includes wallet error keys (error.invalid_pin / wallet_locked / seed_import) in both locales', () => {
