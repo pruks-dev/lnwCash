@@ -558,7 +558,7 @@
 				<span class="mint-banner-icon">
 					<Iconly name="Check" size={18} color="currentColor" />
 				</span>
-				<span>รับเงินสำเร็จ +{bannerAmount} sats</span>
+				<span>รับเงินสำเร็จ +{bannerAmount} SAT</span>
 			</div>
 		{/if}
 

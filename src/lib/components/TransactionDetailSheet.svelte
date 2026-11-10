@@ -375,7 +375,7 @@
 	// ─── Computed display values ──────────────────────
 	let category = $derived(tx ? getTxCategory(tx.type) : 'Receive' as const);
 	let displayAmount = $derived(tx
-		? `${category === 'Receive' ? '+' : '-'}${formatSat(tx.amount)} sats`
+		? `${category === 'Receive' ? '+' : '-'}${formatSat(tx.amount)} SAT`
 		: '');
 	let isLightning = $derived(tx?.protocol === 'lightning' || tx?.type === 'melt' || tx?.type === 'mint');
 	let isCashu = $derived(tx?.protocol === 'cashu' || tx?.type === 'cashu_send' || tx?.type === 'cashu_receive');
@@ -612,7 +612,7 @@
 					<div class="detail-field">
 						<span class="field-label">{$_('detail.field_fee')}</span>
 						<span class="field-value">
-							{tx.actual_fee ?? tx.fee} sats
+							{tx.actual_fee ?? tx.fee} SAT
 							{#if tx.actual_fee != null && tx.fee != null && tx.actual_fee !== tx.fee}
 								<span class="field-meta">({$_('detail.field_fee_reserve')}: {tx.fee})</span>
 							{/if}

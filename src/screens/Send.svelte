@@ -604,7 +604,7 @@
 	function formatBolt11Summary(decoded: Bolt11Decoded): string {
 		const parts: string[] = [];
 		if (decoded.amountSat > 0) {
-			parts.push(`${formatSat(decoded.amountSat)} sat`);
+			parts.push(`${formatSat(decoded.amountSat)} SAT`);
 		}
 		if (decoded.paymentHash) {
 			parts.push(`hash: ${decoded.paymentHash.substring(0, 8)}...`);

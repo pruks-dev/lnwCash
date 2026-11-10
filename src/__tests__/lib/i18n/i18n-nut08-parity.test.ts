@@ -187,14 +187,14 @@ describe('TASK-316: i18n NUT-08 namespace + parity', () => {
 
 		// EN locale (default in mock) — template "+{amount} sats returned".
 		const enMsg = formatter('nut08.fee_return', { values: { amount: 5 } });
-		expect(enMsg).toBe('+5 sats returned');
-		expect(enMsg).toMatch(/5 sats/);
+		expect(enMsg).toBe('+5 SAT returned');
+		expect(enMsg).toMatch(/5 SAT/);
 
 		// TH locale — template "คืน {amount} sats".
 		svelteI18n.locale.set('th');
 		const thMsg = formatter('nut08.fee_return', { values: { amount: 5 } });
-		expect(thMsg).toBe('คืน 5 sats');
-		expect(thMsg).toMatch(/5 sats/);
+		expect(thMsg).toBe('คืน 5 SAT');
+		expect(thMsg).toMatch(/5 SAT/);
 		expect(thMsg).toMatch(/[\u0E00-\u0E7F]/); // contains Thai chars
 
 		// Reset locale for subsequent tests.
