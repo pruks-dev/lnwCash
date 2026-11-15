@@ -112,7 +112,7 @@
 						<!-- rev45: head = name ONLY (no × n — qty lives on the stepper). -->
 						<div class="list-item-title" data-testid="bill-line-name">{l.name}</div>
 						<!-- rev46: sub = unit SAT + left fiat in PARENS only (bullet removed). -->
-						<div class="list-item-subtitle">{l.unitPriceSat.toLocaleString('en-US')} SAT{' '}{#if fiatLeftFor}<span data-testid="bill-line-fiat-left" data-fiat-left-for={l.productId}>({fiatLeftFor(l.unitPriceSat)})</span>{/if}</div>
+						<div class="list-item-subtitle">{l.unitPriceSat.toLocaleString('en-US')} SAT {#if fiatLeftFor}<span data-testid="bill-line-fiat-left" data-fiat-left-for={l.productId}>({fiatLeftFor(l.unitPriceSat)})</span>{/if}</div>
 					</div>
 					<!-- rev45: stepper MIDDLE (was rightmost in rev44) — LOCKED
 					     slim fixed width so the middle x-edge is identical
