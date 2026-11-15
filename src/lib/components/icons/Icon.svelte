@@ -26,6 +26,9 @@
 	import Lightning from './Lightning.svelte';
 	import Banknote from './Banknote.svelte';
 	import Warning from './Warning.svelte';
+	import Shop from './Shop.svelte';
+	import Box from './Box.svelte';
+	import AddCircle from './AddCircle.svelte';
 
 	export type IconName =
 		| 'Wallet'
@@ -46,7 +49,10 @@
 		| 'Time'
 		| 'Lightning'
 		| 'Banknote'
-		| 'Warning';
+		| 'Warning'
+		| 'Shop'
+		| 'Box'
+		| 'AddCircle';
 
 	interface Props {
 		/** Icon name — one of the available icon set */
@@ -80,7 +86,10 @@
 		Time,
 		Lightning,
 		Banknote,
-		Warning
+		Warning,
+		Shop,
+		Box,
+		AddCircle
 	};
 
 	const iconComponent = $derived(iconMap[name] ?? Wallet);

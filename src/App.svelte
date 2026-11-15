@@ -71,6 +71,10 @@
 	// QRScanner overlay (D-6 γ — was F007QRScan, see TASK-505)
 	import QRScanner from '$lib/components/QRScanner.svelte';
 
+	// TASK-5417 R5-only: PoS entry (BottomNav Shop tab → #/pos)
+	import PosApp from './components/pos/PosApp.svelte';
+	import { getPosEnabled, posEnabledStore, POS_TOGGLE_EVENT } from '$lib/pos-ui';
+
 	// Integration components
 	import SplashScreen from './components/SplashScreen.svelte';
 	import ErrorBoundary from './components/ErrorBoundary.svelte';
@@ -89,9 +93,21 @@
 		const pwaCleanup = initPwaInstall();
 		const offlineCleanup = trackWasOffline();
 
+		// TASK-5417: read PoS flag on boot + every route change.
+		try {
+			posEnabled = getPosEnabled();
+		} catch {
+			posEnabled = false;
+		}
+
 		const routeCleanup = onRouteChange((screen: ScreenKey) => {
 			activeScreen = screen;
 			showQRScan = false;
+			try {
+				posEnabled = getPosEnabled();
+			} catch {
+				posEnabled = false;
+			}
 			// TASK-272 (fix 6b/7): <Setup> renders ONLY under appView === 'setup'.
 			// Navigating to the /setup route (delete → reset, forgot-PIN, direct
 			// URL) must flip appView to 'setup' so the centered setup-container
@@ -427,6 +443,11 @@
 		activeScreen = screen;
 		showQRScan = false;
 		navigateTo(screen);
+		try {
+			posEnabled = getPosEnabled();
+		} catch {
+			// storage unavailable — PoS stays hidden
+		}
 	}
 
 	// ─── Wallet lifecycle ─────────────────────────────────────
@@ -519,8 +540,63 @@
 		(activeScreen as string) === 'receive' ||
 		(activeScreen as string) === 'send' ||
 		(activeScreen as string) === 'history' ||
-		(activeScreen as string) === 'settings'
+		(activeScreen as string) === 'settings' ||
+		(activeScreen as string) === 'pos'
 	);
+
+	// TASK-5417 R5-only: PoS flag (own key, WalletSettings untouched).
+	// OFF = 2 tabs (risk-b), ON = +PoS 3rd (Shop). Reactive per navigation.
+	// TASK-5468 rev50 toggle_notify: subscribe to posEnabledStore + window
+	// event so Settings toggle flips showPos INSTANTLY — no route change.
+	let posEnabled = $state(false);
+
+	$effect(() => {
+		let unsub: (() => void) | undefined;
+		try {
+			unsub = posEnabledStore.subscribe((v: boolean) => {
+				posEnabled = v;
+			});
+		} catch {
+			/* store unavailable — boot/route reads remain the fallback */
+		}
+		const onPosToggle = (e: Event) => {
+			try {
+				const detail = (e as CustomEvent).detail as { enabled?: unknown } | undefined;
+				if (detail && typeof detail.enabled === 'boolean') {
+					posEnabled = detail.enabled;
+				} else {
+					posEnabled = getPosEnabled();
+				}
+			} catch {
+				try {
+					posEnabled = getPosEnabled();
+				} catch {
+					/* keep last value */
+				}
+			}
+		};
+		try {
+			if (typeof window !== 'undefined') {
+				window.addEventListener(POS_TOGGLE_EVENT, onPosToggle);
+			}
+		} catch {
+			/* event unavailable — store subscription still covers App */
+		}
+		return () => {
+			try {
+				unsub?.();
+			} catch {
+				/* ignore */
+			}
+			try {
+				if (typeof window !== 'undefined') {
+					window.removeEventListener(POS_TOGGLE_EVENT, onPosToggle);
+				}
+			} catch {
+				/* ignore */
+			}
+		};
+	});
 
 </script>
 
@@ -567,8 +643,8 @@
 				<Setup onWalletReady={handleWalletReady} />
 			</div>
 		{:else}
-			<!-- TASK-086 (F-057): Header dedup — Home/History get full TopAppBar; other screens use own headers -->
-			{#if (activeScreen as string) === 'home' || (activeScreen as string) === 'history'}
+			<!-- TASK-086 (F-057): Header dedup — Home/History/PoS get full TopAppBar; other screens use own headers -->
+			{#if (activeScreen as string) === 'home' || (activeScreen as string) === 'history' || (activeScreen as string) === 'pos'}
 				<TopAppBar screen={activeScreen} showBack={false} onMenuClick={() => navigateTo('settings')} />
 			{/if}
 
@@ -584,12 +660,14 @@
 					<History />
 				{:else if (activeScreen as string) === 'settings'}
 					<Settings onBack={handleBack} />
+				{:else if (activeScreen as string) === 'pos'}
+					<PosApp mintUrl={$activeMintStore} onExit={handleBack} />
 				{/if}
 			</div>
 
 			<!-- Bottom Navigation -->
 			{#if isMainNavScreen}
-				<BottomNav active={activeScreen} onNavigate={handleNavigate} />
+				<BottomNav active={activeScreen} onNavigate={handleNavigate} showPos={posEnabled} />
 			{/if}
 
 			<PwaInstallPrompt />

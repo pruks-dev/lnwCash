@@ -12,6 +12,10 @@
 		truncate?: boolean;
 		/** Optional id */
 		id?: string;
+		/** Optional test id (rendered as data-testid; omitted when undefined).
+		 *  TASK-5440 rev36: lets PoS headers keep their title testid contract
+		 *  while rendering through the central Heading (no raw h2/h3). */
+		testid?: string;
 		/** Slot */
 		children?: import('svelte').Snippet;
 	}
@@ -21,32 +25,33 @@
 		align = 'left',
 		truncate = false,
 		id = undefined,
+		testid = undefined,
 		children
 	}: Props = $props();
 </script>
 
 {#if level === 'h1'}
-	<h1 {id} class="heading heading-h1" data-align={align} class:truncate>
+	<h1 {id} data-testid={testid} class="heading heading-h1" data-align={align} class:truncate>
 		{#if children}{@render children()}{/if}
 	</h1>
 {:else if level === 'h2'}
-	<h2 {id} class="heading heading-h2" data-align={align} class:truncate>
+	<h2 {id} data-testid={testid} class="heading heading-h2" data-align={align} class:truncate>
 		{#if children}{@render children()}{/if}
 	</h2>
 {:else if level === 'h3'}
-	<h3 {id} class="heading heading-h3" data-align={align} class:truncate>
+	<h3 {id} data-testid={testid} class="heading heading-h3" data-align={align} class:truncate>
 		{#if children}{@render children()}{/if}
 	</h3>
 {:else if level === 'h4'}
-	<h4 {id} class="heading heading-h4" data-align={align} class:truncate>
+	<h4 {id} data-testid={testid} class="heading heading-h4" data-align={align} class:truncate>
 		{#if children}{@render children()}{/if}
 	</h4>
 {:else if level === 'h5'}
-	<h5 {id} class="heading heading-h5" data-align={align} class:truncate>
+	<h5 {id} data-testid={testid} class="heading heading-h5" data-align={align} class:truncate>
 		{#if children}{@render children()}{/if}
 	</h5>
 {:else}
-	<h6 {id} class="heading heading-h6" data-align={align} class:truncate>
+	<h6 {id} data-testid={testid} class="heading heading-h6" data-align={align} class:truncate>
 		{#if children}{@render children()}{/if}
 	</h6>
 {/if}

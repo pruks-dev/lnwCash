@@ -7,13 +7,23 @@ import type { WalletMetadata, WalletSettings, ThemeMode, KeysetCacheEntry } from
 // TASK-5002 (INTENT-050): validate fiat_currency against the live-rate
 // currency list — rates.ts is dependency-free (fetch + Map only), no cycle.
 import { SUPPORTED_CURRENCIES } from '../fiat/rates';
+// TASK-5401 (INTENT-054): POS persistence — catalog/sales-log are pure domain
+// (no runtime deps of their own), so importing them here creates no cycle.
+// cart.ts -> fiat/currency.ts -> storage/local.ts is one-directional because
+// the pos imports below are value imports from dependency-free modules only,
+// and SaleRecord/PosCatalogDoc type imports are erased at compile time.
+import { normalizeCatalogDoc, emptyCatalog, type PosCatalogDoc } from '../pos/catalog';
+import { normalizeSales, type SaleRecord } from '../pos/sales-log';
 
 // ─── Storage Keys ────────────────────────────────────────────
 
 const KEYS = {
 	WALLET_META: 'lnwcash_wallet_meta',
 	SETTINGS: 'lnwcash_settings',
-	KEYSET_CACHE: 'lnwcash_keyset_cache'
+	KEYSET_CACHE: 'lnwcash_keyset_cache',
+	// TASK-5401 (INTENT-054): POS single-device scope.
+	POS_CATALOG: 'lnwcash_pos_catalog',
+	POS_SALES: 'lnwcash_pos_sales'
 } as const;
 
 // ─── Helpers ─────────────────────────────────────────────────
@@ -187,10 +197,53 @@ export function isAvailable(): boolean {
 	return isLocalStorageAvailable();
 }
 
+// ─── POS Catalog (TASK-5401, single-device scope) ─────────────
+
+/**
+ * Read catalog — ALWAYS normalized: missing key (fresh/old install),
+ * pre-5401 docs without schema, or rows missing fields all load as a
+ * valid v1 doc. Never throws, never returns null.
+ */
+export function getPosCatalog(): PosCatalogDoc {
+	const raw = readJSON<unknown>(KEYS.POS_CATALOG, null);
+	if (raw === null) return emptyCatalog();
+	return normalizeCatalogDoc(raw);
+}
+
+export function setPosCatalog(doc: PosCatalogDoc): boolean {
+	return writeJSON(KEYS.POS_CATALOG, doc);
+}
+
+export function clearPosCatalog(): boolean {
+	return removeKey(KEYS.POS_CATALOG);
+}
+
+// ─── POS Sales log (TASK-5401, single-device scope) ───────────
+
+/**
+ * Read sales — corrupt rows dropped, valid rows kept (normalizeSales).
+ * Missing key (fresh/old install) → empty log. Never throws.
+ */
+export function getPosSales(): SaleRecord[] {
+	const raw = readJSON<unknown>(KEYS.POS_SALES, null);
+	if (raw === null) return [];
+	return normalizeSales(raw);
+}
+
+export function setPosSales(sales: SaleRecord[]): boolean {
+	return writeJSON(KEYS.POS_SALES, sales);
+}
+
+export function clearPosSales(): boolean {
+	return removeKey(KEYS.POS_SALES);
+}
+
 // ─── Clear all LNWCASH data from localStorage ────────────────
 
 export function clearAll(): void {
 	removeKey(KEYS.WALLET_META);
 	removeKey(KEYS.SETTINGS);
 	removeKey(KEYS.KEYSET_CACHE);
+	removeKey(KEYS.POS_CATALOG);
+	removeKey(KEYS.POS_SALES);
 }

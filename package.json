@@ -13,6 +13,8 @@
 		"format": "prettier --write .",
 		"test": "vitest run",
 		"test:watch": "vitest",
+		"test:gate": "vitest run --project=product",
+		"test:wallet": "vitest run --project=wallet-heavy",
 		"cap:init": "npx cap init",
 		"cap:sync": "npx cap sync",
 		"cap:add:android": "npx cap add android",

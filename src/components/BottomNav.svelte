@@ -21,12 +21,15 @@
 		onNavigate: (screen: ScreenKey) => void;
 		/** QR Scan handler — optional, wired by App.svelte */
 		onQRScan?: () => void;
+		/** TASK-5417 R5-only: PoS 3rd tab (Shop) — OFF = 2 tabs (risk-b) */
+		showPos?: boolean;
 	}
 
 	let {
 		active = 'home',
 		onNavigate,
-		onQRScan
+		onQRScan,
+		showPos = false
 	}: Props = $props();
 
 	/**
@@ -47,7 +50,19 @@
 			active: active === 'history',
 			onclick: () => onNavigate('history'),
 			icon: historyIcon
-		}
+		},
+		// TASK-5417 R5-only (risk-b): ON = +PoS 3rd/last, Shop icon (solar:shop-linear rev10).
+		// Order locked — Home/History byte-identical, FAB untouched.
+		...(showPos
+			? [
+					{
+						label: $_('nav.pos'),
+						active: active === 'pos',
+						onclick: () => onNavigate('pos'),
+						icon: posIcon
+					}
+				]
+			: [])
 	]);
 </script>
 
@@ -58,6 +73,10 @@
 
 {#snippet historyIcon()}
 	<Iconly name="History" size={24} />
+{/snippet}
+
+{#snippet posIcon()}
+	<Iconly name="Shop" size={24} />
 {/snippet}
 
 <div class="bottom-nav-shell">
