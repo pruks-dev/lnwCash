@@ -1,53 +1,19 @@
 <!--
   TASK-5417 R5-only — S2 cart/bill (composite §B S2 + bill-layout AFTER).
-  R5 truth (rev12+rev13):
-  - lines → total RIGHT receipt row (space-between) → R2 bare pair
-  - bare pair: primary "Pay via Lightning" + secondary "Pay via Cashu"
-    (no Card/pills/lg/captions)
-    (TASK-5450 rev41: labels locale via pos.bill.pay_ln/pay_cashu —
-    EN "Pay via …" / TH pay-via form; total label locale
-    EN "Total (N items)" / TH total-form — no bullets anywhere)
-  - steppers 44px, back 44px, empty bill → CTAs DISABLED (.5) (DEV-2 fix)
-  - Charge/Accept go DIRECT to checkout — no Confirm freeze (DEV-3 fix)
-  - TASK-5426 rev29 back_overflow_r29: back = ArrowLeft size 24 verbatim
-    wallet (Receive/Send/Settings/TopAppBar) — 44px circle surface-variant
-    kept, SVG only; lines scroll middle (.pos-scroll) + total + Charge/Accept
-    sticky bottom (.pos-sticky-bottom) — total+CTAs never lost on long bills.
-  TASK-5428 rev30 scroll_height_r30: same dvh-calc screen bound as catalog/
-  manage (.pos-screen = 100dvh - TopAppBar - BottomNav - chrome);
-  .pos-scroll flex:1/min-height:0/overflow-y:auto, overscroll contain,
-  touch-action pan-y (never none — list stays finger-scrollable).
-  TASK-5454 rev43 order_fix_r43 — Order (bill) fixforward:
-  - stepper-aligned: right amount column LOCKED fixed width (flex 0 0 120px)
-    + text-align right + tabular-nums → any digit count keeps the middle
-    stepper x-position identical every row.
-  - per-row fiat: LEFT subtitle = plain fiat via formatFiat (NO ≈, e.g.
-    "63.00 THB"); RIGHT column = fiatRowText form (WITH ≈, e.g. "≈ 63.00 THB").
-    Both arrive as props (fiatLeftFor/fiatRightFor) from PosApp live rate —
-    this component never touches rates/snapshot (read-only display).
-  - total stays live: fiatText prop is ALWAYS the live-rate text from PosApp
-    (bill snapshot never consulted — see PosApp billFiat live-only).
-  TASK-5456 rev44 stepper_right_r44 — Order (bill) row reorder ONLY:
-  - row shape: ชื่อ | ยอดกลาง | stepper ขวาสุด (was ชื่อ | stepper | ยอดขวา).
-    Middle amount column LOCKED (flex 0 0 120px + right + tabular-nums) +
-    stepper container LOCKED fixed width (flex 0 0 132px + justify flex-end,
-    qty span fixed 28px + tabular) → every row's middle col + right stepper
-    share identical x-edges at any digit count. Stepper stays RIGHTMOST only
-    (never left); catalog untouched.
-  TASK-5460 rev46 row_polish_r46 — Order (bill) row polish (SUPERSEDES rev45 shape, keeps rev45 order):
-  - row shape UNCHANGED: ชื่อ | stepper กลาง | ยอดขวาสุด (total col still LAST
-    child, stepper still middle — rev45 order pins hold).
-  - sub = "200 SAT (63.00 THB)" (middle-dot bullet REMOVED) — unit SAT +
-    left fiat in PARENS only, never a bullet separator. Left fiat stays plain
-    NO ≈ via fiatLeftFor; parens are the ONLY separator.
-  - ขวากระชับ: right total col LOCKED slim flex 0 0 80px (was 96px) + right +
-    tabular-nums — 16px given back to the name flex:1; 1-digit … 7-digit
-    totals keep the identical right x-edge every row.
-  - กลางชิดขวา: .list-item gap var(--space-md)=16px → 4px so the middle
-    stepper hugs the right total as ONE block (stepper interior gap was
-    already 4px); locked columns keep every row aligned, never messy.
-    Stepper container stays LOCKED flex 0 0 120px (44+4+24+4+44, qty 24px +
-    tabular); buttons stay 44px touch; catalog untouched.
+  ... (prior rev notes preserved in git history)
+  TASK-5603 line-split (INTENT-056 BLUEPRINT-056 v2, approved mockup 2/3):
+  - rows keyed by cart lineId (identity = product+modifier+note), NOT by
+    productId: same product with different modifier/note = separate rows,
+    each with its own bill stepper (inc/dec carry the lineId).
+  - modifier label renders as a name suffix ("ลาเต้ร้อน · หวานปกติ"); a
+    non-empty note renders an escaped note sub-row under the name
+    ("หวานน้อย · หวานน้อย" = label · note, label-only row shows no
+    note div). Svelte text interpolation escapes — no {@html} anywhere.
+  - locks unchanged: stepper middle LOCKED 120px, total right LOCKED 80px
+    right + tabular, sub parens + right ≈ (rev46), total row, CTAs.
+  - legacy lines without identity fields resolve via resolveLine() (empty
+    note default) so old persisted bills still render.
+  Prior rev notes (R5 truth, rev29/30/43/44/46 locks) preserved in git history.
 -->
 <script lang="ts">
 	import { _ } from 'svelte-i18n';
@@ -55,6 +21,7 @@
 	import Heading from '$lib/components/ui/Heading.svelte';
 	import { countItemsText, subscribePosLocale } from '$lib/pos-ui';
 	import type { CartLine } from '$lib/pos/cart';
+	import { resolveLine, type ResolvedCartLine } from '$lib/pos/cart';
 
 	interface Props {
 		lines: CartLine[];
@@ -84,7 +51,10 @@
 		fiatRightFor
 	}: Props = $props();
 
-	const count = $derived(lines.reduce((n, l) => n + l.qty, 0));
+	// 5603: render through the 2-shape resolver — legacy productId-only
+	// lines read as empty-identity rows (name plain, no note div).
+	const rows: ResolvedCartLine[] = $derived(lines.map(resolveLine));
+	const count = $derived(rows.reduce((n, l) => n + l.qty, 0));
 	const empty = $derived(lines.length === 0);
 	// TASK-5450 rev41: total count binds to the live locale (reactive bridge).
 	let posLoc = $state('en');
@@ -106,28 +76,32 @@
 	{:else}
 		<div class="pos-scroll" data-testid="bill-lines-scroll">
 		<div class="card" style="padding:0" data-testid="bill-lines">
-			{#each lines as l (l.productId)}
-				<div class="list-item" data-testid="bill-line" data-line-for={l.productId}>
+			{#each rows as l (l.lineId)}
+				<div class="list-item" data-testid="bill-line" data-line-for={l.lineId}>
 					<div style="flex:1;min-width:0">
-						<!-- rev45: head = name ONLY (no × n — qty lives on the stepper). -->
-						<div class="list-item-title" data-testid="bill-line-name">{l.name}</div>
+						<!-- 5603: modifier label = name suffix (note present →
+						     plain name + note sub-row; legacy = plain name). -->
+						<div class="list-item-title" data-testid="bill-line-name">{l.name}{l.note ? '' : l.modifierLabel ? ` · ${l.modifierLabel}` : ''}</div>
 						<!-- rev46: sub = unit SAT + left fiat in PARENS only (bullet removed). -->
-						<div class="list-item-subtitle">{l.unitPriceSat.toLocaleString('en-US')} SAT {#if fiatLeftFor}<span data-testid="bill-line-fiat-left" data-fiat-left-for={l.productId}>({fiatLeftFor(l.unitPriceSat)})</span>{/if}</div>
+						<div class="list-item-subtitle">{l.unitPriceSat.toLocaleString('en-US')} SAT {#if fiatLeftFor}<span data-testid="bill-line-fiat-left" data-fiat-left-for={l.lineId}>({fiatLeftFor(l.unitPriceSat)})</span>{/if}</div>
+						{#if l.note}
+							<div class="line-note" data-testid="bill-line-note">{l.modifierLabel ? `${l.modifierLabel} · ` : ''}{l.note}</div>
+						{/if}
 					</div>
-					<!-- rev45: stepper MIDDLE (was rightmost in rev44) — LOCKED
-					     slim fixed width so the middle x-edge is identical
-					     every row. -->
-					<div class="stepper" data-testid="bill-stepper" data-stepper-for={l.productId}>
-						<button type="button" data-testid="bill-dec" data-dec-for={l.productId} onclick={() => onDec(l.productId)} aria-label="decrease">−</button>
-						<span class="list-item-title stepper-qty" data-testid="bill-qty" data-qty-for={l.productId}>{l.qty}</span>
-						<button type="button" data-testid="bill-inc" data-inc-for={l.productId} onclick={() => onInc(l.productId)} aria-label="increase">+</button>
+					<!-- rev45: stepper MIDDLE — LOCKED slim fixed width so the
+					     middle x-edge is identical every row.
+					     5603: keyed by lineId (per-row stepper). -->
+					<div class="stepper" data-testid="bill-stepper" data-stepper-for={l.lineId}>
+						<button type="button" data-testid="bill-dec" data-dec-for={l.lineId} onclick={() => onDec(l.lineId)} aria-label="decrease">−</button>
+						<span class="list-item-title stepper-qty" data-testid="bill-qty" data-qty-for={l.lineId}>{l.qty}</span>
+						<button type="button" data-testid="bill-inc" data-inc-for={l.lineId} onclick={() => onInc(l.lineId)} aria-label="increase">+</button>
 					</div>
 					<!-- rev45: total RIGHTMOST only (never middle) — LOCKED slim
 					     fixed width + right aligned + tabular so every row's
 					     right x-edge is identical for 1-digit … 7-digit totals. -->
-					<div class="line-total-col" data-testid="bill-line-total-col" data-total-col-for={l.productId}>
+					<div class="line-total-col" data-testid="bill-line-total-col" data-total-col-for={l.lineId}>
 						<div class="list-item-title" data-testid="bill-line-total">{l.lineTotalSat.toLocaleString('en-US')}</div>
-						{#if fiatRightFor}<div class="line-total-fiat" data-testid="bill-line-fiat-right" data-fiat-right-for={l.productId}>{fiatRightFor(l.lineTotalSat)}</div>{/if}
+						{#if fiatRightFor}<div class="line-total-fiat" data-testid="bill-line-fiat-right" data-fiat-right-for={l.lineId}>{fiatRightFor(l.lineTotalSat)}</div>{/if}
 					</div>
 				</div>
 			{/each}
@@ -184,6 +158,17 @@
 		height: calc(100dvh - var(--pos-topbar-h, 64px) - var(--pos-bottomnav-h, 80px) - var(--pos-screen-chrome-pad, 32px));
 		max-height: calc(100dvh - var(--pos-topbar-h, 64px) - var(--pos-bottomnav-h, 80px) - var(--pos-screen-chrome-pad, 32px));
 		min-height: 0;
+	}
+	/* TASK-5604 wide frame (approved mockup 3/3 R4): phone 480 → ≥640px 720 → ≥1024px 960, pos-only. */
+	@media (min-width: 640px) {
+		.pos-screen {
+			max-width: 720px;
+		}
+	}
+	@media (min-width: 1024px) {
+		.pos-screen {
+			max-width: 960px;
+		}
 	}
 	.top-bar {
 		display: flex;
@@ -264,6 +249,16 @@
 		white-space: nowrap;
 	}
 	.list-item-subtitle {
+		font-size: var(--font-size-sm);
+		color: var(--color-text-secondary);
+		line-height: var(--line-height-tight);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	/* 5603: per-row note (escaped text, thorne XSS proof @5605) — same
+	   small-secondary treatment as the subtitle. */
+	.line-note {
 		font-size: var(--font-size-sm);
 		color: var(--color-text-secondary);
 		line-height: var(--line-height-tight);

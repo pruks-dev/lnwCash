@@ -490,5 +490,16 @@
 	"pos.settings.section": "จุดขาย",
 	"pos.settings.enable": "ขายหน้าร้าน",
 	"pos.settings.desc": "โหมดคิดเงินหน้าร้าน",
-	"pos.settings.experimental": "ทดลองใช้"
+	"pos.settings.experimental": "ทดลองใช้",
+	"pos.catalog.tap_to_customize": "{name} — แตะเพื่อเลือกตัวเลือกและโน้ต",
+	"pos.popup.mod_regular": "หวานปกติ",
+	"pos.popup.mod_less": "หวานน้อย",
+	"pos.popup.mod_none": "ไม่หวาน",
+	"pos.popup.mod_shot": "+ ช็อต",
+	"pos.popup.options_for": "ตัวเลือกสำหรับ {name}",
+	"pos.popup.sweetness": "ความหวาน",
+	"pos.popup.note_label": "โน้ต (แยกแถว — ไม่ใช่ทั้งคำสั่งซื้อ)",
+	"pos.popup.note_aria": "โน้ตแยกแถว",
+	"pos.popup.note_placeholder": "เช่น ไม่ใส่น้ำแข็ง",
+	"pos.popup.add_to_bill": "เพิ่มลงคำสั่งซื้อ"
 }

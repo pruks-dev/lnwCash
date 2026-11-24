@@ -4,6 +4,8 @@
   - EQUAL WIDTH: qr-live / qr-scanner max-width 320 → 480 (= pos-screen 480,
     = lower paste Card full-width) — no 320-vs-480 bottleneck; width 100%
     so equal at every breakpoint; aspect-ratio 1/1 KEPT (square, never 4/3).
+  - TASK-5604 wide frame: base 480 kept; ≥640px 720 / ≥1024px 960 follow
+    .pos-screen (mockup 3/3 R4) — qr-live + qr-scanner move together.
   - Prior rev34 history kept below (square camera, paste buttons-only,
     wallet Button/Card theme sweep, no scanner fork).
 -->
@@ -200,6 +202,17 @@
 		max-height: 100dvh;
 		overflow: hidden;
 	}
+	/* TASK-5604 wide frame (approved mockup 3/3 R4): phone 480 → ≥640px 720 → ≥1024px 960, pos-only. */
+	@media (min-width: 640px) {
+		.pos-screen {
+			max-width: 720px;
+		}
+	}
+	@media (min-width: 1024px) {
+		.pos-screen {
+			max-width: 960px;
+		}
+	}
 	.top-bar {
 		display: flex;
 		align-items: center;
@@ -284,6 +297,19 @@
 		color: #fff;
 		font-size: var(--font-size-sm);
 		text-align: center;
+	}
+	/* TASK-5604: camera + scanner follow the pos wide frame (equal width at every breakpoint). */
+	@media (min-width: 640px) {
+		.qr-live,
+		.qr-scanner {
+			max-width: 720px;
+		}
+	}
+	@media (min-width: 1024px) {
+		.qr-live,
+		.qr-scanner {
+			max-width: 960px;
+		}
 	}
 	.pill {
 		display: inline-flex;

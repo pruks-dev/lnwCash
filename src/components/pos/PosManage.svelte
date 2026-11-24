@@ -34,6 +34,7 @@
 	import Modal from '$lib/components/ui/Modal.svelte';
 	import Heading from '$lib/components/ui/Heading.svelte';
 	import type { PosProduct } from '$lib/pos/catalog';
+	import ProductImagePicker from './ProductImagePicker.svelte';
 	import { fiatToSats } from '$lib/fiat/convert';
 	import { formatFiat } from '$lib/fiat/currency';
 	import type { FiatCurrency } from '$lib/fiat/rates';
@@ -58,6 +59,16 @@
 		/** rev48: live rate for the preview (read-only, never fetched here). */
 		rateCurrency?: FiatCurrency;
 		ratePrice?: number | null;
+		/**
+		 * 5603: photo thumbs for the TASK-5602 pos-images store (object URLs
+		 * owned by PosApp). Absent id = picker renders its solar fallback.
+		 */
+		imageUrls?: Record<string, string>;
+		/** 5603: picker surface errors (shown under the list). */
+		photoError?: string;
+		/** 5603: picker save/error callbacks (parent owns the URL cache). */
+		onPhotoSaved?: (productId: string, url: string) => void;
+		onPhotoError?: (message: string) => void;
 	}
 
 	let {
@@ -75,7 +86,11 @@
 		priceMode = 'sat',
 		onPriceMode = () => {},
 		rateCurrency = 'THB',
-		ratePrice = null
+		ratePrice = null,
+		imageUrls = {},
+		photoError = '',
+		onPhotoSaved = () => {},
+		onPhotoError = () => {}
 	}: Props = $props();
 
 	// rev49 bottom-sheet: presentation-only open state. Money wiring
@@ -144,6 +159,14 @@
 					data-product-id={p.id}
 					data-active={p.active}
 				>
+					<!-- 5603: photo picker (file/camera → pos-images IndexedDB);
+					     no photo = solar fallback inside the picker. -->
+					<ProductImagePicker
+						productId={p.id}
+						imageUrl={imageUrls[p.id] ?? ''}
+						onSaved={onPhotoSaved}
+						onError={onPhotoError}
+					/>
 					<div style="flex:1;min-width:0">
 						<div class="list-item-title">{p.name}</div>
 						<div class="list-item-subtitle" data-testid="manage-fiat" data-fiat-for={p.id}>
@@ -183,6 +206,9 @@
 			{/each}
 		</div>
 		</div>
+	{/if}
+	{#if photoError}
+		<p class="note" data-testid="manage-photo-error">{photoError}</p>
 	{/if}
 
 	<!-- rev49: add form lives in the bottom sheet (Modal bottomsheet
@@ -284,6 +310,17 @@
 		height: calc(100dvh - var(--pos-topbar-h, 64px) - var(--pos-bottomnav-h, 80px) - var(--pos-screen-chrome-pad, 32px));
 		max-height: calc(100dvh - var(--pos-topbar-h, 64px) - var(--pos-bottomnav-h, 80px) - var(--pos-screen-chrome-pad, 32px));
 		min-height: 0;
+	}
+	/* TASK-5604 wide frame (approved mockup 3/3 R4): phone 480 → ≥640px 720 → ≥1024px 960, pos-only. */
+	@media (min-width: 640px) {
+		.pos-screen {
+			max-width: 720px;
+		}
+	}
+	@media (min-width: 1024px) {
+		.pos-screen {
+			max-width: 960px;
+		}
 	}
 	.top-bar {
 		display: flex;

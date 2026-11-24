@@ -48,13 +48,12 @@ const PRODUCTS: PosProduct[] = [
 function catalogProps(over: Record<string, unknown> = {}) {
 	return {
 		products: PRODUCTS,
+		priceFor: (p: PosProduct) => `${p.priceSat.toLocaleString('en-US')} SAT (≈ MOCK)`,
 		fiatFor: (s: number) => `≈ ${(s * 0.315).toFixed(2)} THB`,
 		cartCount: 0,
 		cartTotalSat: 0,
 		cartFiat: '≈ 0.00 THB',
-		qtyFor: (_id: string) => 0,
-		onInc: vi.fn(),
-		onDec: vi.fn(),
+		onSelect: vi.fn(),
 		onOpenBill: vi.fn(),
 		onOpenManage: vi.fn(),
 		onOpenHistory: vi.fn(),
@@ -120,12 +119,15 @@ describe('5424 box-1 — header Manage is solar:box-linear Box, History unchange
 	});
 });
 
-describe('5424 wide-1 — ≥640px single column, max-width 480 centered', () => {
-	it('no 1fr 1fr split anywhere in catalog CSS; ≥640 keeps 1fr', () => {
+describe('5424 wide-1 — 5603 grid 2/3/4 cols, max-width 480 centered (frame = 5604)', () => {
+	it('base 2 cols → ≥640px 3 → ≥1024px 4; single-col 1fr is gone', () => {
 		const css = src('PosCatalog.svelte');
-		expect(css).not.toContain('grid-template-columns: 1fr 1fr');
-		expect(css).toContain('grid-template-columns: 1fr');
+		expect(css).toContain('grid-template-columns: 1fr 1fr;');
 		expect(css).toContain('@media (min-width: 640px)');
+		expect(css).toContain('grid-template-columns: 1fr 1fr 1fr;');
+		expect(css).toContain('@media (min-width: 1024px)');
+		expect(css).toContain('grid-template-columns: 1fr 1fr 1fr 1fr;');
+		expect(css).not.toContain('grid-template-columns: 1fr;');
 	});
 
 	it('.pos-screen stays max-width 480 with auto-center margins', () => {
@@ -134,7 +136,7 @@ describe('5424 wide-1 — ≥640px single column, max-width 480 centered', () =>
 		expect(css).toContain('margin: 0 auto');
 	});
 
-	it('grid renders one row-card per product in a single grid container', () => {
+	it('grid renders one tappable card per product in a single grid container', () => {
 		const { container } = render(PosCatalog, { props: catalogProps() });
 		const grid = screen.getByTestId('catalog-grid');
 		expect(grid).toBeTruthy();
@@ -142,31 +144,29 @@ describe('5424 wide-1 — ≥640px single column, max-width 480 centered', () =>
 	});
 });
 
-describe('5424 step-1 — stepper intact (verbatim Bill pattern, callbacks fire)', () => {
-	it('every row shows dec/qty/inc with pending 0 visible; inc+dec call back', async () => {
+describe('5424 step-1 — 5603: no stepper on cards; tap fires onSelect (qty on bill)', () => {
+	it('cards carry photo + name + price, no dec/qty/inc; tap calls back', async () => {
 		const props = catalogProps();
 		render(PosCatalog, { props });
 		const rows = screen.getAllByTestId('catalog-row');
 		expect(rows).toHaveLength(2);
 		for (const r of rows) {
-			expect(r.querySelector('[data-testid="catalog-dec"]')).toBeTruthy();
-			expect(r.querySelector('[data-testid="catalog-inc"]')).toBeTruthy();
-			expect(r.querySelector('[data-testid="catalog-qty"]')?.textContent).toBe('0');
+			expect(r.querySelector('[data-testid="catalog-dec"]')).toBeNull();
+			expect(r.querySelector('[data-testid="catalog-inc"]')).toBeNull();
+			expect(r.querySelector('[data-testid="catalog-qty"]')).toBeNull();
 			expect(r.querySelector('[data-testid="catalog-fiat"]')?.textContent).toMatch(/SAT \(≈/);
 		}
-		const incs = screen.getAllByTestId('catalog-inc');
-		const decs = screen.getAllByTestId('catalog-dec');
-		await fireEvent.click(incs[0]);
-		expect(props.onInc).toHaveBeenCalledWith('thai-tea');
-		await fireEvent.click(decs[1]);
-		expect(props.onDec).toHaveBeenCalledWith('coffee');
+		await fireEvent.click(rows[0]);
+		expect(props.onSelect).toHaveBeenCalledWith('thai-tea');
+		await fireEvent.click(rows[1]);
+		expect(props.onSelect).toHaveBeenCalledWith('coffee');
 	});
 
-	it('stepper buttons keep 44px touch in CSS', () => {
+	it('cards + header keep 44px touch in CSS', () => {
 		const css = src('PosCatalog.svelte');
-		expect(css).toContain('.stepper button');
-		// the 44px pair appears for header icon-btn AND stepper (≥2 rule hits)
-		const hits = (css.match(/width: 44px/g) ?? []).length;
+		expect(css).toContain('.icon-btn');
+		// the 44px pair appears for header icon-btn AND card min-height
+		const hits = (css.match(/44px/g) ?? []).length;
 		expect(hits).toBeGreaterThanOrEqual(2);
 	});
 });

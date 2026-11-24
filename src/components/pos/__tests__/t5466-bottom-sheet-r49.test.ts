@@ -73,6 +73,9 @@ function manageProps(
 		items?: ComponentProps<typeof PosManage>['items'];
 		onPriceMode?: (m: ManagePriceMode) => void;
 		onAddProduct?: () => void;
+		onToggleActive?: (id: string) => void;
+		onRemoveProduct?: (id: string) => void;
+		onBack?: () => void;
 	} = {}
 ): ComponentProps<typeof PosManage> {
 	const base: ComponentProps<typeof PosManage> = {
@@ -291,7 +294,7 @@ describe('5466-5 Card wiring inside the sheet (switch + preview + Save)', () => 
 			{
 				props: manageProps({
 					items: [
-						{ id: 'p1', name: 'Thai Tea', priceSat: 2100, kind: 'drink', fiatPriced: true, active: true }
+						{ id: 'p1', name: 'Thai Tea', priceSat: 2100, kind: 'drink', fiatPriced: true, active: true, updatedAt: 1 }
 					],
 					onToggleActive,
 					onRemoveProduct,

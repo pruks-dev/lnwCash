@@ -34,13 +34,12 @@ const PRODUCTS: PosProduct[] = [
 function catalogProps(over: Record<string, unknown> = {}) {
 	return {
 		products: PRODUCTS,
+		priceFor: (p: PosProduct) => `${p.priceSat.toLocaleString('en-US')} SAT (≈ 63.00 THB)`,
 		fiatFor: (s: number) => `≈ ${(s * 0.315).toFixed(2)} THB`,
 		cartCount: 0,
 		cartTotalSat: 0,
 		cartFiat: '≈ 0.00 THB',
-		qtyFor: (_id: string) => 0,
-		onInc: vi.fn(),
-		onDec: vi.fn(),
+		onSelect: vi.fn(),
 		onOpenBill: vi.fn(),
 		onOpenManage: vi.fn(),
 		onOpenHistory: vi.fn(),
@@ -71,41 +70,35 @@ describe('5422 eye-2 — row text "200 SAT (≈ 63.00 THB)", no · R=', () => {
 	});
 });
 
-describe('5422 eye-3 — stepper "- qty +" per row, qty incl. 0 visible', () => {
-	it('no +Add-only button; every row carries dec/qty/inc with pending count', async () => {
-		const onInc = vi.fn();
-		const onDec = vi.fn();
+describe('5422 eye-3 — tap card opens popup (5603 R2: stepper moved to the bill)', () => {
+	it('no +Add-only button, no stepper; tapping a card fires onSelect(productId)', async () => {
+		const onSelect = vi.fn();
 		render(
 			PosCatalog,
 			{
 				props: catalogProps({
-					qtyFor: (id: string) => (id === 'thai-tea' ? 2 : 0),
-					onInc,
-					onDec
+					onSelect
 				})
 			}
 		);
 		expect(screen.queryByTestId('catalog-add')).toBeNull();
-		expect(screen.getAllByTestId('catalog-dec')).toHaveLength(2);
-		expect(screen.getAllByTestId('catalog-inc')).toHaveLength(2);
-		const qtys = screen.getAllByTestId('catalog-qty');
-		expect(qtys.map((q) => q.textContent)).toEqual(['2', '0']);
-		await fireEvent.click(screen.getAllByTestId('catalog-inc')[1]);
-		expect(onInc).toHaveBeenCalledWith('coffee');
-		await fireEvent.click(screen.getAllByTestId('catalog-dec')[0]);
-		expect(onDec).toHaveBeenCalledWith('thai-tea');
+		expect(screen.queryByTestId('catalog-dec')).toBeNull();
+		expect(screen.queryByTestId('catalog-inc')).toBeNull();
+		expect(screen.queryByTestId('catalog-qty')).toBeNull();
+		await fireEvent.click(screen.getAllByTestId('catalog-row')[1]);
+		expect(onSelect).toHaveBeenCalledTimes(1);
+		expect(onSelect).toHaveBeenCalledWith('coffee');
 	});
 
-	it('stepper buttons are 44px touch targets (Bill-verbatim CSS contract)', () => {
-		const { container } = render(PosCatalog, { props: catalogProps() });
+	it('card is one 44px+ touch target (grid-card CSS contract)', () => {
+		render(PosCatalog, { props: catalogProps() });
 		const css = fs.readFileSync(
 			path.join(__dirname, '..', 'PosCatalog.svelte'),
 			'utf8'
 		);
-		const stepperBlock = css.slice(css.indexOf('.stepper button'));
-		expect(stepperBlock).toContain('width: 44px');
-		expect(stepperBlock).toContain('height: 44px');
-		expect(container.querySelector('.stepper')).toBeTruthy();
+		const cardBlock = css.slice(css.indexOf('.card {'));
+		expect(cardBlock).toContain('min-height: 44px');
+		expect(screen.getAllByTestId('catalog-row')[0].tagName).toBe('BUTTON');
 	});
 });
 

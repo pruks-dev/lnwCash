@@ -55,9 +55,19 @@ function mockClipboard(text: string): void {
 afterEach(() => cleanup());
 
 async function addTwoTeas() {
-	const incs = screen.getAllByTestId('catalog-inc');
-	await fireEvent.click(incs[0]);
-	await fireEvent.click(incs[0]);
+	await addTea();
+	await addTea();
+}
+
+/** 5603: tap a card → modifier popup → Add (same identity merges, like the bill stepper). */
+async function addTea(note?: string, chipIndex = 0) {
+	await fireEvent.click(screen.getAllByTestId('catalog-row')[0]);
+	expect(screen.getByTestId('modifier-popup')).toBeTruthy();
+	if (chipIndex > 0) await fireEvent.click(screen.getAllByTestId('modifier-chip')[chipIndex]);
+	if (note !== undefined) {
+		await fireEvent.input(screen.getByTestId('line-note-input'), { target: { value: note } });
+	}
+	await fireEvent.click(screen.getByTestId('popup-add'));
 }
 
 describe('R5 PosApp — catalog → bill', () => {
@@ -133,7 +143,7 @@ describe('R5 PosApp — Cashu 3-state (no stuck funds, no early write)', () => {
 		let i = 0;
 		const d = deps({ receiveToken: vi.fn(async () => amounts[i++] ?? 0) });
 		render(PosApp, { props: d });
-		await fireEvent.click(screen.getAllByTestId('catalog-inc')[0]); // 2100
+		await addTea(); // 2100 single default-identity row
 		await fireEvent.click(screen.getByTestId('catalog-bill'));
 		await fireEvent.click(screen.getByTestId('bill-charge-cashu'));
 		// token 1 → UNDER
@@ -162,7 +172,7 @@ describe('R5 PosApp — Cashu 3-state (no stuck funds, no early write)', () => {
 	it('OVER → pill-cashu + Confirm → record-only sale', async () => {
 		const d = deps({ receiveToken: vi.fn(async () => 5000) });
 		render(PosApp, { props: d });
-		await fireEvent.click(screen.getAllByTestId('catalog-inc')[0]); // 2100
+		await addTea(); // 2100 single default-identity row
 		await fireEvent.click(screen.getByTestId('catalog-bill'));
 		await fireEvent.click(screen.getByTestId('bill-charge-cashu'));
 		mockClipboard('tok5000');
@@ -188,5 +198,43 @@ describe('R5 PosApp — history', () => {
 		expect(screen.getByTestId('history-today-total').textContent).toContain('4,200 SAT total');
 		expect(screen.getAllByTestId('history-row')).toHaveLength(1);
 		expect(screen.getByTestId('history-tabs')).toBeTruthy();
+	});
+});
+
+describe('5603 PosApp — same card, two identities → two rows end-to-end', () => {
+	it('tap + หวานน้อย note, tap + default → bill 2 rows → stepper per lineId → sale keeps notes → history shows them', async () => {
+		const d = deps();
+		render(PosApp, { props: d });
+		await addTea('หวานน้อย', 1); // less + note → lineId thai-tea:less:หวานน้อย
+		await addTea(); // default regular, no note
+		const bill = screen.getByTestId('catalog-bill');
+		expect(bill.textContent).toContain('2 items');
+		expect(bill.textContent).toContain('4,200 SAT');
+		await fireEvent.click(bill);
+		const rows = screen.getAllByTestId('bill-line');
+		expect(rows).toHaveLength(2);
+		expect(rows[0].getAttribute('data-line-for')).toBe('thai-tea:less:หวานน้อย');
+		expect(screen.getAllByTestId('bill-line-note')).toHaveLength(1);
+		// bill stepper edits exactly one row: + on row 2 → 2, row 1 keeps 1
+		await fireEvent.click(screen.getAllByTestId('bill-inc')[1]);
+		expect(screen.getAllByTestId('bill-qty')[1].textContent).toBe('2');
+		expect(screen.getAllByTestId('bill-qty')[0].textContent).toBe('1');
+		expect(screen.getByTestId('bill-total-amount').textContent).toContain('6,300');
+		await fireEvent.click(screen.getByTestId('bill-charge-ln'));
+		await waitFor(() => expect(screen.getByTestId('success-pills')).toBeTruthy(), { timeout: 2000 });
+		const stored = getPosSales();
+		expect(stored).toHaveLength(1);
+		expect(stored[0].totalSat).toBe(6300);
+		expect(stored[0].lines).toHaveLength(2);
+		expect(stored[0].lines[0].note).toBe('หวานน้อย');
+		expect(stored[0].lines[0].modifier).toBe('less');
+		// history renders both shapes: note row + empty-note row
+		await fireEvent.click(screen.getByTestId('success-new-sale'));
+		await fireEvent.click(screen.getByTestId('catalog-open-history'));
+		expect(screen.getAllByTestId('history-row')).toHaveLength(1);
+		const linesText = screen.getByTestId('history-lines').textContent ?? '';
+		expect(linesText).toContain('หวานน้อย');
+		expect(linesText).toContain('×1');
+		expect(linesText).toContain('×2');
 	});
 });

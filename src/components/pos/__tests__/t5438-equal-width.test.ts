@@ -94,3 +94,66 @@ describe('TASK-5438 rev35 equal-width (NEW)', () => {
 		}
 	});
 });
+
+/**
+ * TASK-5604 wide frame (paired with the new code — approved mockup 3/3 R4).
+ * Base 480 locks (e-1..e-6) stay green: phone base is UNCHANGED.
+ * New: ≥640px → 720, ≥1024px → 960, pos-only (.pos-screen + inner
+ * QR/camera/card rules move together so equal-width holds at every width).
+ */
+describe('TASK-5604 wide frame (NEW, paired)', () => {
+	const POS_FILES = [
+		'src/components/pos/PosCatalog.svelte',
+		'src/components/pos/PosBill.svelte',
+		'src/components/pos/PosHistory.svelte',
+		'src/components/pos/PosCheckoutLn.svelte',
+		'src/components/pos/PosCheckoutCashu.svelte',
+		'src/components/pos/PosSuccess.svelte',
+		'src/components/pos/PosManage.svelte'
+	];
+	/** strip HTML + CSS comments so history notes never false-positive */
+	function cssOf(p: string): string {
+		const src = read(p).replace(/<!--[\s\S]*?-->/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+		const m = src.match(/<style>([\s\S]*)<\/style>/);
+		return m ? m[1] : '';
+	}
+	/** @media (min-width: X) block raises `sel` to max-width Y */
+	function hasBp(css: string, minW: number, sel: string, maxW: number): boolean {
+		const re = new RegExp(
+			`@media\\s*\\(min-width:\\s*${minW}px\\)\\s*\\{[\\s\\S]*?${sel}[\\s\\S]*?max-width:\\s*${maxW}px`
+		);
+		return re.test(css);
+	}
+
+	it('w-1: every pos .pos-screen keeps phone base max-width 480', () => {
+		for (const f of POS_FILES) {
+			const r = rule(cssOf(f), '\\.pos-screen');
+			expect(r, `${f} phone base`).toMatch(/max-width:\s*480px/);
+			expect(r, `${f} phone base`).toMatch(/width:\s*100%/);
+		}
+	});
+
+	it('w-2: every pos .pos-screen widens 720 @640px + 960 @1024px', () => {
+		for (const f of POS_FILES) {
+			const css = cssOf(f);
+			expect(hasBp(css, 640, '\\.pos-screen', 720), `${f} 640→720`).toBe(true);
+			expect(hasBp(css, 1024, '\\.pos-screen', 960), `${f} 1024→960`).toBe(true);
+		}
+	});
+
+	it('w-3: LN qr-frame + invoice-text follow 720/960 (equal at every width)', () => {
+		const css = cssOf(LN);
+		for (const sel of ['\\.qr-frame', '\\.invoice-text']) {
+			expect(hasBp(css, 640, sel, 720)).toBe(true);
+			expect(hasBp(css, 1024, sel, 960)).toBe(true);
+		}
+	});
+
+	it('w-4: Cashu qr-live + qr-scanner follow 720/960 (square kept by w-4 base e-4/e-5)', () => {
+		const css = cssOf(CASHU);
+		for (const sel of ['\\.qr-live', '\\.qr-scanner']) {
+			expect(hasBp(css, 640, sel, 720)).toBe(true);
+			expect(hasBp(css, 1024, sel, 960)).toBe(true);
+		}
+	});
+});

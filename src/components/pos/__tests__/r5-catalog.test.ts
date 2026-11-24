@@ -42,13 +42,12 @@ const products = [
 function baseProps(over: Record<string, unknown> = {}) {
 	return {
 		products,
+		priceFor: (p: PosProduct) => `${p.priceSat.toLocaleString('en-US')} SAT (≈ MOCK)`,
 		fiatFor: (sats: number) => `≈ ${(sats * 0.03).toFixed(2)} THB`,
 		cartCount: 3,
 		cartTotalSat: 7700,
 		cartFiat: '≈ 231.00 THB',
-		qtyFor: (id: string) => (id === 'thai-tea' ? 2 : id === 'cake' ? 1 : 0),
-		onInc: vi.fn(),
-		onDec: vi.fn(),
+		onSelect: vi.fn(),
 		onOpenBill: vi.fn(),
 		onOpenManage: vi.fn(),
 		onOpenHistory: vi.fn(),
@@ -88,26 +87,22 @@ describe('R5 S1 catalog — rev27 catalog-eye', () => {
 		expect(fiats[2].textContent).toContain('3,500 SAT (≈');
 	});
 
-	it('per-row stepper "- qty +" with pending count visible incl. 0 — card not clickable', async () => {
-		const onInc = vi.fn();
-		const onDec = vi.fn();
-		render(PosCatalog, { props: baseProps({ onInc, onDec }) });
+	it('per-card tap opens the modifier+note popup — no stepper on cards (5603 R2)', async () => {
+		const onSelect = vi.fn();
+		render(PosCatalog, { props: baseProps({ onSelect }) });
 		expect(screen.queryByTestId('catalog-add')).toBeNull();
-		const incs = screen.getAllByTestId('catalog-inc');
-		const decs = screen.getAllByTestId('catalog-dec');
-		const qtys = screen.getAllByTestId('catalog-qty');
-		expect(incs).toHaveLength(3);
-		expect(decs).toHaveLength(3);
-		expect(qtys.map((q) => q.textContent)).toEqual(['2', '0', '1']);
-		await fireEvent.click(incs[1]);
-		expect(onInc).toHaveBeenCalledTimes(1);
-		expect(onInc).toHaveBeenCalledWith('coffee');
-		await fireEvent.click(decs[0]);
-		expect(onDec).toHaveBeenCalledWith('thai-tea');
-		// clicking the card container (not the stepper) must NOT change cart
+		// steppers are gone from the grid — qty lives on the bill
+		expect(screen.queryByTestId('catalog-inc')).toBeNull();
+		expect(screen.queryByTestId('catalog-dec')).toBeNull();
+		expect(screen.queryByTestId('catalog-qty')).toBeNull();
+		// whole card is one tappable target → onSelect(productId)
 		const firstRow = screen.getAllByTestId('catalog-row')[0];
-		expect(firstRow.getAttribute('onclick')).toBeNull();
-		expect(firstRow.tagName.toLowerCase()).not.toBe('button');
+		expect(firstRow.tagName).toBe('BUTTON');
+		await fireEvent.click(firstRow);
+		expect(onSelect).toHaveBeenCalledTimes(1);
+		expect(onSelect).toHaveBeenCalledWith('thai-tea');
+		await fireEvent.click(screen.getAllByTestId('catalog-row')[1]);
+		expect(onSelect).toHaveBeenCalledWith('coffee');
 	});
 
 	it('Bill CTA label "Order 3 items 7,700 SAT (≈ …)" — no •/·; taller touch; sole bottom button', () => {
@@ -139,9 +134,10 @@ describe('R5 S1 catalog — rev27 catalog-eye', () => {
 		expect(onOpenHistory).toHaveBeenCalledTimes(1);
 	});
 
-	it('grid is single-column base with landscape 2-col class contract', () => {
+	it('grid is responsive 2/3/4 cols (5603 R2 — no single-col anywhere)', () => {
 		render(PosCatalog, { props: baseProps() });
 		const grid = screen.getByTestId('catalog-grid');
 		expect(grid.className).toContain('pos-catalog-grid');
+		expect(screen.getAllByTestId('catalog-row')).toHaveLength(3);
 	});
 });

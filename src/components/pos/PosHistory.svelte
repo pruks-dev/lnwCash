@@ -14,6 +14,7 @@
 	import ArrowLeft from '$lib/components/icons/ArrowLeft.svelte';
 	import Heading from '$lib/components/ui/Heading.svelte';
 	import type { SaleRecord } from '$lib/pos/sales-log';
+	import { resolveLine } from '$lib/pos/cart';
 	import { formatDeviceDateTime } from '$lib/pos/record-sale';
 	import type { PosFilter } from '$lib/pos-ui';
 
@@ -42,6 +43,20 @@
 		onBack,
 		onWalletLink
 	}: Props = $props();
+
+	// 5603: per-line breakdown for every sale row (2-shape: legacy lines
+	// resolve to empty-identity, so old history still renders).
+	// e.g. "ลาเต้ร้อน · หวานน้อย (หวานน้อย) ×1, เอสเพรสโซ ×2"
+	function linesText(s: SaleRecord): string {
+		return s.lines
+			.map((raw) => {
+				const l = resolveLine(raw);
+				const head = l.modifierLabel ? `${l.name} · ${l.modifierLabel}` : l.name;
+				const noted = l.note ? `${head} (${l.note})` : head;
+				return `${noted} ×${l.qty}`;
+			})
+			.join(', ');
+	}
 </script>
 
 <div class="pos-screen" data-pos-screen="history">
@@ -85,6 +100,7 @@
 						<div class="list-item-title">
 							{s.totalSat.toLocaleString('en-US')} SAT ({formatDeviceDateTime(s.createdAtMs)})
 						</div>
+						<div class="list-item-subtitle" data-testid="history-lines" data-lines-for={s.id}>{linesText(s)}</div>
 						<div class="list-item-subtitle">{s.refId}</div>
 					</div>
 					{#if s.method === 'lightning'}
@@ -130,6 +146,17 @@
 		width: 100%;
 		max-width: 480px;
 		margin: 0 auto;
+	}
+	/* TASK-5604 wide frame (approved mockup 3/3 R4): phone 480 → ≥640px 720 → ≥1024px 960, pos-only. */
+	@media (min-width: 640px) {
+		.pos-screen {
+			max-width: 720px;
+		}
+	}
+	@media (min-width: 1024px) {
+		.pos-screen {
+			max-width: 960px;
+		}
 	}
 	.top-bar {
 		display: flex;

@@ -503,5 +503,16 @@
 	"pos.settings.section": "Point of sale",
 	"pos.settings.enable": "PoS sales",
 	"pos.settings.desc": "Till mode for your counter",
-	"pos.settings.experimental": "Experimental"
+	"pos.settings.experimental": "Experimental",
+	"pos.catalog.tap_to_customize": "{name} — tap to pick options and note",
+	"pos.popup.mod_regular": "Regular",
+	"pos.popup.mod_less": "Less sweet",
+	"pos.popup.mod_none": "No sugar",
+	"pos.popup.mod_shot": "+ Shot",
+	"pos.popup.options_for": "Options for {name}",
+	"pos.popup.sweetness": "Sweetness",
+	"pos.popup.note_label": "Note (per row — not per bill)",
+	"pos.popup.note_aria": "Per-item note",
+	"pos.popup.note_placeholder": "e.g. no ice",
+	"pos.popup.add_to_bill": "Add to bill"
 }

@@ -35,9 +35,9 @@ beforeEach(() => {
 });
 
 describe('pos:catalog persistence pair', () => {
-	it('absent key (old install) → empty v1 catalog', () => {
+	it('absent key (old install) → empty v2 catalog', () => {
 		const doc = getPosCatalog();
-		expect(doc.schema).toBe(1);
+		expect(doc.schema).toBe(2);
 		expect(doc.items).toEqual([]);
 	});
 
@@ -67,7 +67,7 @@ describe('pos:catalog persistence pair', () => {
 			JSON.stringify({ items: [{ id: 'old', name: 'Old', priceSat: 100 }] })
 		);
 		const doc = getPosCatalog();
-		expect(doc.schema).toBe(1);
+		expect(doc.schema).toBe(2);
 		expect(doc.items).toHaveLength(1);
 		expect(doc.items[0].active).toBe(true);
 	});

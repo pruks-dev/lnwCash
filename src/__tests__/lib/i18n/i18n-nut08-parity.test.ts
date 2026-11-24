@@ -109,8 +109,8 @@ const REQUIRED_NUT08_KEYS = [
 	'nut08.error.derive'
 ] as const;
 
-const TOTAL_KEYS_EN = 498; // 450 + 46 PoS keys (INTENT-054 5417: nav.pos + 45 pos.*) + 2 pos.manage keys (TASK-5422 rev27, EN+TH symmetric).
-const TOTAL_KEYS_TH = 492; // 444 + 46 PoS keys (EN-verbatim pending translator, L-T015) + 2 pos.manage keys (TASK-5422 rev27, EN-verbatim pending translator).
+const TOTAL_KEYS_EN = 509; // 450 + 46 PoS keys (INTENT-054 5417: nav.pos + 45 pos.*) + 2 pos.manage keys (TASK-5422 rev27, EN+TH symmetric) + 11 popup/catalog keys (TASK-5604, EN+TH symmetric, TH EN-verbatim pending reed).
+const TOTAL_KEYS_TH = 503; // 444 + 46 PoS keys (EN-verbatim pending translator, L-T015) + 2 pos.manage keys (TASK-5422 rev27, EN-verbatim pending translator) + 11 popup/catalog keys (TASK-5604, EN-verbatim pending reed).
 // TASK-5220 (B1 fix-forward): INTENT-052 added 6 EN-only fiat keys
 // (screen.{receive,send}.fiat_stale/error_fiat_dust/error_fiat_unavailable).
 // TH translations are pending the translator — L-T015 forbids inventing TH,
@@ -160,7 +160,7 @@ describe('TASK-316: i18n NUT-08 namespace + parity', () => {
 		expect(hasThaiChars, 'th.json nut08.* values must contain Thai characters').toBe(true);
 	});
 
-	it('c) parity: en.json (498) vs th.json (492) — exact known EN-only diff, nothing else', () => {
+	it('c) parity: en.json (509) vs th.json (503) — exact known EN-only diff, nothing else', () => {
 		const enKeys = Object.keys(en).sort();
 		const thKeys = Object.keys(th).sort();
 

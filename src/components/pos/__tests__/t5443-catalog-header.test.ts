@@ -40,13 +40,12 @@ const PRODUCTS: PosProduct[] = [
 function catalogProps(over: Record<string, unknown> = {}) {
 	return {
 		products: PRODUCTS,
+		priceFor: (p: PosProduct) => `${p.priceSat.toLocaleString('en-US')} SAT (≈ MOCK)`,
 		fiatFor: (s: number) => `≈ ${(s * 0.03).toFixed(2)} THB`,
 		cartCount: 0,
 		cartTotalSat: 0,
 		cartFiat: '≈ 0.00 THB',
-		qtyFor: (_id: string) => 0,
-		onInc: vi.fn(),
-		onDec: vi.fn(),
+		onSelect: vi.fn(),
 		onOpenBill: vi.fn(),
 		onOpenManage: vi.fn(),
 		onOpenHistory: vi.fn(),

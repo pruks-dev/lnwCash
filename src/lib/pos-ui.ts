@@ -12,6 +12,7 @@
  */
 import { formatFiat } from './fiat/currency';
 import type { FiatCurrency, RateEntry } from './fiat/rates';
+import { hasNativePrice } from './pos/catalog';
 import { get, writable, type Readable } from 'svelte/store';
 import * as svelteI18n from 'svelte-i18n';
 
@@ -148,6 +149,45 @@ export function countItemsText(n: number, locale?: string): string {
 /** Catalog header count via countItemsText — R5 catalog point 3. */
 export function catalogCountText(n: number, locale?: string): string {
 	return countItemsText(n, locale);
+}
+
+/**
+ * TASK-5603 — native list-price text for HEAVY v2 products
+ * (INTENT-056 BLUEPRINT-056 v2, approved mockup 1/3).
+ *
+ * "฿45.00" form (currency symbol via Intl currency style, pinned th-TH so
+ * the text is byte-identical on every device — matches the approved mockup
+ * `฿45.00 (≈ 143 SAT)`). Presentation ONLY: Intl's currency style carries
+ * each currency's own decimals — zero rate arithmetic in this file.
+ * Non-finite amount → empty string (caller falls back to the SAT leg).
+ */
+export function nativePriceText(amount: number, currency: FiatCurrency): string {
+	if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) return '';
+	try {
+		return new Intl.NumberFormat('th-TH', { style: 'currency', currency }).format(amount);
+	} catch {
+		return `${amount} ${currency}`;
+	}
+}
+
+/**
+ * TASK-5603 approved card price (INTENT-056 BLUEPRINT-056 v2, mockup 1/3).
+ * - HEAVY native product viewed in its own currency → native first:
+ *   `฿45.00 (≈ 143 SAT)` (native leg is rate-independent — works even when
+ *   the rate is gone).
+ * - otherwise → SAT first: `200 SAT (≈ 63.00 THB)` (converted leg via
+ *   fiatRowText — fiat stack only, zero rate math here).
+ */
+export function catalogPriceText(
+	p: { priceSat: number; currency?: FiatCurrency | null; amount?: number | null },
+	rateCurrency: FiatCurrency,
+	ratePrice: number | null
+): string {
+	if (hasNativePrice(p) && p.currency === rateCurrency && typeof p.amount === 'number') {
+		const native = nativePriceText(p.amount, p.currency as FiatCurrency);
+		if (native) return `${native} (≈ ${p.priceSat.toLocaleString('en-US')} SAT)`;
+	}
+	return `${p.priceSat.toLocaleString('en-US')} SAT (${fiatRowText(p.priceSat, rateCurrency, { price: ratePrice } as never)})`;
 }
 
 /** Success/history method filter — R5 S5 tab-bar (mirrors History.svelte). */

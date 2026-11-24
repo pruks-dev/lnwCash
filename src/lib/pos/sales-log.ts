@@ -12,6 +12,7 @@
 
 import type { FiatCurrency } from '../fiat/rates';
 import type { BillLine } from './cart';
+import { lineIdFor, normalizeIdentity } from './cart';
 
 export const POS_SALES_SCHEMA_VERSION = 1;
 
@@ -96,9 +97,54 @@ function isMethod(v: unknown): v is PosPayMethod {
 }
 
 /**
+ * 5603 — normalize one persisted bill line (2-shape reader).
+ * Pre-5603 rows carry no modifier/note fields at all → they normalize to
+ * '' (empty note) and stay readable; the line still renders and totals
+ * still add up. Rows missing the sell-critical fields (product/name/
+ * price/qty) are dropped (null) — a sale left with zero valid lines is
+ * dropped by normalizeSales below.
+ */
+export function normalizeSaleLine(raw: unknown): BillLine | null {
+	if (typeof raw !== 'object' || raw === null) return null;
+	const r = raw as Record<string, unknown>;
+	if (typeof r.productId !== 'string' || r.productId.trim() === '') return null;
+	if (typeof r.name !== 'string' || r.name.trim() === '') return null;
+	if (!Number.isInteger(r.unitPriceSat) || (r.unitPriceSat as number) <= 0) return null;
+	if (!Number.isInteger(r.qty) || (r.qty as number) <= 0) return null;
+	const productId = r.productId as string;
+	const unitPriceSat = r.unitPriceSat as number;
+	const qty = r.qty as number;
+	const ident = normalizeIdentity({
+		modifier: r.modifier,
+		modifierLabel: r.modifierLabel,
+		note: r.note
+	});
+	const lineTotalSat =
+		Number.isInteger(r.lineTotalSat) && (r.lineTotalSat as number) > 0
+			? (r.lineTotalSat as number)
+			: unitPriceSat * qty;
+	return {
+		productId,
+		name: r.name as string,
+		unitPriceSat,
+		qty,
+		lineTotalSat,
+		lineId:
+			typeof r.lineId === 'string' && (r.lineId as string).trim() !== ''
+				? (r.lineId as string)
+				: lineIdFor(productId, ident),
+		modifier: ident.modifier,
+		modifierLabel: ident.modifierLabel,
+		note: ident.note
+	};
+}
+
+/**
  * Normalize unknown persisted data into a SaleRecord[].
  * Corrupt rows are dropped, valid rows kept — never throws.
  * Pre-5401 shaped rows (missing schema-era fields) fill safe defaults.
+ * 5603: bill lines pass through normalizeSaleLine — pre-5603 lines
+ * (productId-only identity, no modifier/note) read as empty-note lines.
  */
 export function normalizeSales(raw: unknown): SaleRecord[] {
 	if (!Array.isArray(raw)) return [];
@@ -119,6 +165,10 @@ export function normalizeSales(raw: unknown): SaleRecord[] {
 			string,
 			unknown
 		>;
+		const lines = Array.isArray(r.lines)
+			? (r.lines.map(normalizeSaleLine).filter((l) => l !== null) as BillLine[])
+			: [];
+		if (lines.length === 0) continue;
 		out.push({
 			id: r.id as string,
 			createdAtIso:
@@ -141,7 +191,7 @@ export function normalizeSales(raw: unknown): SaleRecord[] {
 			},
 			method: r.method as PosPayMethod,
 			refId: r.refId as string,
-			lines: r.lines as BillLine[]
+			lines
 		});
 	}
 	return out;

@@ -4,6 +4,8 @@
   - EQUAL WIDTH: qr-frame max-width 320 → 480 (= pos-screen 480, = lower
     invoice card) — no 320-vs-480 bottleneck; width 100% so equal at every
     breakpoint; QRDisplay (width 100% + aspect 1) scales up, square kept.
+  - TASK-5604 wide frame: base 480 kept; ≥640px 720 / ≥1024px 960 follow
+    .pos-screen (mockup 3/3 R4) — qr-frame + invoice-text move together.
   - Prior rev33/34 history kept below (truncated invoice, 220 QR, fit-100dvh).
 -->
 <script lang="ts">
@@ -135,6 +137,17 @@
 		max-height: 100dvh;
 		overflow: hidden;
 	}
+	/* TASK-5604 wide frame (approved mockup 3/3 R4): phone 480 → ≥640px 720 → ≥1024px 960, pos-only. */
+	@media (min-width: 640px) {
+		.pos-screen {
+			max-width: 720px;
+		}
+	}
+	@media (min-width: 1024px) {
+		.pos-screen {
+			max-width: 960px;
+		}
+	}
 	.top-bar {
 		display: flex;
 		align-items: center;
@@ -204,6 +217,17 @@
 		padding: var(--space-sm);
 		box-sizing: border-box;
 	}
+	/* TASK-5604: QR frame follows the pos wide frame (equal width at every breakpoint). */
+	@media (min-width: 640px) {
+		.qr-frame {
+			max-width: 720px;
+		}
+	}
+	@media (min-width: 1024px) {
+		.qr-frame {
+			max-width: 960px;
+		}
+	}
 	.invoice-text {
 		font-family: var(--font-family-mono);
 		word-break: break-all;
@@ -221,6 +245,17 @@
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
+	}
+	/* TASK-5604: invoice card follows the pos wide frame (equal width at every breakpoint). */
+	@media (min-width: 640px) {
+		.invoice-text {
+			max-width: 720px;
+		}
+	}
+	@media (min-width: 1024px) {
+		.invoice-text {
+			max-width: 960px;
+		}
 	}
 	.invoice-actions {
 		display: flex;
