@@ -74,8 +74,7 @@ vi.mock('../../cashu/keyset', () => ({
 
 import * as client from '../../cashu/client';
 import { createWallet, unlockWallet } from '../state';
-import { clearAllWalletData } from '../storage';
-import { deleteProofDB, resetProofDB } from '../proofsDb';
+import { resetWalletFixtureLight } from './wallet-test-fixture';
 import { completeMint, decomposeAmount } from '../mint';
 import { setActiveSeed, clearActiveSeed } from '../nut13';
 import { mnemonicToSeed } from '../keys';
@@ -88,9 +87,7 @@ describe('TASK-250 RC-3: atomic derivation serialization', () => {
 	const seed = mnemonicToSeed(MNEMONIC);
 
 	beforeEach(async () => {
-		await clearAllWalletData();
-		await deleteProofDB();
-		resetProofDB();
+		await resetWalletFixtureLight();
 		localStorage.removeItem(STORAGE_KEY);
 		vi.clearAllMocks();
 
@@ -102,9 +99,7 @@ describe('TASK-250 RC-3: atomic derivation serialization', () => {
 	afterEach(async () => {
 		clearActiveSeed();
 		clearAllCounters();
-		await clearAllWalletData();
-		await deleteProofDB();
-		resetProofDB();
+		await resetWalletFixtureLight();
 	});
 
 	it('withKeysetLock serializes concurrent critical sections (no interleave)', async () => {

@@ -6,6 +6,7 @@
 	import { _ } from 'svelte-i18n';
 	import { locale } from 'svelte-i18n';
 	import { getSettings, setSettings } from '$lib/storage/local';
+	import { getPosEnabled, setPosEnabled } from '$lib/pos-ui';
 	import { navigateTo, getHashParam, clearHashParams } from '$lib/router';
 	import { themeMode, setTheme } from '$lib/design/theme';
 	import type { ThemeMode } from '$lib/types';
@@ -67,6 +68,8 @@
 	let autoLockTimeout: number = $state(5); // TASK-210: auto-lock timeout (minutes)
 	// TASK-220: PIN keypad shuffle setting (persisted, default off).
 	let pinShuffle: boolean = $state(false);
+	// TASK-5417 R5-only: PoS sales toggle (own localStorage key — WalletSettings untouched).
+	let posEnabled: boolean = $state(false);
 	// TASK-5002 (INTENT-050, mockup R2 rev13 APPROVED): fiat currency dropdown —
 	// default THB, persisted in lnwcash_settings.fiat_currency, collapsed by default.
 	let fiatCurrency: FiatCurrency = $state('THB');
@@ -113,6 +116,12 @@
 			pinShuffle = settings.pin_shuffle ?? false;
 			// TASK-5002: fiat currency (validated read — unknown codes → THB).
 			fiatCurrency = getFiatCurrency();
+			// TASK-5417: PoS flag (own key).
+			try {
+				posEnabled = getPosEnabled();
+			} catch {
+				posEnabled = false;
+			}
 			// TASK-FIX-321: fee return setting removed — badge always ON.
 		} catch {
 			currentLang = 'en';
@@ -178,6 +187,19 @@
 	function handlePinShuffleToggle(e: Event) {
 		pinShuffle = (e.target as HTMLInputElement).checked;
 		setSettings({ pin_shuffle: pinShuffle });
+	}
+
+	// TASK-5417 R5-only: PoS sales toggle — own key via pos-ui (WalletSettings untouched).
+	// TASK-5468 rev50 toggle_notify: setPosEnabled now pushes posEnabledStore +
+	// dispatches lnwcash:pos-toggle so App flips showPos in the same tick
+	// (no route change needed). Toggle transport only — no money/logic.
+	function handlePosToggle(e: Event) {
+		posEnabled = (e.target as HTMLInputElement).checked;
+		try {
+			setPosEnabled(posEnabled);
+		} catch {
+			// storage unavailable — toggle stays visual only
+		}
 	}
 
 	// TASK-FIX-321: fee return badge toggle removed — always ON per Commander.
@@ -681,6 +703,28 @@
 					<div class="toggle-row-body">
 						<Body size="sm" weight="semibold">{$_('settings.pin_shuffle.title')}</Body>
 						<Body size="sm" color="secondary">{$_('settings.pin_shuffle.description')}</Body>
+					</div>
+				</div>
+
+			</div>
+		</Card>
+
+		<!-- ─── Point of Sale Section (TASK-5421 rev26: own Card AFTER Security — toggle moved out of PIN Card; heading h4 + pill-warn verbatim settings-pos.html; pos.* stay EN + flag, TH waits translator — L-T015, no self-TH) ─── -->
+		<Card variant="basic" padding="md">
+			<div class="section" data-testid="pos-settings-section">
+				<Heading level="h4">{$_('pos.settings.section')}</Heading>
+				<div class="toggle-row" data-testid="pos-toggle-row">
+					<Toggle
+						checked={posEnabled}
+						onchange={handlePosToggle}
+						ariaLabel={$_('pos.settings.enable')}
+					/>
+					<div class="toggle-row-body">
+						<Body size="sm" weight="semibold">
+							{$_('pos.settings.enable')}
+							<span class="pill pill-warn" data-testid="pos-experimental">{$_('pos.settings.experimental')}</span>
+						</Body>
+						<Body size="sm" color="secondary">{$_('pos.settings.desc')}</Body>
 					</div>
 				</div>
 			</div>
@@ -1362,6 +1406,24 @@
 		background: var(--color-surface-variant);
 		color: var(--color-text-secondary);
 		vertical-align: middle;
+	}
+
+	/* TASK-5417 R5-only (settings-pos.html): Experimental badge = pill-warn verbatim */
+	.pill {
+		display: inline-flex;
+		align-items: center;
+		padding: 2px 8px;
+		font-size: var(--font-size-xs);
+		font-weight: var(--font-weight-semibold);
+		border-radius: var(--radius-full);
+		border: 1.5px solid transparent;
+		white-space: nowrap;
+		vertical-align: middle;
+	}
+
+	.pill-warn {
+		background: var(--color-warning-light);
+		color: var(--color-warning);
 	}
 
 	.check-wrap {

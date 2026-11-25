@@ -1,0 +1,47 @@
+<script lang="ts">
+	/**
+	 * Icon: Donut — Solar Linear donut-linear (TASK-5702-R6 strip photos).
+	 * Path inlined verbatim from api.iconify.design/solar
+	 * (GET /solar/donut-linear.svg, verified 2026-11-25, HTTP 200).
+	 * CC BY 4.0 — https://creativecommons.org/licenses/by/4.0/
+	 * Never hand-drawn.
+	 */
+	interface Props {
+		size?: number;
+		class?: string;
+		color?: string;
+	}
+	let { size = 24, class: className = '', color = 'currentColor' }: Props = $props();
+</script>
+
+<svg
+	xmlns="http://www.w3.org/2000/svg"
+	width={size}
+	height={size}
+	viewBox="0 0 24 24"
+	fill="none"
+	stroke={color}
+	stroke-width="1.5"
+	stroke-linecap="round"
+	stroke-linejoin="round"
+	class={className}
+	aria-hidden="true"
+	role="img"
+>
+	<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5">
+		<circle cx="12" cy="12" r="10" />
+		<circle cx="12" cy="12" r="3" />
+		<path d="M2.05371 13.0421C2.05371 13.0421 4.20098 15.0001 6.00012 15.0001C7.21212 15.0001 8.62062 14.0927 9.4016 13.5003" />
+		<path d="M14.0073 14.2295C14.4786 14.6448 15.0873 15 15.8052 15C17.4946 15 17.4946 13 19.1841 13C20.2616 13 21.1101 13.8136 21.5833 14.4029L21.6795 14.5209" />
+		<path d="M14.5 7L16 5" />
+		<path d="M19 7L20 6" />
+		<path d="M12 5L11 4" />
+		<path d="M10.5 7L9.13397 7.36603" />
+		<path d="M16.6497 8.97651L16.7161 10.3892" />
+		<path d="M20.6777 10.085L18.9996 11.5629" />
+		<path d="M7 5L6 4" />
+		<path d="M6.79245 9.14385L6.20722 7.85641" />
+		<path d="M5.66477 12.6414L6.5 11.5002" />
+		<path d="M3.68293 10.3497L3.60427 8.93769" />
+	</g>
+</svg>

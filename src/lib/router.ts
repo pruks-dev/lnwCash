@@ -13,7 +13,7 @@
  * Back button support via history.pushState / popstate / hashchange.
  */
 
-export type ScreenKey = 'home' | 'receive' | 'send' | 'history' | 'settings' | 'setup';
+export type ScreenKey = 'home' | 'receive' | 'send' | 'history' | 'settings' | 'setup' | 'pos';
 
 const ROUTE_MAP: Record<string, ScreenKey> = {
 	'': 'home',
@@ -24,6 +24,8 @@ const ROUTE_MAP: Record<string, ScreenKey> = {
 	'/history': 'history',
 	'/settings': 'settings',
 	'/setup': 'setup',
+	// TASK-5417 R5-only: PoS entry (BottomNav Shop tab → #/pos)
+	'/pos': 'pos',
 	// Legacy route aliases for backward compatibility
 	'/balance': 'home',
 	'/pay': 'send',

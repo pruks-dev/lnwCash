@@ -65,9 +65,15 @@
 		onDecode: (decoded: string) => void;
 		/** Emitted when the user closes the scanner (X button). */
 		onClose: () => void;
+		/** TASK-5440 rev36 hide_x_pos_r36: when true the overlay X button
+		 *  is NOT rendered (PoS Cashu only — the screen header back button
+		 *  owns the exit). Default false — every other caller keeps the X
+		 *  verbatim (App.svelte overlay untouched). onClose stays required:
+		 *  the error/fallback Cancel paths still emit it. */
+		hideClose?: boolean;
 	}
 
-	let { onDecode, onClose }: Props = $props();
+	let { onDecode, onClose, hideClose = false }: Props = $props();
 
 	// --- DOM + scanner handles ---------------------------------------------
 	let videoEl: HTMLVideoElement | undefined = $state();
@@ -86,8 +92,10 @@
 	let permissionDenied: boolean = $state(false);
 	/** Free-text error message for unexpected scanner failures. */
 	let errorMessage: string | null = $state(null);
-	/** Buffer for the paste-from-clipboard fallback textarea. */
-	let pastedToken: string = $state('');
+	// TASK-5436 rev34: NO textarea, NO typing — the fallback is buttons-only.
+	// Paste reads the clipboard and auto-submits through handleResult.
+	/** Inline status for a failed/empty clipboard Paste (no typing box). */
+	let pasteStatus: string | null = $state(null);
 
 	// --- Pattern source: cashu.me/QrcodeReader.vue lines 53-72 --------------
 	// Mirrors cashu.me verbatim. The `ur:` prefix detection is
@@ -124,14 +132,27 @@
 		onClose();
 	}
 
-	function handlePasteSubmit() {
-		const trimmed = pastedToken.trim();
-		if (trimmed.length === 0) return;
-		// Re-use the same code path as a live camera decode — if it happens to
-		// be a ur: fragment or static token, it goes through the same routing.
-		// We synthesize a ScanResult so handleResult stays the single source
-		// of truth for the decode pipeline.
-		handleResult({ data: trimmed, cornerPoints: [] });
+	// TASK-5436 rev34: Paste = clipboard read + auto-submit, no typing.
+	// The clipboard text goes through handleResult so a live camera decode
+	// and a Paste stay on the single decode pipeline. Empty clipboard →
+	// no-op status; clipboard failure → inline status (never a textarea).
+	async function handlePasteClipboard() {
+		pasteStatus = null;
+		try {
+			const text = await navigator.clipboard.readText();
+			const trimmed = (text ?? '').trim();
+			if (trimmed.length === 0) {
+				pasteStatus = 'Clipboard is empty';
+				return;
+			}
+			// Re-use the same code path as a live camera decode — if it happens to
+			// be a ur: fragment or static token, it goes through the same routing.
+			// We synthesize a ScanResult so handleResult stays the single source
+			// of truth for the decode pipeline.
+			handleResult({ data: trimmed, cornerPoints: [] });
+		} catch {
+			pasteStatus = 'Clipboard unavailable — try again';
+		}
 	}
 
 	// --- Lifecycle ----------------------------------------------------------
@@ -189,16 +210,20 @@
 
 <div class="qr-scanner" data-testid="qr-scanner">
 	<!-- Close button (X) — always visible in top-right, matches cashu.me
-	     QrcodeReader.vue line 25 (the close button on the camera overlay). -->
-	<button
-		type="button"
-		class="qr-scanner-close"
-		aria-label="Close scanner"
-		onclick={handleClose}
-		data-testid="qr-scanner-close"
-	>
-		×
-	</button>
+	     QrcodeReader.vue line 25 (the close button on the camera overlay).
+	     TASK-5440 rev36: hidden ONLY when hideClose (PoS Cashu) — every
+	     other caller renders it verbatim. -->
+	{#if !hideClose}
+		<button
+			type="button"
+			class="qr-scanner-close"
+			aria-label="Close scanner"
+			onclick={handleClose}
+			data-testid="qr-scanner-close"
+		>
+			×
+		</button>
+	{/if}
 
 	{#if errorMessage}
 		<div class="qr-scanner-error" role="alert" data-testid="qr-scanner-error">
@@ -216,24 +241,21 @@
 		<div class="qr-scanner-fallback" data-testid="qr-scanner-fallback">
 			<p class="qr-scanner-fallback-title">Camera unavailable</p>
 			<p class="qr-scanner-fallback-help">
-				Grant camera permission or paste a token manually below.
+				Grant camera permission or paste a token from the clipboard.
 			</p>
-			<textarea
-				class="qr-scanner-fallback-input"
-				bind:value={pastedToken}
-				placeholder="cashuA... / lnbc... / ur:bytes/..."
-				rows="4"
-				data-testid="qr-scanner-fallback-input"
-			></textarea>
+			{#if pasteStatus}
+				<p class="qr-scanner-fallback-status" role="status" data-testid="qr-scanner-paste-status">
+					{pasteStatus}
+				</p>
+			{/if}
 			<div class="qr-scanner-fallback-actions">
 				<button
 					type="button"
 					class="qr-scanner-fallback-use"
-					disabled={pastedToken.trim().length === 0}
-					onclick={handlePasteSubmit}
-					data-testid="qr-scanner-fallback-use"
+					onclick={() => void handlePasteClipboard()}
+					data-testid="qr-scanner-paste"
 				>
-					Use
+					Paste
 				</button>
 				<button
 					type="button"
@@ -274,6 +296,7 @@
 		background: #000;
 		border-radius: var(--radius-md, 8px);
 		overflow: hidden;
+		/* TASK-5436 rev34: square 1:1 — portrait-friendly, NEVER landscape 4/3. */
 		aspect-ratio: 1;
 		display: flex;
 		align-items: center;
@@ -386,23 +409,11 @@
 		color: var(--color-text-secondary, #aaa);
 	}
 
-	.qr-scanner-fallback-input {
-		width: 100%;
-		max-width: 320px;
-		padding: var(--space-sm, 8px);
-		font-family: var(--font-family-mono, monospace);
-		font-size: var(--font-size-xs, 11px);
-		background: var(--color-surface-variant, #2a2a3e);
-		color: var(--color-text, #fff);
-		border: 1px solid var(--color-border, #444);
-		border-radius: var(--radius-sm, 4px);
-		resize: vertical;
-		box-sizing: border-box;
-	}
-
-	.qr-scanner-fallback-input:focus-visible {
-		outline: 2px solid var(--color-primary, #1976d2);
-		outline-offset: 2px;
+	.qr-scanner-fallback-status {
+		margin: 0;
+		font-family: var(--font-family, sans-serif);
+		font-size: var(--font-size-sm, 12px);
+		color: var(--color-text-secondary, #aaa);
 	}
 
 	.qr-scanner-fallback-actions {
@@ -426,19 +437,14 @@
 		transition: background var(--transition-fast, 120ms ease);
 	}
 
-	.qr-scanner-fallback-use:not(:disabled) {
+	.qr-scanner-fallback-use {
 		background: var(--color-primary, #1976d2);
 		border-color: var(--color-primary, #1976d2);
 	}
 
-	.qr-scanner-fallback-use:not(:disabled):hover,
-	.qr-scanner-fallback-use:not(:disabled):focus-visible {
+	.qr-scanner-fallback-use:hover,
+	.qr-scanner-fallback-use:focus-visible {
 		background: var(--color-primary-hover, #1565c0);
-	}
-
-	.qr-scanner-fallback-use:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
 	}
 
 	.qr-scanner-fallback-cancel:hover,

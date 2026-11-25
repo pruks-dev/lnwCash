@@ -275,10 +275,10 @@ describe('QRScanner component (TASK-503 — D-6 γ unified scanner)', () => {
 			expect(container.querySelector('[data-testid="qr-scanner-fallback"]')).not.toBeNull();
 		});
 
-		// Fallback UI elements present:
-		expect(container.querySelector('[data-testid="qr-scanner-fallback-input"]')).not.toBeNull();
-		expect(container.querySelector('[data-testid="qr-scanner-fallback-use"]')).not.toBeNull();
+		// Fallback UI elements present (rev34 buttons-only — NO textarea):
+		expect(container.querySelector('[data-testid="qr-scanner-paste"]')).not.toBeNull();
 		expect(container.querySelector('[data-testid="qr-scanner-fallback-cancel"]')).not.toBeNull();
+		expect(container.querySelector('textarea')).toBeNull();
 
 		// Camera video should NOT be in the DOM when we fell back.
 		expect(container.querySelector('[data-testid="qr-scanner-video"]')).toBeNull();
@@ -298,27 +298,56 @@ describe('QRScanner component (TASK-503 — D-6 γ unified scanner)', () => {
 		});
 	});
 
-	it('fallback UI — paste-from-clipboard emits onDecode via the same routing pipeline', async () => {
+	it('fallback UI — Paste reads the clipboard and emits onDecode via the same routing pipeline', async () => {
 		mockState.mockStartShouldThrow = new (await import('@agicash/qr-scanner'))
 			.CameraPermissionError();
 
 		const onDecode = vi.fn();
 		const { container } = await renderAndAwaitStart({ onDecode, onClose: vi.fn() });
 		await waitFor(() => {
-			expect(container.querySelector('[data-testid="qr-scanner-fallback-input"]')).not.toBeNull();
+			expect(container.querySelector('[data-testid="qr-scanner-paste"]')).not.toBeNull();
 		});
 
-		const input = container.querySelector(
-			'[data-testid="qr-scanner-fallback-input"]'
-		) as HTMLTextAreaElement;
-		await fireEvent.input(input, { target: { value: 'cashuAstatic-token-from-paste' } });
+		// rev34: no typing — Paste pulls the token from the clipboard.
+		Object.defineProperty(navigator, 'clipboard', {
+			value: { readText: vi.fn(async () => 'cashuAstatic-token-from-paste') },
+			configurable: true
+		});
 
-		const useBtn = container.querySelector(
-			'[data-testid="qr-scanner-fallback-use"]'
+		const pasteBtn = container.querySelector(
+			'[data-testid="qr-scanner-paste"]'
 		) as HTMLButtonElement;
-		await fireEvent.click(useBtn);
+		await fireEvent.click(pasteBtn);
 
-		expect(onDecode).toHaveBeenCalledWith('cashuAstatic-token-from-paste');
+		await waitFor(() => {
+			expect(onDecode).toHaveBeenCalledWith('cashuAstatic-token-from-paste');
+		});
+	});
+
+	it('fallback UI — empty clipboard is a no-op status, never onDecode', async () => {
+		mockState.mockStartShouldThrow = new (await import('@agicash/qr-scanner'))
+			.CameraPermissionError();
+
+		const onDecode = vi.fn();
+		const { container } = await renderAndAwaitStart({ onDecode, onClose: vi.fn() });
+		await waitFor(() => {
+			expect(container.querySelector('[data-testid="qr-scanner-paste"]')).not.toBeNull();
+		});
+
+		Object.defineProperty(navigator, 'clipboard', {
+			value: { readText: vi.fn(async () => '   ') },
+			configurable: true
+		});
+
+		const pasteBtn = container.querySelector(
+			'[data-testid="qr-scanner-paste"]'
+		) as HTMLButtonElement;
+		await fireEvent.click(pasteBtn);
+
+		await waitFor(() => {
+			expect(container.querySelector('[data-testid="qr-scanner-paste-status"]')).not.toBeNull();
+		});
+		expect(onDecode).not.toHaveBeenCalled();
 	});
 
 	it('close button (X) — invokes onClose callback', async () => {

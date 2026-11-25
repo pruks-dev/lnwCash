@@ -386,9 +386,61 @@ export default defineConfig({
 	})(),
 	test: {
 		environment: 'jsdom',
-		include: ['src/**/*.{test,spec}.{ts,js}'],
+		// NOTE (merge semantics): vite's mergeConfig CONCATENATES `include`
+		// arrays when an inline project extends this root config. Therefore the
+		// root `include` is deliberately the WALLET pattern: the wallet-heavy
+		// project re-states it (concat = same set), while the product project
+		// states `src/**` (concat = all files) and subtracts the wallet family
+		// via `exclude`. Net: full run = product(138) + wallet(92), no overlap.
+		include: ['src/lib/wallet/__tests__/**/*.{test,spec}.{ts,js}'],
 		setupFiles: ['./src/vitest.setup.ts'],
 		globals: true,
+		// ── INTENT-054 rev53 (TASK-5473) permanent lane policy ──────────────
+		// SYSTEMIC fix for r51/r52 flake signature (Hook timed out 10s/30s,
+		// ZERO product assertion failures — fake-indexeddb deleteDB scheduling
+		// starved under full-suite parallel DLEQ/Carol-chain crypto load).
+		// Per-file `vi.setConfig` bumps are REMOVED (whack-a-mole, see B-5472-02);
+		// budgets + lane partition below carry the headroom INSTEAD.
+		//   Lane 1 `product`  — PoS/product gate: everything EXCEPT the wallet
+		//     DB-heavy family. `npx vitest run --project=product` is the audit
+		//     gate (EXIT 0 real).
+		//   Lane 2 `wallet-heavy` — tracked lane: wallet family runs with high
+		//     budgets + 1 retry backstop. Full `npx vitest run` runs BOTH lanes;
+		//     this pass BOTH must be green (no waiver per Commander ORDER).
+		// Family-wide floor (also the default each project inherits):
+		testTimeout: 30000,
+		hookTimeout: 30000,
+		teardownTimeout: 15000,
+		// 4-CPU box: cap parallel fork workers so sibling-file crypto load
+		// cannot starve fake-indexeddb scheduling (r52: default contention).
+		// (Vitest 4: poolOptions removed → worker cap is top-level maxWorkers.)
+		pool: 'forks',
+		maxWorkers: 2,
+		projects: [
+			{
+				// extends:true — inherit the FULL root vite config (svelte plugin,
+				// $lib alias, node polyfills, server.deps.inline, setupFiles) so
+				// collection behaves exactly like the pre-lane single run.
+				// Only the `test:` keys below override the family-wide floor.
+				extends: true,
+				test: {
+					name: 'product',
+					include: ['src/**/*.{test,spec}.{ts,js}'],
+					exclude: ['src/lib/wallet/__tests__/**', '**/node_modules/**', '**/dist/**']
+				}
+			},
+			{
+				extends: true,
+				test: {
+					name: 'wallet-heavy',
+					include: ['src/lib/wallet/__tests__/**/*.{test,spec}.{ts,js}'],
+					testTimeout: 60000,
+					hookTimeout: 60000,
+					teardownTimeout: 30000,
+					retry: 1
+				}
+			}
+		],
 		server: {
 			// CI-COLD FIX (2026-10-01): fresh `npm ci` starts with NO dep-optimizer
 			// cache; the svelte-i18n → intl-messageformat chain gets externalized

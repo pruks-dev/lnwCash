@@ -161,7 +161,6 @@ vi.mock('../../cashu/blind', () => ({
 
 import * as client from '../../cashu/client';
 import { createWallet, unlockWallet } from '../state';
-import { clearAllWalletData } from '../storage';
 import { addTransaction, getTransactions, clearTransactions } from '../../storage/db';
 import {
 	addProofs,
@@ -169,10 +168,9 @@ import {
 	getUnspentProofs,
 	markReserved,
 	getReservedProofs,
-	getTotalBalance,
-	deleteProofDB,
-	resetProofDB
+	getTotalBalance
 } from '../proofsDb';
+import { resetWalletFixtureLight } from './wallet-test-fixture';
 import { setCounterK, getCounterK, clearAllCounters, STORAGE_KEY } from '../counterK';
 import { setActiveSeed, clearActiveSeed } from '../nut13';
 import { mnemonicToSeed } from '../keys';
@@ -197,10 +195,8 @@ async function localIdsOf(tags: string[]): Promise<string[]> {
 }
 
 async function freshWalletWithFunds(tags: Array<{ tag: string; amount: number }>): Promise<void> {
-	await clearAllWalletData();
+	await resetWalletFixtureLight();
 	await clearTransactions();
-	await deleteProofDB();
-	resetProofDB();
 	localStorage.removeItem(STORAGE_KEY);
 	try { localStorage.clear(); } catch { /* ignore */ }
 	postMeltCalls.length = 0;
@@ -228,10 +224,8 @@ describe('TASK-4913 retryable⟹failed: no auto re-send', () => {
 	afterEach(async () => {
 		clearActiveSeed();
 		clearAllCounters();
-		await clearAllWalletData();
+		await resetWalletFixtureLight();
 		await clearTransactions();
-		await deleteProofDB();
-		resetProofDB();
 	});
 
 	it('(1) reconcile UNPAID + all UNSPENT → failed (retryable ไม่มีอีก)', async () => {

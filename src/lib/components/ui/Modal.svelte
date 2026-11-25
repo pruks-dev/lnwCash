@@ -3,6 +3,7 @@
 	 * Modal — D-004
 	 * Variants: dialog (centered overlay), bottomsheet (slides up from bottom)
 	 */
+	import { onDestroy } from 'svelte';
 	interface Props {
 		/** Show/hide modal */
 		open?: boolean;
@@ -33,10 +34,52 @@
 	}: Props = $props();
 
 	let modalRef: HTMLDivElement | undefined = $state();
+
+	// TASK-5702-R12 exit anim (INTENT-057 BLUEPRINT v3 rev25 ORDER (6):
+	// anim ชีทเลื่อนลงตอนปิด — ผ่าน Modal ตัวเดียว). Mounted render splits
+	// into show (in DOM) + leaving (exit anim playing): X/backdrop/Escape
+	// start `leaving` and call onclose only after the slide-down finishes;
+	// a parent-driven open=false (save success, row removed) unmounts at
+	// once — no fake delay. Both variants animate (sheet slides down,
+	// dialog fades+settles).
+	let show = $state(false);
+	let leaving = $state(false);
+	let leaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function clearLeaveTimer(): void {
+		if (leaveTimer) {
+			clearTimeout(leaveTimer);
+			leaveTimer = null;
+		}
+	}
+
+	function requestClose() {
+		if (leaving) return;
+		leaving = true;
+		clearLeaveTimer();
+		leaveTimer = setTimeout(() => {
+			leaveTimer = null;
+			onclose?.();
+		}, 200);
+	}
+
+	$effect(() => {
+		if (open) {
+			clearLeaveTimer();
+			show = true;
+			leaving = false;
+		} else {
+			clearLeaveTimer();
+			show = false;
+			leaving = false;
+		}
+	});
+
+	onDestroy(() => clearLeaveTimer());
 	let previousFocus: HTMLElement | undefined;
 
 	function handleClose() {
-		onclose?.();
+		requestClose();
 	}
 
 	function handleBackdropClick(e: MouseEvent) {
@@ -67,10 +110,11 @@
 	});
 </script>
 
-{#if open}
+{#if show}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		class="modal-backdrop modal-backdrop-{variant}"
+		class:modal-leaving={leaving}
 		onclick={handleBackdropClick}
 		onkeydown={handleKeydown}
 		role="presentation"
@@ -79,6 +123,7 @@
 		<div
 			bind:this={modalRef}
 			class="modal-content modal-{variant} modal-layout-{layout}"
+			class:modal-leaving={leaving}
 			role="dialog"
 			aria-modal="true"
 			aria-label={ariaLabel ?? title ?? 'Dialog'}
@@ -246,6 +291,48 @@
 		}
 		to {
 			transform: translateY(0);
+		}
+	}
+
+	/* TASK-5702-R12 exit anim (ORDER (6) — slide-down on close, both sheets
+	   pass through this one Modal): leaving plays while mounted; onclose
+	   fires after 200ms (matches requestClose). */
+	.modal-backdrop.modal-leaving {
+		animation: backdrop-out 0.2s ease forwards;
+	}
+	.modal-content.modal-leaving {
+		animation: modal-out 0.2s ease forwards;
+	}
+	.modal-bottomsheet.modal-leaving {
+		animation: sheet-out 0.2s ease forwards;
+	}
+
+	@keyframes backdrop-out {
+		from {
+			opacity: 1;
+		}
+		to {
+			opacity: 0;
+		}
+	}
+
+	@keyframes modal-out {
+		from {
+			opacity: 1;
+			transform: scale(1) translateY(0);
+		}
+		to {
+			opacity: 0;
+			transform: scale(0.95) translateY(10px);
+		}
+	}
+
+	@keyframes sheet-out {
+		from {
+			transform: translateY(0);
+		}
+		to {
+			transform: translateY(100%);
 		}
 	}
 
