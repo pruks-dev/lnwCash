@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import PosModifierPopup from '../PosModifierPopup.svelte';
@@ -30,6 +30,31 @@ const here = dirname(fileURLToPath(import.meta.url));
 const manageCss = readFileSync(resolve(here, '..', 'PosManage.svelte'), 'utf-8');
 const popupSrc = readFileSync(resolve(here, '..', 'PosModifierPopup.svelte'), 'utf-8');
 const appSrc = readFileSync(resolve(here, '..', 'PosApp.svelte'), 'utf-8');
+
+// TASK-5702-R15 (F-CI-02 env guard): mockup R6 อยู่นอก repo (ARX evidence) —
+// มีบน local dev แต่ไม่มีบน CI runner → ไม่มีไฟล์ให้ข้าม (skip) แทน ENOENT.
+// Path แบบ relative ล้วน (ห้าม hardcode absolute ใหม่). local มีไฟล์ → รันจริง
+// ไม่ skip ผิด. หมายเหตุ: ไม่อ่าน env/process.stdout — ใน vitest forks worker
+// ของ repo นี้ env ที่ส่งมาตอน invoke ไม่ทะลุถึง worker และ process.stdout
+// เป็น undefined (probe R15) จึงใช้ existsSync อย่างเดียว
+const mockupDir = resolve(
+	here,
+	'..',
+	'..',
+	'..',
+	'..',
+	'..',
+	'..',
+	'ARX',
+	'.arx',
+	'evidence',
+	'saber-frontend',
+	'TASK-5700-R6'
+);
+const mockupFiles = ['mockup-manage-list-B.html', 'mockup-manage-add.html'].map((f) =>
+	resolve(mockupDir, f)
+);
+const hasMockups = mockupFiles.every((f) => existsSync(f));
 
 function ruleBody(css: string, selector: string): string {
 	const re = new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`);
@@ -62,20 +87,18 @@ describe('R9 option (1) — แถวเพิ่มตรง mockup R6 (ทั�
 		expect(body).toContain('font-size: 14px');
 	});
 
-	it('ค่าตรง mockup R6 ทั้ง 2 ไฟล์ (L-P036 สัญญา)', () => {
-		const mockups = ['mockup-manage-list-B.html', 'mockup-manage-add.html'].map((f) =>
-			readFileSync(
-				'/home/debian/ARX/.arx/evidence/saber-frontend/TASK-5700-R6/' + f,
-				'utf-8'
-			)
-		);
-		for (const mock of mockups) {
-			expect(mock).toContain('border-radius:8px');
-			expect(mock).toContain('padding:0 10px');
-			expect(mock).toContain('border-radius:12px');
-			expect(mock).toContain('font-size:14px');
+	it.skipIf(!hasMockups)(
+		'ค่าตรง mockup R6 ทั้ง 2 ไฟล์ (L-P036 สัญญา — skip บน runner ที่ไม่มี mockup)',
+		() => {
+			const mockups = mockupFiles.map((f) => readFileSync(f, 'utf-8'));
+			for (const mock of mockups) {
+				expect(mock).toContain('border-radius:8px');
+				expect(mock).toContain('padding:0 10px');
+				expect(mock).toContain('border-radius:12px');
+				expect(mock).toContain('font-size:14px');
+			}
 		}
-	});
+	);
 });
 
 describe('R9 option (2) — × วงกลมจริง (ทั้ง 2 ฟอร์ม shared .chip-x)', () => {
