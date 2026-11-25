@@ -100,6 +100,11 @@
 						<div class="list-item-title">
 							{s.totalSat.toLocaleString('en-US')} SAT ({formatDeviceDateTime(s.createdAtMs)})
 						</div>
+						<!-- TASK-5711: frozen bill fiat per row (snapshot at
+						     pay time, never recomputed — old bills freeze). -->
+						{#if s.fiat.text}
+							<div class="list-item-subtitle" data-testid="history-fiat" data-fiat-for={s.id}>{s.fiat.text}</div>
+						{/if}
 						<div class="list-item-subtitle" data-testid="history-lines" data-lines-for={s.id}>{linesText(s)}</div>
 						<div class="list-item-subtitle">{s.refId}</div>
 					</div>

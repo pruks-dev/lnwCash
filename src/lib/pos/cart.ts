@@ -1,6 +1,13 @@
 /**
  * TASK-5401 — POS cart/bill domain (INTENT-054 BLUEPRINT v3)
  * TASK-5603 — cart line identity product+modifier+note (INTENT-056 BLUEPRINT-056 v2)
+ * TASK-5710 — v3 pricing rupture (INTENT-057 BLUEPRINT v3 rev5):
+ *   the cart stores NO sats. Each line carries the seller truth
+ *   { currency, amount }; sats resolve LIVE in buildBill(rateEntry).
+ *   - SAT lines resolve with NO rate touch (amount IS sats).
+ *   - fiat lines resolve via fiatToSats (convert.ts floor + dust-block).
+ *   Dead rate + fiat lines → buildBill FAILS loud (fail, never invent);
+ *   SAT-only carts still bill when the rate is gone.
  *
  * Identity rule (5603): a cart line is keyed by product + modifier + note.
  * Same product with a different modifier or note is a SEPARATE line
@@ -19,13 +26,16 @@
 import { fiatToSats } from '../fiat/convert';
 import { satsToFiat, formatFiat } from '../fiat/currency';
 import type { FiatCurrency, RateEntry } from '../fiat/rates';
+import type { PosCurrency } from './catalog';
 
 export interface CartLine {
 	productId: string;
 	name: string;
-	unitPriceSat: number;
+	/** v3 truth — the seller's set price. Sats resolve live (never stored). */
+	currency: PosCurrency;
+	/** Truth amount: integer sats for SAT, major units for fiat. */
+	amount: number;
 	qty: number;
-	lineTotalSat: number;
 	/**
 	 * 5603 identity fields — OPTIONAL so pre-5603 shapes (cart fixtures,
 	 * old persisted rows) still typecheck. Absent/null = '' (no modifier,
@@ -46,9 +56,9 @@ export interface CartLine {
 export interface ResolvedCartLine {
 	productId: string;
 	name: string;
-	unitPriceSat: number;
+	currency: PosCurrency;
+	amount: number;
 	qty: number;
-	lineTotalSat: number;
 	lineId: string;
 	modifier: string;
 	modifierLabel: string;
@@ -62,9 +72,15 @@ export interface Cart {
 export interface BillLine {
 	productId: string;
 	name: string;
-	unitPriceSat: number;
+	/** v3 per-row FREEZE — truth + resolved sats + rate used, immutable after bill. */
+	currency: PosCurrency;
+	amount: number;
+	/** Resolved unit sats (SAT: amount verbatim, no rate; fiat: fiatToSats live). */
+	unitSats: number;
 	qty: number;
 	lineTotalSat: number;
+	/** BTC price used for this row (fiat rows only; SAT rows carry null — never touch rate). */
+	rate: number | null;
 	/** 5603 identity fields — optional for the same 2-shape reason. */
 	lineId?: string;
 	modifier?: string;
@@ -90,7 +106,14 @@ export interface Bill {
 	fiat: BillFiatSnapshot;
 }
 
-export type CartErrorCode = 'BAD_PRODUCT' | 'BAD_QTY' | 'NOT_FOUND' | 'EMPTY_CART';
+export type CartErrorCode =
+	| 'BAD_PRODUCT'
+	| 'BAD_QTY'
+	| 'NOT_FOUND'
+	| 'EMPTY_CART'
+	| 'RATE_UNAVAILABLE'
+	| 'DUST_ZERO_SAT'
+	| 'BAD_PRICE';
 
 export interface CartFailure {
 	ok: false;
@@ -160,9 +183,9 @@ export function resolveLine(l: CartLine): ResolvedCartLine {
 	return {
 		productId: l.productId,
 		name: l.name,
-		unitPriceSat: l.unitPriceSat,
+		currency: l.currency,
+		amount: l.amount,
 		qty: l.qty,
-		lineTotalSat: l.lineTotalSat,
 		lineId:
 			typeof l.lineId === 'string' && l.lineId.trim() !== ''
 				? l.lineId
@@ -176,16 +199,17 @@ export function resolveLine(l: CartLine): ResolvedCartLine {
 function toLine(
 	productId: string,
 	name: string,
-	unitPriceSat: number,
+	currency: PosCurrency,
+	amount: number,
 	qty: number,
 	ident: LineIdentity
 ): CartLine {
 	return {
 		productId,
 		name,
-		unitPriceSat,
+		currency,
+		amount,
 		qty,
-		lineTotalSat: unitPriceSat * qty,
 		lineId: lineIdFor(productId, ident),
 		modifier: ident.modifier,
 		modifierLabel: ident.modifierLabel,
@@ -210,9 +234,57 @@ function findLineIndex(lines: CartLine[], id: string): number {
 	return byProduct.length === 1 ? byProduct[0] : -1;
 }
 
+function isFiatCur(v: unknown): v is FiatCurrency {
+	return (
+		typeof v === 'string' &&
+		['THB', 'USD', 'EUR', 'JPY', 'GBP', 'CNY', 'KRW', 'SGD', 'AUD', 'MYR'].includes(v)
+	);
+}
+
+function validTruth(currency: unknown, amount: unknown): currency is PosCurrency {
+	if (currency === 'SAT') return typeof amount === 'number' && Number.isInteger(amount) && amount > 0;
+	if (!isFiatCur(currency)) return false;
+	return typeof amount === 'number' && Number.isFinite(amount) && amount > 0;
+}
+
+/**
+ * v3 LIVE resolve — one line's truth → sats against a rate entry.
+ * SAT: amount IS sats (rate untouched — works with a dead rate).
+ * Fiat: fiatToSats (convert.ts floor + dust-block); dead rate →
+ * RATE_UNAVAILABLE (fail loud, never invent).
+ */
+export function resolveLineSats(
+	line: Pick<CartLine, 'currency' | 'amount'>,
+	entry: RateEntry
+): { ok: true; unitSats: number; rate: number | null } | { ok: false; code: CartErrorCode; message: string } {
+	if (line.currency === 'SAT') {
+		if (typeof line.amount !== 'number' || !Number.isInteger(line.amount) || line.amount <= 0) {
+			return { ok: false, code: 'BAD_PRICE', message: 'SAT amount must be a positive integer' };
+		}
+		return { ok: true, unitSats: line.amount, rate: null };
+	}
+	if (!isFiatCur(line.currency)) {
+		return { ok: false, code: 'BAD_PRICE', message: 'unknown currency' };
+	}
+	if (entry.price === null) {
+		return { ok: false, code: 'RATE_UNAVAILABLE', message: 'rate unavailable — fiat mode blocked' };
+	}
+	const r = fiatToSats(String(line.amount), line.currency, entry.price);
+	if (!r.ok) {
+		if (r.code === 'RATE_UNAVAILABLE')
+			return { ok: false, code: 'RATE_UNAVAILABLE', message: r.message };
+		if (r.code === 'DUST_ZERO_SAT')
+			return { ok: false, code: 'DUST_ZERO_SAT', message: r.message };
+		return { ok: false, code: 'BAD_PRICE', message: r.message };
+	}
+	return { ok: true, unitSats: r.sats, rate: entry.price };
+}
+
 /**
  * Add qty of a catalog product. Off-sale / unknown products are rejected
  * here so confirm-time never has to second-guess the catalog.
+ * v3: the product's TRUTH { currency, amount } is carried (no sats
+ * stored — resolution happens in buildBill).
  * 5603: `ident` (modifier/modifierLabel/note) selects the line — same
  * product with a different modifier or note APPENDS a new row instead of
  * merging (tap card adds a row; qty only changes on the bill stepper).
@@ -220,7 +292,7 @@ function findLineIndex(lines: CartLine[], id: string): number {
  */
 export function addToCart(
 	cart: Cart,
-	product: { id: string; name: string; priceSat: number; active: boolean },
+	product: { id: string; name: string; currency: PosCurrency; amount: number; active: boolean },
 	qty: number = 1,
 	ident?: LineIdentityInput | null
 ): CartResult<Cart> {
@@ -228,8 +300,8 @@ export function addToCart(
 		return fail('BAD_PRODUCT', 'unknown product');
 	}
 	if (product.active !== true) return fail('BAD_PRODUCT', 'product is off-sale');
-	if (!Number.isInteger(product.priceSat) || product.priceSat <= 0) {
-		return fail('BAD_PRODUCT', 'product price must be a positive integer');
+	if (!validTruth(product.currency, product.amount)) {
+		return fail('BAD_PRODUCT', 'product truth price must be SAT integer or positive fiat amount');
 	}
 	if (!Number.isInteger(qty) || qty <= 0) return fail('BAD_QTY', 'qty must be a positive integer');
 	const identity = normalizeIdentity(ident);
@@ -237,10 +309,10 @@ export function addToCart(
 	const idx = cart.lines.findIndex((l) => resolveLine(l).lineId === key);
 	const lines = cart.lines.slice();
 	if (idx === -1) {
-		lines.push(toLine(product.id, product.name, product.priceSat, qty, identity));
+		lines.push(toLine(product.id, product.name, product.currency, product.amount, qty, identity));
 	} else {
 		const cur = resolveLine(lines[idx]);
-		lines[idx] = toLine(cur.productId, cur.name, cur.unitPriceSat, cur.qty + qty, identity);
+		lines[idx] = toLine(cur.productId, cur.name, cur.currency, cur.amount, cur.qty + qty, identity);
 	}
 	return { ok: true, value: { lines } };
 }
@@ -259,7 +331,7 @@ export function decrementFromCart(cart: Cart, id: string, qty: number = 1): Cart
 	const next = cur.qty - qty;
 	if (next <= 0) lines.splice(idx, 1);
 	else
-		lines[idx] = toLine(cur.productId, cur.name, cur.unitPriceSat, next, {
+		lines[idx] = toLine(cur.productId, cur.name, cur.currency, cur.amount, next, {
 			modifier: cur.modifier,
 			modifierLabel: cur.modifierLabel,
 			note: cur.note
@@ -279,14 +351,35 @@ export function removeLine(cart: Cart, id: string): CartResult<Cart> {
 	return { ok: true, value: { lines: cart.lines.filter((_, i) => i !== idx) } };
 }
 
-/** Integer sats total — plain qty math, no rates involved. */
-export function cartTotalSats(cart: Cart): number {
-	return cart.lines.reduce((sum, l) => sum + l.lineTotalSat, 0);
+/**
+ * v3 LIVE cart total — resolves every line against the entry (SAT lines
+ * need no rate; fiat lines go through fiatToSats). Dead rate + any fiat
+ * line → RATE_UNAVAILABLE (fail loud). Use for live Order totals; the
+ * frozen bill total comes from buildBill.
+ */
+export function cartTotalLive(
+	cart: Cart,
+	entry: RateEntry
+): { ok: true; totalSat: number } | { ok: false; code: CartErrorCode; message: string } {
+	let total = 0;
+	for (const l of cart.lines) {
+		const rl = resolveLine(l);
+		const s = resolveLineSats({ currency: rl.currency, amount: rl.amount }, entry);
+		if (!s.ok) return s;
+		total += s.unitSats * rl.qty;
+	}
+	return { ok: true, totalSat: total };
 }
 
 /**
  * Freeze a cart into a bill with a fiat snapshot.
- * Fiat leg delegates 100% to the fiat stack:
+ * v3: EVERY line resolves live here (single entry for the whole bill —
+ * one rate per bill, snapshot at pay time). SAT lines never touch the
+ * rate; fiat lines fail the whole bill loud when the rate is dead
+ * (SAT-only carts still bill — mixed carts block until the rate returns).
+ * Each BillLine freezes { currency, amount, unitSats, rate } so old bills
+ * never recompute.
+ * Bill-level fiat leg delegates 100% to the fiat stack:
  * satsToFiat + formatFiat (currency.ts), entry comes from rates.ts.
  * Null/invalid price → amount null + "– CUR" text (fiat blocked, never faked).
  */
@@ -295,21 +388,27 @@ export function buildBill(
 	args: { currency: FiatCurrency; entry: RateEntry }
 ): CartResult<Bill> {
 	if (cart.lines.length === 0) return fail('EMPTY_CART', 'cart is empty');
-	const lines: BillLine[] = cart.lines.map((l) => {
-		const r = resolveLine(l);
-		return {
+	const lines: BillLine[] = [];
+	for (const raw of cart.lines) {
+		const r = resolveLine(raw);
+		const s = resolveLineSats({ currency: r.currency, amount: r.amount }, args.entry);
+		if (!s.ok) return s;
+		lines.push({
 			productId: r.productId,
 			name: r.name,
-			unitPriceSat: r.unitPriceSat,
+			currency: r.currency,
+			amount: r.amount,
+			unitSats: s.unitSats,
 			qty: r.qty,
-			lineTotalSat: r.lineTotalSat,
+			lineTotalSat: s.unitSats * r.qty,
+			rate: s.rate,
 			lineId: r.lineId,
 			modifier: r.modifier,
 			modifierLabel: r.modifierLabel,
 			note: r.note
-		};
-	});
-	const totalSat = cartTotalSats(cart);
+		});
+	}
+	const totalSat = lines.reduce((sum, l) => sum + l.lineTotalSat, 0);
 	const price = args.entry.price;
 	const usable = typeof price === 'number' && Number.isFinite(price) && price > 0;
 	const fiat: BillFiatSnapshot = {

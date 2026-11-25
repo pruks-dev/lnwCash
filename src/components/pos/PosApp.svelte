@@ -19,17 +19,21 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { _ } from 'svelte-i18n';
+	import { get } from 'svelte/store';
 	import {
 		emptyCatalog,
 		normalizeCatalogDoc,
 		addProduct,
+		updateProduct,
 		removeProduct,
 		setProductActive,
+		resolveTruthPair,
 		listActive,
 		type PosCatalogDoc,
-		type PosProduct
+		type PosProduct,
+		type PosCurrency
 	} from '$lib/pos/catalog';
-	import { emptyCart, addToCart, decrementFromCart, cartTotalSats, buildBill, type Cart, type Bill } from '$lib/pos/cart';
+	import { emptyCart, addToCart, decrementFromCart, cartTotalLive, buildBill, type Cart, type Bill } from '$lib/pos/cart';
 	import {
 		getPosCatalog,
 		setPosCatalog,
@@ -37,7 +41,6 @@
 		setPosSales
 	} from '$lib/storage/local';
 	import { recordSale } from '$lib/pos/record-sale';
-	import { getProductImage, deleteProductImage } from '$lib/pos/image-store';
 	import {
 		summarizeDay,
 		deviceDayKey,
@@ -52,7 +55,7 @@
 	import { fiatRowText, catalogPriceText } from '$lib/pos-ui';
 
 	import PosCatalog from './PosCatalog.svelte';
-	import PosManage from './PosManage.svelte';
+	import PosManage, { type ManagePriceMode, type ManageAddDetail, type ManageUpdatePatch } from './PosManage.svelte';
 	import PosBill from './PosBill.svelte';
 	import PosModifierPopup from './PosModifierPopup.svelte';
 	import PosCheckoutLn, { type LnState } from './PosCheckoutLn.svelte';
@@ -110,17 +113,17 @@
 	let newName: string = $state('');
 	let newPrice: string = $state('');
 	let manageError: string = $state('');
-	let photoError: string = $state('');
-	// 5603: modifier+note popup target (null = closed) + photo URL cache
-	// for the Manage picker thumbs (catalog cards self-load via
-	// ProductPhoto). photoTick bumps after every picker save so thumbs
-	// re-read the pos-images store.
+	// 5603: modifier+note popup target (null = closed).
 	let popupFor: PosProduct | null = $state(null);
-	let imageUrls: Record<string, string> = $state({});
-	// rev48 addcard_fiat_r48 — price LIGHT: SAT/fiat unit switch; fiat input
-	// converts to SAT via fiatToSats (convert.ts, read-only) at save time and
-	// stores priceSat only. No currency persisted (heavy deferred to backlog).
-	let priceMode: 'sat' | 'fiat' = $state('sat');
+	// TASK-5702 truth-currency add form (INTENT-057 BLUEPRINT v3 Manage B):
+	// priceMode SAT/fiat + rateCurrency (the wallet setting) select the stored
+	// {currency,amount} truth (resolveTruthPair validates, no stored sats).
+	// R8: addFiat dropped — fiat is always the setting, never dead THB.
+	// pendingAddId is the pre-generated id for the next added product.
+	let priceMode: ManagePriceMode = $state('sat');
+	const nextProductId = () =>
+		`p_${Date.now().toString(36)}_${Math.floor(Math.random() * 1e6).toString(36)}`;
+	let pendingAddId: string = $state(nextProductId());
 
 	let pollTimer: ReturnType<typeof setTimeout> | null = $state(null);
 	let pollCount: number = 0;
@@ -197,7 +200,36 @@
 	// ─── derived ───
 	const products = $derived(listActive(catalog));
 	const cartCount = $derived(cart.lines.reduce((n, l) => n + l.qty, 0));
-	const cartTotal = $derived(cartTotalSats(cart));
+	// TASK-5710 v3 LIVE total (INTENT-057 BLUEPRINT v3 rev5): cart stores
+	// truth per line, sats resolve live per row (SAT needs no rate; fiat
+	// needs a live rate — dead rate + fiat lines → 0 here, buildBill still
+	// fails loud at pay time). Bill/checkout formula ownership: TASK-5711.
+	const liveEntry = () => ({
+		price: ratePrice,
+		asOf: Date.now(),
+		where: 'cache' as const,
+		stale: false,
+		expired: false
+	});
+	const cartTotal = $derived.by(() => {
+		const r = cartTotalLive(cart, liveEntry());
+		return r.ok ? r.totalSat : 0;
+	});
+	/**
+	 * TASK-5711 v3 LIVE bill preview (INTENT-057 BLUEPRINT v3 rev5): the
+	 * whole cart resolves against ONE rate entry (buildBill) — every row
+	 * shows truth + live sats from the same rate (fiatToSats only).
+	 * Dead rate + fiat lines → RATE_UNAVAILABLE (banner + block on the
+	 * bill screen; SAT-only carts still resolve rateless).
+	 */
+	const billPreview = $derived.by(() =>
+		buildBill(cart, {
+			currency: rateCurrency,
+			entry: liveEntry()
+		})
+	);
+	const billRows = $derived(billPreview.ok ? billPreview.value.lines : []);
+	const billBlocked = $derived(!billPreview.ok && billPreview.code === 'RATE_UNAVAILABLE');
 	const fiatFor = (sats: number) => fiatRowText(sats, rateCurrency, { price: ratePrice } as never);
 	/**
 	 * 5603 approved card price (mockup 1/3):
@@ -206,7 +238,18 @@
 	 * - otherwise → SAT first: `200 SAT (≈ 63.00 THB)`.
 	 * All converted legs reuse fiatRowText (fiat stack only, no rate math).
 	 */
-	const priceFor = (p: PosProduct) => catalogPriceText(p, rateCurrency, ratePrice);
+	const priceFor = (p: Pick<PosProduct, 'currency' | 'amount'>) =>
+		catalogPriceText(p, rateCurrency, ratePrice);
+	/**
+	 * TASK-5702 popup display sats (shared migration — 5711 owns formulas).
+	 * SAT truth → amount verbatim (no rate). Fiat truth → live resolve via
+	 * fiatToSats (floor + dust intact); dead rate → null ('– SAT').
+	 */
+	function popupLiveSats(p: PosProduct): number | null {
+		if (p.currency === 'SAT') return p.amount;
+		const r = fiatToSats(String(p.amount), p.currency, ratePrice);
+		return r.ok ? r.sats : null;
+	}
 	// rev43 order_fix_r43: LEFT per-row fiat = plain formatFiat (NO ≈);
 	// RIGHT per-row fiat = fiatRowText (WITH ≈). Both live-rate only.
 	const fiatLeftFor = (sats: number) => formatFiat(sats, ratePrice, rateCurrency);
@@ -233,13 +276,14 @@
 		if (doc.items.length > 0) return doc;
 		const now = Date.now();
 		let d = emptyCatalog(now);
-		const seeds: Array<[string, string, number]> = [
-			['thai-tea', 'Thai Tea', 2100],
-			['coffee', 'Coffee', 1800],
-			['cake', 'Cake', 3500]
+		// TASK-5702 seeds are SAT truths (v3 — no stored sats anywhere).
+		const seeds: Array<[string, string, PosCurrency, number]> = [
+			['thai-tea', 'Thai Tea', 'SAT', 2100],
+			['coffee', 'Coffee', 'SAT', 1800],
+			['cake', 'Cake', 'SAT', 3500]
 		];
-		for (const [id, name, priceSat] of seeds) {
-			const r = addProduct(d, { id, name, priceSat, kind: 'drink', fiatPriced: true, active: true }, now);
+		for (const [id, name, currency, amount] of seeds) {
+			const r = addProduct(d, { id, name, currency, amount, kind: 'drink', fiatPriced: true, active: true }, now);
 			if (r.ok) d = r.value;
 		}
 		setPosCatalog(d);
@@ -252,7 +296,6 @@
 		} catch {
 			catalog = seedIfEmpty(emptyCatalog());
 		}
-		void refreshImageUrls();
 	}
 
 	function refreshSales() {
@@ -299,10 +342,15 @@
 		if (r.ok) cart = r.value;
 	}
 
-	// 5603: tapping a catalog card opens the modifier+note popup (no
-	// stepper on cards). Popup Add appends a SEPARATE row per identity.
+	// R10 rev23 note-only: tapping a catalog card ALWAYS opens the
+	// modifier+note popup. With presets -> chips + note; without presets
+	// (empty/missing) -> note-only, no chips (rev22 skip superseded).
+	// Popup Add appends a SEPARATE row per identity (modifier '' note ''
+	// for the bare note-only Add -- merges like the stepper).
 	function handleSelect(id: string) {
-		popupFor = catalog.items.find((x) => x.id === id) ?? null;
+		const p = catalog.items.find((x) => x.id === id) ?? null;
+		if (!p) return;
+		popupFor = p;
 	}
 
 	function handlePopupAdd(detail: { modifier: string; modifierLabel: string; note: string }) {
@@ -326,58 +374,48 @@
 		return r.value;
 	}
 
-	function handleAddProduct() {
+	function handleAddProduct(detail: ManageAddDetail): string | null {
+		// TASK-5702 truth entry (INTENT-057 BLUEPRINT v3 Manage B): the
+		// selected side (SAT vs rateCurrency setting) + typed amount validate
+		// through resolveTruthPair (v3 API — no stored sats, no convert-at-entry).
 		manageError = '';
 		if (!newName.trim()) {
-			manageError = 'name required';
-			return;
+			manageError = get(_)('pos.manage.error_name');
+			return manageError;
 		}
-		// rev48 price light + 5603 HEAVY: fiat mode converts live → SAT via
-		// fiatToSats (convert.ts floor + dust-block) AND stores the native
-		// { currency, amount } pair alongside priceSat (schema v2) so cards
-		// render the native-first price. SAT mode stores SAT-only (null pair).
-		let price: number;
-		let nativeCurrency: FiatCurrency | null = null;
-		let nativeAmount: number | null = null;
-		if (priceMode === 'fiat') {
-			const q = fiatToSats(newPrice.trim(), rateCurrency, ratePrice);
-			if (!q.ok) {
-				manageError = q.message;
-				return;
-			}
-			price = q.sats;
-			nativeCurrency = q.currency;
-			nativeAmount = q.major;
-		} else {
-			const n = Number(newPrice);
-			if (!Number.isInteger(n) || n <= 0) {
-				manageError = 'price must be a positive integer';
-				return;
-			}
-			price = n;
+		const currency: PosCurrency = priceMode === 'sat' ? 'SAT' : rateCurrency;
+		const amount = Number(newPrice.trim());
+		const q = resolveTruthPair(currency, amount);
+		if (!q.ok) {
+			// R12 (5): ทางการ both sides via the 5709 key (no domain
+			// English, no {ccy} placeholder anymore).
+			manageError = get(_)('pos.manage.error_price');
+			return manageError;
 		}
-		const id = `p_${Date.now().toString(36)}`;
 		const r = addProduct(
 			catalog,
 			{
-				id,
+				id: pendingAddId,
 				name: newName.trim(),
-				priceSat: price,
-				currency: nativeCurrency,
-				amount: nativeAmount,
-				kind: '',
-				fiatPriced: true,
-				active: true
-			}
+				currency: q.currency,
+				amount: q.amount,
+				kind: detail.kind,
+				fiatPriced: detail.fiatPriced,
+				active: detail.active,
+				presets: detail.presets
+			},
+			Date.now()
 		);
 		if (!r.ok) {
 			manageError = r.message;
-			return;
+			return manageError;
 		}
 		catalog = r.value;
 		setPosCatalog(catalog);
 		newName = '';
 		newPrice = '';
+		pendingAddId = nextProductId();
+		return null;
 	}
 
 	function handleRemoveProduct(id: string) {
@@ -385,56 +423,7 @@
 		if (r.ok) {
 			catalog = r.value;
 			setPosCatalog(catalog);
-			// 5603: drop the product photo too (missing id = no-op inside).
-			void deleteProductImage(id).then(() => {
-				if (imageUrls[id]) {
-					try {
-						URL.revokeObjectURL(imageUrls[id]);
-					} catch {
-						// ignore revoke errors
-					}
-					const next = { ...imageUrls };
-					delete next[id];
-					imageUrls = next;
-				}
-			});
 		}
-	}
-
-	// 5603: Manage picker thumbs — object URLs for products that have a
-	// pos-images photo (absent = picker shows its own solar fallback).
-	// Runs on catalog load + after every picker save (photoTick).
-	async function refreshImageUrls(): Promise<void> {
-		const next: Record<string, string> = {};
-		for (const p of catalog.items) {
-			if (imageUrls[p.id]) {
-				next[p.id] = imageUrls[p.id];
-				continue;
-			}
-			try {
-				const blob = await getProductImage(p.id);
-				if (blob) next[p.id] = URL.createObjectURL(blob);
-			} catch {
-				// no photo — picker fallback covers it
-			}
-		}
-		imageUrls = next;
-	}
-
-	function handlePhotoSaved(productId: string, url: string) {
-		if (imageUrls[productId]) {
-			try {
-				URL.revokeObjectURL(imageUrls[productId]);
-			} catch {
-				// ignore revoke errors
-			}
-		}
-		imageUrls = { ...imageUrls, [productId]: url };
-		photoError = '';
-	}
-
-	function handlePhotoError(message: string) {
-		photoError = message;
 	}
 
 	function handleToggleActive(id: string) {
@@ -445,6 +434,40 @@
 			catalog = r.value;
 			setPosCatalog(catalog);
 		}
+	}
+
+	/**
+	 * TASK-5702 detail-sheet save (INTENT-057 BLUEPRINT v3 Manage B).
+	 * R12 (7): currency is switchable (SAT|{setting} + retyped price) —
+	 * the patch may carry currency and/or amount; the pair validates
+	 * jointly through resolveTruthPair (domain accepts it — no BLOCKER).
+	 * Returns null on success, error text on failure (the sheet shows it
+	 * and stays open).
+	 */
+	function handleUpdateProduct(id: string, patch: ManageUpdatePatch): string | null {
+		const cur = catalog.items.find((x) => x.id === id);
+		if (!cur) return 'product not found';
+		const next: { name?: string; currency?: PosCurrency; amount?: number; kind?: string; fiatPriced?: boolean; presets?: string[] } = {};
+		if (patch.name !== undefined) {
+			if (!patch.name.trim()) return get(_)('pos.manage.error_name');
+			next.name = patch.name.trim();
+		}
+		if (patch.currency !== undefined || patch.amount !== undefined) {
+			const q = resolveTruthPair(patch.currency ?? cur.currency, patch.amount ?? cur.amount);
+			// R12 (5): ทางการ — invalid retyped price uses the 5709 key,
+			// never the domain English message.
+			if (!q.ok) return get(_)('pos.manage.error_price');
+			next.currency = q.currency;
+			next.amount = q.amount;
+		}
+		if (patch.kind !== undefined) next.kind = patch.kind;
+		if (patch.fiatPriced !== undefined) next.fiatPriced = patch.fiatPriced;
+		if (patch.presets !== undefined) next.presets = patch.presets;
+		const r = updateProduct(catalog, id, next);
+		if (!r.ok) return r.message;
+		catalog = r.value;
+		setPosCatalog(catalog);
+		return null;
 	}
 
 	// ─── LN flow ───
@@ -666,11 +689,31 @@
 		view = 'catalog';
 	}
 
+	/**
+	 * TASK-5702-R6 strip (INTENT-057 BLUEPRINT v3 rev18): wipe the legacy
+	 * pos-images bucket on launch. UI keeps ONLY the clear/close path of
+	 * image-store (save/downscale stay in the store for its own tests, but
+	 * nothing calls them anymore): clearProductImages empties the bucket,
+	 * resetImageDB closes the lingering connection that BLOCKED
+	 * deleteDatabase (Commander ORDER: "ลบไม่ได้เพราะบล็อก"). Best-effort —
+	 * kind icons render regardless.
+	 */
+	async function wipeLegacyPhotos(): Promise<void> {
+		try {
+			const { clearProductImages, resetImageDB } = await import('$lib/pos/image-store');
+			await clearProductImages();
+			resetImageDB();
+		} catch {
+			// no photos to wipe (or store unavailable) — icons cover it
+		}
+	}
+
 	onMount(() => {
 		if (initialView !== 'catalog') view = initialView;
 		refreshCatalog();
 		refreshSales();
 		void refreshRate();
+		void wipeLegacyPhotos();
 	});
 
 	onDestroy(() => stopPolling());
@@ -696,10 +739,18 @@
 			}}
 		/>
 		{#if popupFor}
+			<!-- TASK-5702 shared-migration note: popupFor is a v3 truth
+			     product now — resolve display sats live (SAT needs no rate;
+			     fiat + dead rate → null → '– SAT', never fabricated).
+			     R10 rev23 note-only: popup renders for EVERY tap --
+			     presets yield chips + note, empty presets yield note-only
+			     (rev22 skip + guard superseded).
+			     Popup/pending-line formula ownership: TASK-5711. -->
 			<PosModifierPopup
 				productName={popupFor.name}
-				priceSat={popupFor.priceSat}
+				priceSat={popupLiveSats(popupFor)}
 				priceText={priceFor(popupFor)}
+				presets={popupFor.presets}
 				onAdd={handlePopupAdd}
 				onCancel={handlePopupCancel}
 			/>
@@ -707,13 +758,14 @@
 	{:else if view === 'manage'}
 		<PosManage
 			items={catalog.items}
-			{fiatFor}
+			{priceFor}
 			newName={newName}
 			newPrice={newPrice}
 			manageError={manageError}
 			onNewName={(v) => (newName = v)}
 			onNewPrice={(v) => (newPrice = v)}
 			onAddProduct={handleAddProduct}
+			onUpdateProduct={handleUpdateProduct}
 			onRemoveProduct={handleRemoveProduct}
 			onToggleActive={handleToggleActive}
 			onBack={() => (view = 'catalog')}
@@ -725,18 +777,15 @@
 			}}
 			rateCurrency={rateCurrency}
 			ratePrice={ratePrice}
-			{imageUrls}
-			{photoError}
-			onPhotoSaved={handlePhotoSaved}
-			onPhotoError={handlePhotoError}
 		/>
 	{:else if view === 'bill'}
 		<PosBill
-			lines={cart.lines}
+			lines={billRows}
 			totalSat={cartTotal}
 			fiatText={billFiat}
 			fiatLeftFor={fiatLeftFor}
 			fiatRightFor={fiatRightFor}
+			rateUnavailable={billBlocked}
 			onInc={handleInc}
 			onDec={handleDec}
 			onChargeLn={() => void openLn()}
@@ -746,6 +795,7 @@
 	{:else if view === 'ln'}
 		<PosCheckoutLn
 			totalSat={bill?.totalSat ?? cartTotal}
+			fiatText={bill?.fiat.text ?? ''}
 			invoice={lnQuote?.invoice ?? ''}
 			state={lnState}
 			error={lnError}
@@ -757,6 +807,7 @@
 	{:else if view === 'cashu'}
 		<PosCheckoutCashu
 			totalSat={bill?.totalSat ?? cartTotal}
+			fiatText={bill?.fiat.text ?? ''}
 			receivedSat={cashuReceived}
 			state={cashuState}
 			pasted={cashuPasted}

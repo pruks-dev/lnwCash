@@ -14,17 +14,30 @@
   - legacy lines without identity fields resolve via resolveLine() (empty
     note default) so old persisted bills still render.
   Prior rev notes (R5 truth, rev29/30/43/44/46 locks) preserved in git history.
+  TASK-5711 v3 bill rows (INTENT-057 BLUEPRINT v3): props.lines are now
+  BillLine[] — frozen per-row snapshots from buildBill (single entry for
+  the whole bill, resolved in PosApp). Subtitle shows the seller truth +
+  live sats: SAT `9 SAT (…)` (truth == sats, no rate) / fiat
+  `THB100.00 (3,333 SAT) (…)` (truth + live fiatToSats leg). RATE_UNAVAILABLE
+  (dead rate + fiat lines) renders bill-rate-banner + blocks BOTH charge
+  buttons — never invented; SAT-only carts bill rateless, never banner.
 -->
 <script lang="ts">
 	import { _ } from 'svelte-i18n';
 	import ArrowLeft from '$lib/components/icons/ArrowLeft.svelte';
 	import Heading from '$lib/components/ui/Heading.svelte';
-	import { countItemsText, subscribePosLocale } from '$lib/pos-ui';
-	import type { CartLine } from '$lib/pos/cart';
-	import { resolveLine, type ResolvedCartLine } from '$lib/pos/cart';
+	import { countItemsText, subscribePosLocale, nativePriceText } from '$lib/pos-ui';
+	import type { BillLine } from '$lib/pos/cart';
 
 	interface Props {
-		lines: CartLine[];
+		/**
+		 * TASK-5711 v3 LIVE bill rows (INTENT-057 BLUEPRINT v3):
+		 * frozen per-row snapshots from buildBill — PosApp resolves the
+		 * whole cart against a SINGLE rate entry, so every row shows the
+		 * seller truth { currency, amount } + live unitSats/lineTotalSat
+		 * from the same rate (fiatToSats only, never recomputed here).
+		 */
+		lines: BillLine[];
 		totalSat: number;
 		fiatText: string;
 		onInc: (id: string) => void;
@@ -36,6 +49,13 @@
 		fiatLeftFor?: (sats: number) => string;
 		/** rev43: RIGHT per-row fiat (WITH ≈) — live-rate text from PosApp. */
 		fiatRightFor?: (sats: number) => string;
+		/**
+		 * TASK-5711 RATE_UNAVAILABLE (dead rate + fiat lines → buildBill
+		 * failed loud): banner shows, BOTH charge buttons block (no total
+		 * to charge — never invented). SAT-only carts never set this
+		 * (they bill without touching the rate).
+		 */
+		rateUnavailable?: boolean;
 	}
 
 	let {
@@ -48,14 +68,23 @@
 		onChargeCashu,
 		onBack,
 		fiatLeftFor,
-		fiatRightFor
+		fiatRightFor,
+		rateUnavailable = false
 	}: Props = $props();
 
-	// 5603: render through the 2-shape resolver — legacy productId-only
-	// lines read as empty-identity rows (name plain, no note div).
-	const rows: ResolvedCartLine[] = $derived(lines.map(resolveLine));
+	// v3: rows arrive pre-resolved (buildBill, one entry per bill).
+	// Default-identity rows carry an empty lineId → fall back to the
+	// productId so legacy single-line callers keep working.
+	const rowKey = (l: BillLine): string =>
+		typeof l.lineId === 'string' && l.lineId.trim() !== '' ? l.lineId : l.productId;
+	const rows = $derived(lines);
 	const count = $derived(rows.reduce((n, l) => n + l.qty, 0));
 	const empty = $derived(lines.length === 0);
+	/** Seller truth text (rate-independent): SAT = live sats verbatim. */
+	function truthText(l: BillLine): string {
+		if (l.currency === 'SAT') return `${l.unitSats.toLocaleString('en-US')} SAT`;
+		return nativePriceText(l.amount, l.currency);
+	}
 	// TASK-5450 rev41: total count binds to the live locale (reactive bridge).
 	let posLoc = $state('en');
 	$effect(() => subscribePosLocale((v) => { posLoc = v; }));
@@ -71,37 +100,45 @@
 		<span class="header-spacer"></span>
 	</div>
 
-	{#if empty}
+	{#if empty && !rateUnavailable}
 		<p class="note" data-testid="bill-empty">{$_('pos.bill.empty')}</p>
 	{:else}
+		{#if rateUnavailable}
+			<!-- TASK-5711: dead rate + fiat lines — fiat blocked, never
+			     invented (SAT-only carts never reach this branch). -->
+			<p class="rate-banner" data-testid="bill-rate-banner">{$_('pos.bill.rate_unavailable')}</p>
+		{/if}
 		<div class="pos-scroll" data-testid="bill-lines-scroll">
 		<div class="card" style="padding:0" data-testid="bill-lines">
-			{#each rows as l (l.lineId)}
-				<div class="list-item" data-testid="bill-line" data-line-for={l.lineId}>
+			{#each rows as l (rowKey(l))}
+				<div class="list-item" data-testid="bill-line" data-line-for={rowKey(l)}>
 					<div style="flex:1;min-width:0">
 						<!-- 5603: modifier label = name suffix (note present →
 						     plain name + note sub-row; legacy = plain name). -->
-						<div class="list-item-title" data-testid="bill-line-name">{l.name}{l.note ? '' : l.modifierLabel ? ` · ${l.modifierLabel}` : ''}</div>
-						<!-- rev46: sub = unit SAT + left fiat in PARENS only (bullet removed). -->
-						<div class="list-item-subtitle">{l.unitPriceSat.toLocaleString('en-US')} SAT {#if fiatLeftFor}<span data-testid="bill-line-fiat-left" data-fiat-left-for={l.lineId}>({fiatLeftFor(l.unitPriceSat)})</span>{/if}</div>
-						{#if l.note}
-							<div class="line-note" data-testid="bill-line-note">{l.modifierLabel ? `${l.modifierLabel} · ` : ''}{l.note}</div>
+						<div class="list-item-title" data-testid="bill-line-name">{l.name}{(l.note ?? '') ? '' : (l.modifierLabel ?? '') ? ` · ${l.modifierLabel}` : ''}</div>
+						<!-- rev46: sub = truth price + live unit SAT in PARENS only (bullet removed).
+						     SAT truth shows sats verbatim (truth == sats, no rate);
+						     fiat truth prefixes the seller set price, sats resolve
+						     live from the single bill entry (buildBill). -->
+						<div class="list-item-subtitle">{#if l.currency === 'SAT'}{l.unitSats.toLocaleString('en-US')} SAT{:else}{truthText(l)} ({l.unitSats.toLocaleString('en-US')} SAT){/if} {#if fiatLeftFor}<span data-testid="bill-line-fiat-left" data-fiat-left-for={rowKey(l)}>({fiatLeftFor(l.unitSats)})</span>{/if}</div>
+						{#if (l.note ?? '')}
+							<div class="line-note" data-testid="bill-line-note">{(l.modifierLabel ?? '') ? `${l.modifierLabel} · ` : ''}{l.note}</div>
 						{/if}
 					</div>
 					<!-- rev45: stepper MIDDLE — LOCKED slim fixed width so the
 					     middle x-edge is identical every row.
 					     5603: keyed by lineId (per-row stepper). -->
-					<div class="stepper" data-testid="bill-stepper" data-stepper-for={l.lineId}>
-						<button type="button" data-testid="bill-dec" data-dec-for={l.lineId} onclick={() => onDec(l.lineId)} aria-label="decrease">−</button>
-						<span class="list-item-title stepper-qty" data-testid="bill-qty" data-qty-for={l.lineId}>{l.qty}</span>
-						<button type="button" data-testid="bill-inc" data-inc-for={l.lineId} onclick={() => onInc(l.lineId)} aria-label="increase">+</button>
+					<div class="stepper" data-testid="bill-stepper" data-stepper-for={rowKey(l)}>
+						<button type="button" data-testid="bill-dec" data-dec-for={rowKey(l)} onclick={() => onDec(rowKey(l))} aria-label="decrease">−</button>
+						<span class="list-item-title stepper-qty" data-testid="bill-qty" data-qty-for={rowKey(l)}>{l.qty}</span>
+						<button type="button" data-testid="bill-inc" data-inc-for={rowKey(l)} onclick={() => onInc(rowKey(l))} aria-label="increase">+</button>
 					</div>
 					<!-- rev45: total RIGHTMOST only (never middle) — LOCKED slim
 					     fixed width + right aligned + tabular so every row's
 					     right x-edge is identical for 1-digit … 7-digit totals. -->
-					<div class="line-total-col" data-testid="bill-line-total-col" data-total-col-for={l.lineId}>
+					<div class="line-total-col" data-testid="bill-line-total-col" data-total-col-for={rowKey(l)}>
 						<div class="list-item-title" data-testid="bill-line-total">{l.lineTotalSat.toLocaleString('en-US')}</div>
-						{#if fiatRightFor}<div class="line-total-fiat" data-testid="bill-line-fiat-right" data-fiat-right-for={l.lineId}>{fiatRightFor(l.lineTotalSat)}</div>{/if}
+						{#if fiatRightFor}<div class="line-total-fiat" data-testid="bill-line-fiat-right" data-fiat-right-for={rowKey(l)}>{fiatRightFor(l.lineTotalSat)}</div>{/if}
 					</div>
 				</div>
 			{/each}
@@ -120,13 +157,14 @@
 		</div>
 	</div>
 
-	<!-- R2 bare pair — direct to checkout, no Confirm freeze -->
+	<!-- R2 bare pair — direct to checkout, no Confirm freeze.
+	     TASK-5711: RATE_UNAVAILABLE blocks BOTH (no total to charge). -->
 	<button
 		type="button"
 		class="btn btn-primary"
 		data-testid="bill-charge-ln"
-		disabled={empty}
-		class:btn-disabled={empty}
+		disabled={empty || rateUnavailable}
+		class:btn-disabled={empty || rateUnavailable}
 		onclick={onChargeLn}
 	>
 		{$_('pos.bill.pay_ln')}
@@ -135,8 +173,8 @@
 		type="button"
 		class="btn btn-secondary"
 		data-testid="bill-charge-cashu"
-		disabled={empty}
-		class:btn-disabled={empty}
+		disabled={empty || rateUnavailable}
+		class:btn-disabled={empty || rateUnavailable}
 		onclick={onChargeCashu}
 	>
 		{$_('pos.bill.pay_cashu')}
@@ -398,6 +436,18 @@
 	.note {
 		font-size: var(--font-size-xs);
 		color: var(--color-text-secondary);
+		text-align: center;
+	}
+	/* TASK-5711 RATE_UNAVAILABLE: dead rate + fiat lines — fiat blocked,
+	   never invented. SAT-only carts never see this (they bill rateless). */
+	.rate-banner {
+		font-size: var(--font-size-sm);
+		font-weight: var(--font-weight-semibold);
+		color: var(--color-text);
+		background: rgba(239, 83, 80, 0.16);
+		border: 1px solid rgba(239, 83, 80, 0.5);
+		border-radius: var(--radius-md);
+		padding: var(--space-sm) var(--space-md);
 		text-align: center;
 	}
 </style>

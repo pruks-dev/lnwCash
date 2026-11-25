@@ -1,5 +1,12 @@
 /**
  * TASK-5401 — POS sales-log domain (INTENT-054 BLUEPRINT v3)
+ * TASK-5710 — v3 bill snapshot freeze (INTENT-057 BLUEPRINT v3 rev5):
+ *   each SaleRecord line freezes the v3 per-row snapshot
+ *   { currency, amount, unitSats, rate } — old bills never recompute.
+ *   SAT rows carry rate null (SAT path never touches rate).
+ *   Legacy rows (pre-v3 stored-sats unitPriceSat) still read: they map to
+ *   { SAT, amount = old sats, unitSats = old sats, rate = null } so old
+ *   totals stay byte-identical — see normalizeSaleLine MIGRATE path.
  *
  * Pure domain: NO svelte imports, NO localStorage, NO tokenStore/proofsDb.
  * Payment linkage is by REFERENCE ONLY — a quote-or-token id string.
@@ -96,6 +103,13 @@ function isMethod(v: unknown): v is PosPayMethod {
 	return v === 'lightning' || v === 'cashu';
 }
 
+function isFiatCur(v: unknown): v is FiatCurrency {
+	return (
+		typeof v === 'string' &&
+		['THB', 'USD', 'EUR', 'JPY', 'GBP', 'CNY', 'KRW', 'SGD', 'AUD', 'MYR'].includes(v)
+	);
+}
+
 /**
  * 5603 — normalize one persisted bill line (2-shape reader).
  * Pre-5603 rows carry no modifier/note fields at all → they normalize to
@@ -103,40 +117,108 @@ function isMethod(v: unknown): v is PosPayMethod {
  * still add up. Rows missing the sell-critical fields (product/name/
  * price/qty) are dropped (null) — a sale left with zero valid lines is
  * dropped by normalizeSales below.
+ *
+ * v3 — rows carry the frozen per-row snapshot
+ * { currency, amount, unitSats, rate }. SAT rows hold rate null.
+ * ---- MIGRATE (pre-v3 stored-sats rows) ----
+ * Rows with the retired stored-sats field map to a SAT freeze
+ * ({ SAT, amount = old sats, unitSats = old sats, rate = null }) so old
+ * totals stay byte-identical. A v2-style row (stored sats + fiat pair)
+ * keeps its pair with unitSats = old sats and its carried rate (if any).
+ * This MIGRATE-marked block is the only place the retired field is read.
  */
 export function normalizeSaleLine(raw: unknown): BillLine | null {
 	if (typeof raw !== 'object' || raw === null) return null;
 	const r = raw as Record<string, unknown>;
 	if (typeof r.productId !== 'string' || r.productId.trim() === '') return null;
 	if (typeof r.name !== 'string' || r.name.trim() === '') return null;
-	if (!Number.isInteger(r.unitPriceSat) || (r.unitPriceSat as number) <= 0) return null;
 	if (!Number.isInteger(r.qty) || (r.qty as number) <= 0) return null;
 	const productId = r.productId as string;
-	const unitPriceSat = r.unitPriceSat as number;
 	const qty = r.qty as number;
 	const ident = normalizeIdentity({
 		modifier: r.modifier,
 		modifierLabel: r.modifierLabel,
 		note: r.note
 	});
+	const lineId =
+		typeof r.lineId === 'string' && (r.lineId as string).trim() !== ''
+			? (r.lineId as string)
+			: lineIdFor(productId, ident);
+
+	// v3 frozen snapshot row (current shape).
+	if (
+		(r.currency === 'SAT' || isFiatCur(r.currency)) &&
+		typeof r.amount === 'number' &&
+		Number.isFinite(r.amount) &&
+		(r.amount as number) > 0 &&
+		Number.isInteger(r.unitSats) &&
+		(r.unitSats as number) > 0
+	) {
+		const currency = r.currency as BillLine['currency'];
+		const amount = r.amount as number;
+		const unitSats = r.unitSats as number;
+		const rate =
+			typeof r.rate === 'number' && Number.isFinite(r.rate) && (r.rate as number) > 0
+				? (r.rate as number)
+				: null;
+		if (currency === 'SAT' && rate !== null) return null; // SAT path never touches rate
+		const lineTotalSat =
+			Number.isInteger(r.lineTotalSat) && (r.lineTotalSat as number) > 0
+				? (r.lineTotalSat as number)
+				: unitSats * qty;
+		return {
+			productId,
+			name: r.name as string,
+			currency,
+			amount,
+			unitSats,
+			qty,
+			lineTotalSat,
+			rate,
+			lineId,
+			modifier: ident.modifier,
+			modifierLabel: ident.modifierLabel,
+			note: ident.note
+		};
+	}
+
+	// MIGRATE-BEGIN (pre-v3 stored-sats compat — the only place the
+	// retired stored-sats field may be read; converted to a SAT freeze).
+	const legacySats = r.unitPriceSat;
+	if (typeof legacySats !== 'number' || !Number.isInteger(legacySats) || legacySats <= 0)
+		return null;
+	// v2-style rows also carried a fiat truth pair — keep the pair with
+	// the old sats as the frozen value (rate carried when present).
+	let currency: BillLine['currency'] = 'SAT';
+	let amount: number = legacySats;
+	let rate: number | null = null;
+	if (isFiatCur(r.currency) && typeof r.amount === 'number' && Number.isFinite(r.amount) && r.amount > 0) {
+		currency = r.currency as BillLine['currency'];
+		amount = r.amount as number;
+		rate =
+			typeof r.rate === 'number' && Number.isFinite(r.rate) && (r.rate as number) > 0
+				? (r.rate as number)
+				: null;
+	}
 	const lineTotalSat =
 		Number.isInteger(r.lineTotalSat) && (r.lineTotalSat as number) > 0
 			? (r.lineTotalSat as number)
-			: unitPriceSat * qty;
+			: legacySats * qty;
 	return {
 		productId,
 		name: r.name as string,
-		unitPriceSat,
+		currency,
+		amount,
+		unitSats: legacySats,
 		qty,
 		lineTotalSat,
-		lineId:
-			typeof r.lineId === 'string' && (r.lineId as string).trim() !== ''
-				? (r.lineId as string)
-				: lineIdFor(productId, ident),
+		rate,
+		lineId,
 		modifier: ident.modifier,
 		modifierLabel: ident.modifierLabel,
 		note: ident.note
 	};
+	// MIGRATE-END
 }
 
 /**

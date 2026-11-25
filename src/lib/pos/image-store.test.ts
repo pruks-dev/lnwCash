@@ -82,12 +82,12 @@ describe('TASK-5602 isolation — separate DB from wallet', () => {
 	});
 });
 
-describe('computeTargetSize (512px long-edge cap)', () => {
-	it('caps long edge at 512 preserving aspect', () => {
-		expect(POS_IMAGE_MAX_EDGE).toBe(512);
-		expect(computeTargetSize(1024, 768)).toEqual({ width: 512, height: 384 });
-		expect(computeTargetSize(768, 1024)).toEqual({ width: 384, height: 512 });
-		expect(computeTargetSize(512, 512)).toEqual({ width: 512, height: 512 });
+describe('computeTargetSize (256px long-edge cap — R5 supersedes 512)', () => {
+	it('caps long edge at 256 preserving aspect', () => {
+		expect(POS_IMAGE_MAX_EDGE).toBe(256);
+		expect(computeTargetSize(1024, 768)).toEqual({ width: 256, height: 192 });
+		expect(computeTargetSize(768, 1024)).toEqual({ width: 192, height: 256 });
+		expect(computeTargetSize(256, 256)).toEqual({ width: 256, height: 256 });
 	});
 	it('never upscales smaller images', () => {
 		expect(computeTargetSize(200, 100)).toEqual({ width: 200, height: 100 });

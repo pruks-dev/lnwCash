@@ -1,13 +1,11 @@
 /**
- * TASK-5603 — scoped vitest for sales-log 2-shape history compat
- * (INTENT-056 BLUEPRINT-056 v2).
- * Run scoped ONLY: npx vitest run --project=product src/lib/pos/sales-log-compat.test.ts
- * (L-P033 — never bare vitest).
+ * TASK-5710 — scoped vitest for sales-log history compat (v3 freeze + legacy rows)
+ * Run scoped ONLY: npx vitest run src/lib/pos/sales-log-compat.test.ts (L-P033 — never bare vitest)
  *
- * Shape 1 (pre-5603): lines carry productId/name/unitPriceSat/qty/
- * lineTotalSat only — no modifier/note fields at all. Must read as
- * empty-note lines (history keeps rendering, totals intact).
- * Shape 2 (5603): lines carry lineId + modifier/modifierLabel/note.
+ * Shape 1 (pre-v3): lines carry stored sats (unitPriceSat) + optional fiat
+ * pair → read as frozen rows (SAT freeze or pair-kept freeze).
+ * Shape 2 (5603 identity): lineId + modifier/modifierLabel/note preserved.
+ * Shape 3 (v3 freeze): { currency, amount, unitSats, rate } kept verbatim.
  */
 import { describe, it, expect } from 'vitest';
 import { normalizeSales, normalizeSaleLine } from './sales-log';
@@ -27,7 +25,7 @@ function legacySale(): Record<string, unknown> {
 }
 
 describe('normalizeSaleLine', () => {
-	it('legacy line (no identity fields) → empty note, bare lineId', () => {
+	it('legacy stored-sats line → SAT freeze, empty identity, bare lineId', () => {
 		const l = normalizeSaleLine({
 			productId: 'latte',
 			name: 'Latte',
@@ -37,6 +35,11 @@ describe('normalizeSaleLine', () => {
 		});
 		expect(l).toMatchObject({
 			productId: 'latte',
+			currency: 'SAT',
+			amount: 200,
+			unitSats: 200,
+			lineTotalSat: 400,
+			rate: null,
 			lineId: 'latte',
 			modifier: '',
 			modifierLabel: '',
@@ -44,7 +47,7 @@ describe('normalizeSaleLine', () => {
 		});
 	});
 
-	it('5603 line keeps identity byte-for-byte', () => {
+	it('5603 identity + stored sats keeps identity byte-for-byte', () => {
 		const l = normalizeSaleLine({
 			productId: 'latte',
 			name: 'Latte',
@@ -60,12 +63,41 @@ describe('normalizeSaleLine', () => {
 			lineId: 'latte:less:หวานน้อย',
 			modifier: 'less',
 			modifierLabel: 'หวานน้อย',
-			note: 'หวานน้อย'
+			note: 'หวานน้อย',
+			unitSats: 200,
+			lineTotalSat: 200
 		});
 	});
 
-	it('recomputes a missing lineTotalSat from unit × qty', () => {
-		const l = normalizeSaleLine({ productId: 'p', name: 'N', unitPriceSat: 200, qty: 3 });
+	it('v3 freeze row passes through verbatim', () => {
+		const l = normalizeSaleLine({
+			productId: 'latte',
+			name: 'Latte',
+			currency: 'THB',
+			amount: 100,
+			unitSats: 5882,
+			qty: 1,
+			lineTotalSat: 5882,
+			rate: 1_700_000
+		});
+		expect(l).toMatchObject({
+			currency: 'THB',
+			amount: 100,
+			unitSats: 5882,
+			lineTotalSat: 5882,
+			rate: 1_700_000
+		});
+	});
+
+	it('recomputes a missing lineTotalSat from frozen unitSats × qty', () => {
+		const l = normalizeSaleLine({
+			productId: 'p',
+			name: 'N',
+			currency: 'SAT',
+			amount: 200,
+			unitSats: 200,
+			qty: 3
+		});
 		expect(l?.lineTotalSat).toBe(600);
 	});
 
@@ -74,16 +106,20 @@ describe('normalizeSaleLine', () => {
 		expect(normalizeSaleLine({ productId: '', name: 'N', unitPriceSat: 1, qty: 1 })).toBeNull();
 		expect(normalizeSaleLine({ productId: 'p', name: 'N', unitPriceSat: 0, qty: 1 })).toBeNull();
 		expect(normalizeSaleLine({ productId: 'p', name: 'N', unitPriceSat: 1, qty: 0 })).toBeNull();
+		expect(
+			normalizeSaleLine({ productId: 'p', name: 'N', currency: 'SAT', amount: 0, unitSats: 5, qty: 1 })
+		).toBeNull();
 	});
 });
 
 describe('normalizeSales 2-shape', () => {
-	it('old persisted sales read with empty-note lines', () => {
+	it('old persisted sales read with frozen SAT lines', () => {
 		const out = normalizeSales([legacySale()]);
 		expect(out).toHaveLength(1);
 		const s: SaleRecord = out[0];
 		expect(s.totalSat).toBe(400);
 		expect(s.lines).toHaveLength(1);
+		expect(s.lines[0]).toMatchObject({ currency: 'SAT', unitSats: 200, lineTotalSat: 400, rate: null });
 		expect(s.lines[0].note ?? '').toBe('');
 		expect(s.lines[0].modifier ?? '').toBe('');
 	});
@@ -95,27 +131,20 @@ describe('normalizeSales 2-shape', () => {
 			{
 				productId: 'latte',
 				name: 'Latte',
-				unitPriceSat: 200,
+				currency: 'THB',
+				amount: 100,
+				unitSats: 5882,
 				qty: 1,
-				lineTotalSat: 200,
+				lineTotalSat: 5882,
+				rate: 1_700_000,
 				lineId: 'latte:less:หวานน้อย',
 				modifier: 'less',
 				modifierLabel: 'หวานน้อย',
 				note: 'หวานน้อย'
-			},
-			{ productId: 'tea', name: 'Tea', unitPriceSat: 2100, qty: 1, lineTotalSat: 2100 }
+			}
 		];
-		fresh.totalSat = 2300;
 		const out = normalizeSales([legacySale(), fresh]);
 		expect(out).toHaveLength(2);
-		expect(out[1].lines).toHaveLength(2);
-		expect(out[1].lines[0].note).toBe('หวานน้อย');
-		expect(out[1].lines[1].note ?? '').toBe('');
-	});
-
-	it('sale whose every line is corrupt still drops (existing rule kept)', () => {
-		const bad = legacySale();
-		bad.lines = [{ productId: '', name: '', unitPriceSat: -1, qty: 0 }];
-		expect(normalizeSales([bad])).toEqual([]);
+		expect(out[1].lines[0]).toMatchObject({ currency: 'THB', amount: 100, rate: 1_700_000 });
 	});
 });

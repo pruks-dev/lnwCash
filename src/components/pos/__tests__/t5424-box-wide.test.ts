@@ -122,11 +122,15 @@ describe('5424 box-1 — header Manage is solar:box-linear Box, History unchange
 describe('5424 wide-1 — 5603 grid 2/3/4 cols, max-width 480 centered (frame = 5604)', () => {
 	it('base 2 cols → ≥640px 3 → ≥1024px 4; single-col 1fr is gone', () => {
 		const css = src('PosCatalog.svelte');
-		expect(css).toContain('grid-template-columns: 1fr 1fr;');
+		// TASK-5711: 5608 narrow fix (Commander eye rev14) supersedes the
+		// old `1fr 1fr` literal — repeat(minmax(0,1fr)) keeps cols equal at
+		// 360/390px. Same 2/3/4 layout intent, syntax pinned to the
+		// eye-approved truth (layout itself untouched — see comment in CSS).
+		expect(css).toContain('grid-template-columns: repeat(2, minmax(0, 1fr));');
 		expect(css).toContain('@media (min-width: 640px)');
-		expect(css).toContain('grid-template-columns: 1fr 1fr 1fr;');
+		expect(css).toContain('grid-template-columns: repeat(3, minmax(0, 1fr));');
 		expect(css).toContain('@media (min-width: 1024px)');
-		expect(css).toContain('grid-template-columns: 1fr 1fr 1fr 1fr;');
+		expect(css).toContain('grid-template-columns: repeat(4, minmax(0, 1fr));');
 		expect(css).not.toContain('grid-template-columns: 1fr;');
 	});
 

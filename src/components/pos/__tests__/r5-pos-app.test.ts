@@ -14,7 +14,8 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/svelte';
 import PosApp from '../PosApp.svelte';
-import { getPosSales } from '$lib/storage/local';
+import { getPosSales, setPosCatalog } from '$lib/storage/local';
+import { emptyCatalog, addProduct } from '$lib/pos/catalog';
 
 vi.mock('svelte-i18n', () => ({
 	_: {
@@ -59,8 +60,24 @@ async function addTwoTeas() {
 	await addTea();
 }
 
-/** 5603: tap a card → modifier popup → Add (same identity merges, like the bill stepper). */
-async function addTea(note?: string, chipIndex = 0) {
+/** R10 rev23 note-only: seeded products carry no presets -> tap opens the
+ * note-only popup (no chips, note input stays). Confirming the bare Add
+ * yields the same bare identity (modifier '' note '') -- one tap + Add =
+ * one row (rev22 skip superseded). */
+async function addTea(note?: string) {
+	await fireEvent.click(screen.getAllByTestId('catalog-row')[0]);
+	expect(screen.getByTestId('modifier-popup')).toBeTruthy();
+	expect(screen.queryAllByTestId('modifier-chip')).toHaveLength(0);
+	expect(screen.getByTestId('line-note-input')).toBeTruthy();
+	if (note !== undefined) {
+		await fireEvent.input(screen.getByTestId('line-note-input'), { target: { value: note } });
+	}
+	await fireEvent.click(screen.getByTestId('popup-add'));
+	expect(screen.queryByTestId('modifier-popup')).toBeNull();
+}
+
+/** R10: products WITH presets still open the popup (verbatim seller chips). */
+async function addTeaPreset(note?: string, chipIndex = 0) {
 	await fireEvent.click(screen.getAllByTestId('catalog-row')[0]);
 	expect(screen.getByTestId('modifier-popup')).toBeTruthy();
 	if (chipIndex > 0) await fireEvent.click(screen.getAllByTestId('modifier-chip')[chipIndex]);
@@ -68,6 +85,25 @@ async function addTea(note?: string, chipIndex = 0) {
 		await fireEvent.input(screen.getByTestId('line-note-input'), { target: { value: note } });
 	}
 	await fireEvent.click(screen.getByTestId('popup-add'));
+}
+
+/** R10: seed thai-tea WITH presets so the popup path stays testable end-to-end. */
+function seedCatalogWithTeaPresets(): void {
+	let d = emptyCatalog(Date.now());
+	const rows = [
+		{ id: 'thai-tea', name: 'Thai Tea', amount: 2100, presets: ['หวานปกติ', 'หวานน้อย'] },
+		{ id: 'coffee', name: 'Coffee', amount: 1800, presets: [] as string[] },
+		{ id: 'cake', name: 'Cake', amount: 3500, presets: [] as string[] }
+	];
+	for (const r of rows) {
+		const res = addProduct(
+			d,
+			{ id: r.id, name: r.name, currency: 'SAT', amount: r.amount, kind: 'drink', fiatPriced: true, active: true, presets: r.presets },
+			Date.now()
+		);
+		if (res.ok) d = res.value;
+	}
+	setPosCatalog(d);
 }
 
 describe('R5 PosApp — catalog → bill', () => {
@@ -201,19 +237,20 @@ describe('R5 PosApp — history', () => {
 	});
 });
 
-describe('5603 PosApp — same card, two identities → two rows end-to-end', () => {
+describe('5603 PosApp — same card, two identities → two rows end-to-end (R10 preset popup)', () => {
 	it('tap + หวานน้อย note, tap + default → bill 2 rows → stepper per lineId → sale keeps notes → history shows them', async () => {
+		seedCatalogWithTeaPresets(); // thai-tea gets presets → popup opens for it
 		const d = deps();
 		render(PosApp, { props: d });
-		await addTea('หวานน้อย', 1); // less + note → lineId thai-tea:less:หวานน้อย
-		await addTea(); // default regular, no note
+		await addTeaPreset('หวานน้อย', 1); // หวานน้อย + note → lineId thai-tea:หวานน้อย:หวานน้อย
+		await addTeaPreset(); // default หวานปกติ, no note
 		const bill = screen.getByTestId('catalog-bill');
 		expect(bill.textContent).toContain('2 items');
 		expect(bill.textContent).toContain('4,200 SAT');
 		await fireEvent.click(bill);
 		const rows = screen.getAllByTestId('bill-line');
 		expect(rows).toHaveLength(2);
-		expect(rows[0].getAttribute('data-line-for')).toBe('thai-tea:less:หวานน้อย');
+		expect(rows[0].getAttribute('data-line-for')).toBe('thai-tea:หวานน้อย:หวานน้อย');
 		expect(screen.getAllByTestId('bill-line-note')).toHaveLength(1);
 		// bill stepper edits exactly one row: + on row 2 → 2, row 1 keeps 1
 		await fireEvent.click(screen.getAllByTestId('bill-inc')[1]);
@@ -227,7 +264,7 @@ describe('5603 PosApp — same card, two identities → two rows end-to-end', ()
 		expect(stored[0].totalSat).toBe(6300);
 		expect(stored[0].lines).toHaveLength(2);
 		expect(stored[0].lines[0].note).toBe('หวานน้อย');
-		expect(stored[0].lines[0].modifier).toBe('less');
+		expect(stored[0].lines[0].modifier).toBe('หวานน้อย');
 		// history renders both shapes: note row + empty-note row
 		await fireEvent.click(screen.getByTestId('success-new-sale'));
 		await fireEvent.click(screen.getByTestId('catalog-open-history'));

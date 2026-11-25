@@ -1,13 +1,17 @@
 /**
- * TASK-5601 — POS catalog domain HEAVY currency (INTENT-056 BLUEPRINT-056 v2)
+ * TASK-5710 — POS catalog domain v3 pricing rupture (INTENT-057 BLUEPRINT v3 rev5).
  *
- * Schema v1 → v2: PosProduct keeps priceSat (single source for math, intact)
- * and GAINS a paired native fiat price (currency + amount) alongside it.
- * - v1 rows (no currency/amount — incl. rev48 convert-at-entry light rows
- *   that stored only priceSat) normalize to { currency: null, amount: null }
- *   with priceSat byte-identical — nothing previously sold is lost.
- * - v2 rows carry the seller's native list price, e.g. { currency:'THB',
- *   amount: 100 } + priceSat (converted at entry via fiatToSats).
+ * RUPTURE (Commander ORDER): priceSat is NO LONGER a stored field. The
+ * seller's set price — { currency, amount } — is the single truth:
+ * - currency 'SAT' + integer amount = SAT-denominated product.
+ *   Resolves with NO rate touch (SAT path never reads rates).
+ * - fiat currency (THB/…/MYR) + major-unit amount = fiat-denominated
+ *   product. Resolves to sats LIVE in buildBill via fiatToSats
+ *   (convert.ts floor + dust-block intact).
+ *
+ * Sats are therefore a COMPUTED value at bill time, never a stored one.
+ * Old bills never recompute: sales-log freezes the resolved sats + the
+ * rate used + the original truth pair per row.
  *
  * Pure domain: NO svelte imports, NO localStorage, NO fetch.
  * Persistence lives in src/lib/storage/local.ts (pos:catalog key);
@@ -23,45 +27,83 @@
  *
  * Schema versioning: every persisted doc carries `schema`.
  * Readers MUST go through normalizeCatalogDoc() so installs that
- * stored older docs (schema 1 / no schema / missing fields) still load.
+ * stored older docs (schema 1/2 / no schema / missing fields) still load.
+ * ---- MIGRATE NOTE (v1/v2 → v3) ----
+ * The ONLY place the retired stored-sats field is read is the
+ * normalize() migrate path below (clearly marked MIGRATE): it converts
+ * legacy rows into truth pairs and then DROPS the old field — the live
+ * shape never carries it. Grep gate: stored-sats references are allowed
+ * ONLY inside the MIGRATE-marked lines of normalizeCatalogDoc().
  */
 
-import { fiatToSats, parseFiatAmount } from '../fiat/convert';
-import { SUPPORTED_CURRENCIES, type FiatCurrency, type RateEntry } from '../fiat/rates';
+import { parseFiatAmount } from '../fiat/convert';
+import { SUPPORTED_CURRENCIES, type FiatCurrency } from '../fiat/rates';
 
-export const POS_CATALOG_SCHEMA_VERSION = 2;
+export const POS_CATALOG_SCHEMA_VERSION = 3;
 
 /** Product category — free-form label, never affects pricing. */
 export type PosProductKind = string;
+
+/**
+ * TASK-5702 — per-product option presets (INTENT-057 BLUEPRINT v3 Manage B).
+ * Seller-edited template chips shown as the starting set at sale time
+ * (e.g. ["sweet-normal","sweet-less"]). Pure data — the sale popup keeps
+ * its own global default until a later task wires per-product sets in.
+ * Max 20 entries, each trimmed non-empty, capped at 40 chars.
+ */
+export const POS_PRESET_MAX = 20;
+export const POS_PRESET_LEN = 40;
+
+export function cleanPresets(v: unknown): string[] {
+	if (!Array.isArray(v)) return [];
+	const out: string[] = [];
+	for (const e of v) {
+		if (typeof e !== 'string') continue;
+		const t = e.trim();
+		if (!t) continue;
+		if (out.includes(t)) continue;
+		out.push(t.slice(0, POS_PRESET_LEN));
+		if (out.length >= POS_PRESET_MAX) break;
+	}
+	return out;
+}
+
+/**
+ * Truth currency: a fiat code from rates.ts, or 'SAT' for
+ * SAT-denominated products (SAT is a denomination, not a rate input).
+ */
+export type PosCurrency = FiatCurrency | 'SAT';
+
+export function isPosCurrency(v: unknown): v is PosCurrency {
+	return v === 'SAT' || (typeof v === 'string' && (SUPPORTED_CURRENCIES as readonly string[]).includes(v));
+}
+
+export function isFiatCurrency(v: unknown): v is FiatCurrency {
+	return typeof v === 'string' && (SUPPORTED_CURRENCIES as readonly string[]).includes(v);
+}
 
 export interface PosProduct {
 	/** Stable id (uuid-ish, unique within catalog). */
 	id: string;
 	/** Display name. */
 	name: string;
-	/** Unit price in sats (integer > 0). Single source of truth for math. */
-	priceSat: number;
 	/**
-	 * HEAVY v2 native list currency — paired with `amount` (both set or
-	 * both null). Null = SAT-only product (all v1 rows migrate here,
-	 * priceSat intact). Display screens (catalog/bill/checkout/history/
-	 * summary) show the native amount when it matches the view currency.
+	 * v3 TRUTH — the price the seller set. SAT = integer sats (no rate
+	 * involved); fiat = major units in `currency` (resolved to sats live
+	 * at bill time via fiatToSats — never stored as sats).
 	 */
-	currency?: FiatCurrency | null;
-	/**
-	 * HEAVY v2 native list amount in major units (e.g. 100 = ฿100).
-	 * Paired with `currency`. Converted to priceSat at entry via
-	 * fiatToSats (rev48 convert-at-entry, floor/dust policy intact).
-	 */
-	amount?: number | null;
+	currency: PosCurrency;
+	/** Truth amount: integer sats for SAT, major units (e.g. 100 = ฿100) for fiat. */
+	amount: number;
 	/** Category label (e.g. "drink", "snack"). */
 	kind: PosProductKind;
 	/**
 	 * Fiat-flag: when true the seller UI may ALSO show the fiat
-	 * equivalent (converted via fiat/* at bill time). Never changes
-	 * priceSat — display hint only.
+	 * equivalent (converted via fiat/* at bill time). Display hint only.
 	 */
 	fiatPriced: boolean;
+	/** 5702 presets — seller-edited option templates (see cleanPresets). */
+	presets: string[];
 	/** On/off sale toggle — off-sale items stay in catalog, excluded from sale. */
 	active: boolean;
 	/** Device epoch ms of last edit. */
@@ -79,21 +121,22 @@ export interface PosCatalogDoc {
 export interface PosProductInput {
 	id: string;
 	name: string;
-	priceSat: number;
-	/** Native list currency — must pair with `amount` (both or neither). */
-	currency?: FiatCurrency | null;
-	/** Native list amount (major units) — must pair with `currency`. */
-	amount?: number | null;
+	/** Truth pair — REQUIRED in v3 (no stored-sats field exists anymore). */
+	currency: PosCurrency;
+	/** Truth amount — integer sats for SAT, major units for fiat. */
+	amount: number;
 	kind?: PosProductKind;
 	fiatPriced?: boolean;
 	active?: boolean;
+	/** 5702 presets — optional at entry, cleaned + defaulted to []. */
+	presets?: string[];
 }
 
 export type CatalogErrorCode =
 	| 'EMPTY_ID'
 	| 'EMPTY_NAME'
-	| 'BAD_PRICE'
 	| 'BAD_CURRENCY'
+	| 'BAD_AMOUNT'
 	| 'DUPLICATE_ID'
 	| 'NOT_FOUND';
 
@@ -118,47 +161,32 @@ function cleanStr(v: unknown): string {
 	return typeof v === 'string' ? v.trim() : '';
 }
 
-function isValidPrice(v: unknown): v is number {
+function isValidSatAmount(v: unknown): v is number {
 	return typeof v === 'number' && Number.isInteger(v) && v > 0;
 }
 
-function isFiatCurrency(v: unknown): v is FiatCurrency {
-	return typeof v === 'string' && (SUPPORTED_CURRENCIES as readonly string[]).includes(v);
-}
-
 /**
- * Native pair validator — delegates decimal policy to the fiat stack
- * (parseFiatAmount carries each currency's decimals; this file never
- * hardcodes them). Returns the canonical pair or null when absent.
- * - both missing (null/undefined/'') → { currency: null, amount: null }
- * - both present + currency known + amount finite > 0 + decimals fit
- *   → { currency, amount }
- * - anything else (unpaired, unknown currency, non-positive amount,
- *   too many decimals) → invalid (null).
+ * Truth-amount policy per denomination. Fiat decimal rules come from the
+ * fiat stack (parseFiatAmount carries each currency's decimals — never
+ * hand-rolled here). SAT amounts must be positive integers (dust policy
+ * lives at resolve time in cart.ts via fiatToSats, not at entry).
  */
-function resolveNativePair(
-	currency: unknown,
-	amount: unknown
-): { currency: FiatCurrency; amount: number } | { currency: null; amount: null } | null {
-	const cMissing = currency === null || currency === undefined || currency === '';
-	const aMissing = amount === null || amount === undefined || amount === '';
-	if (cMissing && aMissing) return { currency: null, amount: null };
-	if (cMissing || aMissing) return null; // unpaired — caller decides (drop pair, keep product)
-	if (!isFiatCurrency(currency)) return null;
-	if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) return null;
-	// Decimals policy comes from convert.ts — never hand-rolled here.
+export function isValidTruthAmount(currency: PosCurrency, amount: unknown): amount is number {
+	if (currency === 'SAT') return isValidSatAmount(amount);
+	if (!isFiatCurrency(currency)) return false;
+	if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) return false;
 	const checked = parseFiatAmount(String(amount), currency);
-	if (!checked.ok) return null;
-	return { currency, amount };
+	return checked.ok;
 }
 
-/** True when the product carries a native HEAVY list price. */
+/** True when the product carries a fiat truth price (SAT products return false). */
 export function hasNativePrice(product: Pick<PosProduct, 'currency' | 'amount'>): boolean {
 	return (
 		isFiatCurrency(product.currency) &&
 		typeof product.amount === 'number' &&
 		Number.isFinite(product.amount) &&
-		product.amount > 0
+		product.amount > 0 &&
+		parseFiatAmount(String(product.amount), product.currency as FiatCurrency).ok
 	);
 }
 
@@ -168,14 +196,15 @@ export function emptyCatalog(nowMs: number = Date.now()): PosCatalogDoc {
 }
 
 /**
- * Normalize unknown persisted data into a valid v2 doc.
+ * Normalize unknown persisted data into a valid v3 doc.
  * - null / garbage / wrong shape → empty catalog (never throws)
- * - missing schema (pre-5401 installs) or schema 1 (pre-5601) → stamped v2,
- *   items kept when valid — priceSat NEVER rewritten, only carried over
+ * - MIGRATE v1 (stored-sats-only rows) → { SAT, amount = old sats } intact
+ * - MIGRATE v2 (stored-sats + fiat pair) → valid pair kept, old sats field
+ *   DROPPED; broken pair falls back to { SAT, amount = old sats } so the
+ *   row stays sellable; rows with neither are dropped
+ * - v3 rows (currency + amount, no stored sats) → kept when the truth pair
+ *   validates, dropped otherwise
  * - items missing fields (old entries) → defaults filled, invalid rows dropped
- * - native pair broken (unpaired / unknown currency / bad decimals) →
- *   product KEPT with pair nulled (priceSat intact — migrate never loses
- *   a sellable row over a display-only field)
  */
 export function normalizeCatalogDoc(raw: unknown, nowMs: number = Date.now()): PosCatalogDoc {
 	if (typeof raw !== 'object' || raw === null) return emptyCatalog(nowMs);
@@ -189,17 +218,38 @@ export function normalizeCatalogDoc(raw: unknown, nowMs: number = Date.now()): P
 		const id = cleanStr(r.id);
 		const name = cleanStr(r.name);
 		if (!id || !name || seen.has(id)) continue;
-		if (!isValidPrice(r.priceSat)) continue;
 		seen.add(id);
-		const pair = resolveNativePair(r.currency, r.amount);
+		// v3 truth pair first (current shape — no stored sats involved).
+		let currency: PosCurrency | null = null;
+		let amount: number | null = null;
+		if (isPosCurrency(r.currency) && typeof r.amount === 'number') {
+			const cur = r.currency as PosCurrency;
+			if (isValidTruthAmount(cur, r.amount)) {
+				currency = cur;
+				amount = r.amount as number;
+			}
+		}
+		// MIGRATE-BEGIN (v1/v2 stored-sats compat — the only place the
+		// retired stored-sats field may be read; it is converted to a
+		// truth pair and never carried forward).
+		if (currency === null || amount === null) {
+			const legacySats = r.priceSat;
+			if (typeof legacySats === 'number' && Number.isInteger(legacySats) && legacySats > 0) {
+				currency = 'SAT';
+				amount = legacySats;
+			} else {
+				continue; // no truth pair and no sellable legacy price — drop
+			}
+		}
+		// MIGRATE-END
 		items.push({
 			id,
 			name,
-			priceSat: r.priceSat as number,
-			currency: pair === null ? null : pair.currency,
-			amount: pair === null ? null : pair.amount,
+			currency: currency as PosCurrency,
+			amount: amount as number,
 			kind: cleanStr(r.kind),
 			fiatPriced: r.fiatPriced === true,
+			presets: cleanPresets(r.presets),
 			active: r.active !== false, // old rows without flag default to on-sale
 			updatedAt: typeof r.updatedAt === 'number' && Number.isFinite(r.updatedAt) ? r.updatedAt : nowMs
 		});
@@ -212,7 +262,7 @@ export function normalizeCatalogDoc(raw: unknown, nowMs: number = Date.now()): P
 	};
 }
 
-/** Create — id must be unique, name non-empty, priceSat positive integer, pair valid. */
+/** Create — id must be unique, name non-empty, truth pair must validate. */
 export function addProduct(
 	doc: PosCatalogDoc,
 	input: PosProductInput,
@@ -222,22 +272,18 @@ export function addProduct(
 	const name = cleanStr(input.name);
 	if (!id) return fail('EMPTY_ID', 'product id is empty');
 	if (!name) return fail('EMPTY_NAME', 'product name is empty');
-	if (!isValidPrice(input.priceSat)) return fail('BAD_PRICE', 'priceSat must be a positive integer');
+	if (!isPosCurrency(input.currency)) return fail('BAD_CURRENCY', 'currency must be SAT or a known fiat code');
+	if (!isValidTruthAmount(input.currency, input.amount))
+		return fail('BAD_AMOUNT', 'amount must be a positive integer (SAT) or fit the currency decimals (fiat)');
 	if (doc.items.some((p) => p.id === id)) return fail('DUPLICATE_ID', `product id exists: ${id}`);
-	const pair = resolveNativePair(input.currency, input.amount);
-	if (pair === null)
-		return fail(
-			'BAD_CURRENCY',
-			'currency+amount must pair: both set (known currency, positive amount within decimals) or both absent'
-		);
 	const product: PosProduct = {
 		id,
 		name,
-		priceSat: input.priceSat,
-		currency: pair.currency,
-		amount: pair.amount,
+		currency: input.currency,
+		amount: input.amount,
 		kind: cleanStr(input.kind),
 		fiatPriced: input.fiatPriced === true,
+		presets: cleanPresets(input.presets),
 		active: input.active !== false,
 		updatedAt: nowMs
 	};
@@ -247,48 +293,46 @@ export function addProduct(
 	};
 }
 
-/** Update mutable fields (name/price/kind/fiat-flag/native pair). Id is immutable. */
+/** Update mutable fields (name/truth-pair/kind/fiat-flag/presets). Id is immutable. */
 export function updateProduct(
 	doc: PosCatalogDoc,
 	id: string,
-	patch: Partial<Pick<PosProduct, 'name' | 'priceSat' | 'kind' | 'fiatPriced' | 'currency' | 'amount'>>,
+	patch: Partial<Pick<PosProduct, 'name' | 'currency' | 'amount' | 'kind' | 'fiatPriced' | 'presets'>>,
 	nowMs: number = Date.now()
 ): CatalogResult<PosCatalogDoc> {
 	const idx = doc.items.findIndex((p) => p.id === id);
 	if (idx === -1) return fail('NOT_FOUND', `product not found: ${id}`);
 	if (patch.name !== undefined && !cleanStr(patch.name))
 		return fail('EMPTY_NAME', 'product name is empty');
-	if (patch.priceSat !== undefined && !isValidPrice(patch.priceSat))
-		return fail('BAD_PRICE', 'priceSat must be a positive integer');
-	// Native pair patches merge with the stored pair: patching one side
+	// Truth-pair patches merge with the stored pair: patching one side
 	// keeps the other (e.g. { amount: 200 } on (THB,100) → (THB,200)).
-	// Clearing needs explicit null/null — a half-cleared pair
-	// (e.g. { currency: null } leaving amount set) is rejected so the
-	// product never holds half a price.
+	// A half-clear (e.g. { currency: null }) is rejected — v3 truth is
+	// REQUIRED, a product never holds half a price.
 	const touchesPair = patch.currency !== undefined || patch.amount !== undefined;
-	let pair: { currency: FiatCurrency | null; amount: number | null } | null = null;
+	let nextCurrency: PosCurrency = doc.items[idx].currency;
+	let nextAmount: number = doc.items[idx].amount;
 	if (touchesPair) {
 		const cur = doc.items[idx];
-		const nextCurrency = patch.currency !== undefined ? patch.currency : (cur.currency ?? null);
-		const nextAmount = patch.amount !== undefined ? patch.amount : (cur.amount ?? null);
-		const resolved = resolveNativePair(nextCurrency, nextAmount);
-		if (resolved === null)
+		nextCurrency = (patch.currency !== undefined ? patch.currency : cur.currency) as PosCurrency;
+		nextAmount = patch.amount !== undefined ? (patch.amount as number) : cur.amount;
+		if (!isPosCurrency(nextCurrency))
+			return fail('BAD_CURRENCY', 'currency must be SAT or a known fiat code');
+		if (!isValidTruthAmount(nextCurrency, nextAmount))
 			return fail(
-				'BAD_CURRENCY',
-				'currency+amount must pair: set both together or clear both with null'
+				'BAD_AMOUNT',
+				'amount must be a positive integer (SAT) or fit the currency decimals (fiat)'
 			);
-		pair = resolved;
 	}
 	const items = doc.items.slice();
 	const cur = items[idx];
 	items[idx] = {
 		...cur,
 		name: patch.name !== undefined ? cleanStr(patch.name) : cur.name,
-		priceSat: patch.priceSat !== undefined ? (patch.priceSat as number) : cur.priceSat,
-		currency: pair !== null ? pair.currency : cur.currency,
-		amount: pair !== null ? pair.amount : cur.amount,
+		currency: nextCurrency,
+		amount: nextAmount,
 		kind: patch.kind !== undefined ? cleanStr(patch.kind) : cur.kind,
 		fiatPriced: patch.fiatPriced !== undefined ? patch.fiatPriced === true : cur.fiatPriced,
+		presets: patch.presets !== undefined ? cleanPresets(patch.presets) : cur.presets,
 		updatedAt: nowMs
 	};
 	return {
@@ -337,21 +381,24 @@ export function listActive(doc: PosCatalogDoc): PosProduct[] {
 }
 
 /**
- * Convert-at-entry for HEAVY native prices (rev48 light behavior, intact):
- * seller types a fiat amount → sats via fiatToSats (convert.ts floor +
- * dust-block + RATE_UNAVAILABLE policy). Callers store the returned sats
- * as priceSat ALONGSIDE the original { currency, amount } — never a
- * separately invented number.
+ * Truth-pair validator for seller input WITHOUT a rate (v3 entry needs no
+ * conversion): SAT → integer check; fiat → decimals check via the fiat
+ * stack. Returns the canonical pair or null. Rate-dependent resolution
+ * happens ONLY in cart.buildBill (live) — never here.
  */
-export function resolveNativeSats(
-	fiatStr: string,
-	currency: FiatCurrency,
-	entry: RateEntry
-): { ok: true; sats: number } | { ok: false; code: string; message: string } {
-	if (entry.price === null) {
-		return { ok: false, code: 'UNAVAILABLE', message: 'rate unavailable — fiat mode blocked' };
+export function resolveTruthPair(
+	currency: unknown,
+	amount: unknown
+): { ok: true; currency: PosCurrency; amount: number } | { ok: false; code: string; message: string } {
+	if (!isPosCurrency(currency)) {
+		return { ok: false, code: 'BAD_CURRENCY', message: 'currency must be SAT or a known fiat code' };
 	}
-	const r = fiatToSats(fiatStr, currency, entry.price);
-	if (!r.ok) return { ok: false, code: r.code, message: r.message };
-	return { ok: true, sats: r.sats };
+	if (!isValidTruthAmount(currency, amount)) {
+		return {
+			ok: false,
+			code: 'BAD_AMOUNT',
+			message: 'amount must be a positive integer (SAT) or fit the currency decimals (fiat)'
+		};
+	}
+	return { ok: true, currency, amount: amount as number };
 }

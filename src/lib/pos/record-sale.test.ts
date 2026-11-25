@@ -41,7 +41,7 @@ function input(over: Partial<SaleInput> = {}): SaleInput {
 		fiat: { currency: 'THB', pricePerBtc: 1_700_000, amount: 0.0374, text: '0.04 THB' },
 		method: 'cashu',
 		refId: 'token_abc123',
-		lines: [{ productId: 'p1', name: 'Thai Tea', unitPriceSat: 1100, qty: 2, lineTotalSat: 2200 }],
+		lines: [{ productId: 'p1', name: 'Thai Tea', currency: 'SAT', amount: 1100, unitSats: 1100, qty: 2, lineTotalSat: 2200, rate: null }],
 		...over
 	};
 }

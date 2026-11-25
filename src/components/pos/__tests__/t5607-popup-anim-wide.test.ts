@@ -69,7 +69,7 @@ describe('TASK-5607 popup animation (a-1/a-2)', () => {
 		expect(src).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)/);
 	});
 
-	it('a-2: popup logic untouched — chips/note/identity/add/cancel intact', async () => {
+	it('a-2: popup logic untouched — chips/note/identity/add/cancel intact (R10 presets-only)', async () => {
 		const onAdd = vi.fn();
 		const onCancel = vi.fn();
 		render(PosModifierPopup, {
@@ -77,19 +77,20 @@ describe('TASK-5607 popup animation (a-1/a-2)', () => {
 				productName: 'Latte',
 				priceSat: 200,
 				priceText: '200 SAT',
+				presets: ['Regular', 'Less sweet'],
 				onAdd,
 				onCancel
 			}
 		});
 		expect(screen.getByTestId('modifier-popup')).toBeTruthy();
-		expect(screen.getAllByTestId('modifier-chip')).toHaveLength(4);
+		expect(screen.getAllByTestId('modifier-chip')).toHaveLength(2);
 		expect(screen.getByTestId('line-note-input')).toBeTruthy();
 		await fireEvent.click(screen.getAllByTestId('modifier-chip')[1]);
 		await fireEvent.input(screen.getByTestId('line-note-input'), { target: { value: 'less ice' } });
 		await fireEvent.click(screen.getByTestId('popup-add'));
 		expect(onAdd).toHaveBeenCalledWith({
-			modifier: 'less',
-			modifierLabel: 'pos.popup.mod_less',
+			modifier: 'Less sweet',
+			modifierLabel: 'Less sweet',
 			note: 'less ice'
 		});
 		await fireEvent.click(screen.getByTestId('popup-cancel'));

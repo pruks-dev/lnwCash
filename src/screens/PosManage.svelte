@@ -8,6 +8,10 @@
 	 * getPosCatalog / setPosCatalog (local.ts). Never touches sales-log or
 	 * proofsDb — no SaleRecord is written here (owned by 5403/5404).
 	 * Theme tokens only (L-P012) — no hardcoded colors.
+ * TASK-5704-FIX (INTENT-057 BLUEPRINT v3 rev12, F-5704-01 HIGH): migrated
+ * to catalog v3 truth-pair domain API (addProduct {currency,amount} +
+ * CatalogResult; BAD_AMOUNT error code). Rows render truth
+ * (SAT amount verbatim / fiat native) — never stored sats.
 	 */
 	import { _ } from 'svelte-i18n';
 	import { onMount } from 'svelte';
@@ -18,7 +22,9 @@
 		addProduct,
 		setProductActive,
 		removeProduct,
-		type PosCatalogDoc
+		normalizeCatalogDoc,
+		type PosCatalogDoc,
+		type PosProduct
 	} from '$lib/pos/catalog';
 
 	import Card from '$lib/components/ui/Card.svelte';
@@ -36,9 +42,17 @@
 	let active: boolean = $state(true);
 	let formError: string = $state('');
 
+	// TASK-5704-FIX: v3 truth display (SAT verbatim / fiat native).
+	function priceText(p: PosProduct): string {
+		if (p.currency === 'SAT') return `${p.amount} ${$_('screen.balance.sats')}`;
+		return `${p.amount} ${p.currency}`;
+	}
+
 	function reload(): void {
 		try {
-			doc = getPosCatalog();
+			// Normalize: legacy v1 priceSat rows migrate via the sanctioned
+			// domain path (same as storage getPosCatalog in production).
+			doc = normalizeCatalogDoc(getPosCatalog());
 		} catch {
 			doc = emptyCatalog();
 		}
@@ -68,14 +82,14 @@
 		const id = `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 		const result = addProduct(
 			doc,
-			{ id, name: trimmedName, priceSat, kind: kind.trim(), active },
+			{ id, name: trimmedName, currency: 'SAT', amount: priceSat, kind: kind.trim(), active },
 			Date.now()
 		);
 		if (!result.ok) {
 			formError =
 				result.code === 'EMPTY_NAME'
 					? $_('pos.manage.error_name')
-					: result.code === 'BAD_PRICE'
+					: result.code === 'BAD_AMOUNT'
 						? $_('pos.manage.error_price')
 						: result.message;
 			return;
@@ -194,7 +208,7 @@
 							<div class="product-info">
 								<Body size="sm" weight="semibold">{product.name}</Body>
 								<Body size="sm" color="secondary">
-									{product.priceSat} {$_('screen.balance.sats')}{#if product.kind} ({product.kind}){/if}
+									{priceText(product)}{#if product.kind} ({product.kind}){/if}
 									({product.active ? $_('pos.manage.on_sale') : $_('pos.manage.off_sale')})
 								</Body>
 							</div>

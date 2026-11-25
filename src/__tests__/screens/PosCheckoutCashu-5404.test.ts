@@ -165,8 +165,9 @@ function makeToken(amounts: number[]): string {
 }
 
 function billFixture(totalSat = 100): Bill {
+	// TASK-5704-FIX (F-5704-01): v3 truth-pair BillLine (no stored-sats fields).
 	return {
-		lines: [{ productId: 'tea', name: 'Tea', unitPriceSat: 50, qty: 2, lineTotalSat: 100 }],
+		lines: [{ productId: 'tea', name: 'Tea', currency: 'SAT', amount: 50, unitSats: 50, qty: 2, lineTotalSat: 100, rate: null }],
 		totalSat,
 		fiat: { currency: 'THB', pricePerBtc: 3_000_000, amount: 0.003, text: '0.01 THB', stale: false, asOf: 1 }
 	};

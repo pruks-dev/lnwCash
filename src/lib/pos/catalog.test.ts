@@ -1,6 +1,12 @@
 /**
- * TASK-5601 — scoped vitest for src/lib/pos/catalog.ts (schema v2 HEAVY)
+ * TASK-5710 — scoped vitest for src/lib/pos/catalog.ts (schema v3 pricing rupture)
  * Run scoped ONLY: npx vitest run src/lib/pos/catalog.test.ts (L-P033 — never bare vitest)
+ *
+ * v3: PosProduct stores ONLY { currency, amount } truth — no stored-sats
+ * field. SAT truth resolves with no rate; fiat truth resolves live at
+ * bill time. normalize() migrates v1 (stored-sats-only → SAT) and v2
+ * (fiat pair kept, stored sats dropped; broken pair + stored sats → SAT
+ * fallback so the row stays sellable).
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -12,88 +18,121 @@ import {
 	getProduct,
 	listActive,
 	normalizeCatalogDoc,
-	resolveNativeSats,
+	resolveTruthPair,
 	hasNativePrice,
 	POS_CATALOG_SCHEMA_VERSION
 } from './catalog';
-import { fiatToSats } from '../fiat/convert';
-import type { RateEntry } from '../fiat/rates';
+import { parseFiatAmount } from '../fiat/convert';
 
 const NOW = 1_790_000_000_000;
-const PRICE_THB = 1_700_000; // TEST INPUT, not a real rate
-
-function liveEntry(): RateEntry {
-	return { price: PRICE_THB, asOf: NOW, where: 'cache', stale: false, expired: false };
-}
 
 function seeded() {
 	const r1 = addProduct(emptyCatalog(NOW), {
 		id: 'p1',
 		name: 'Thai Tea',
-		priceSat: 500,
+		currency: 'SAT',
+		amount: 500,
 		kind: 'drink',
 		fiatPriced: true
 	});
 	expect(r1.ok).toBe(true);
 	if (!r1.ok) throw new Error('seed failed');
-	const r2 = addProduct(r1.value, { id: 'p2', name: 'Cake', priceSat: 1200, kind: 'snack' });
+	const r2 = addProduct(r1.value, {
+		id: 'p2',
+		name: 'Cake',
+		currency: 'SAT',
+		amount: 1200,
+		kind: 'snack'
+	});
 	expect(r2.ok).toBe(true);
 	if (!r2.ok) throw new Error('seed failed');
 	return r2.value;
 }
 
 describe('catalog schema', () => {
-	it('empty catalog carries schema v2', () => {
+	it('empty catalog carries schema v3', () => {
 		const doc = emptyCatalog(NOW);
 		expect(doc.schema).toBe(POS_CATALOG_SCHEMA_VERSION);
-		expect(doc.schema).toBe(2);
+		expect(doc.schema).toBe(3);
 		expect(doc.items).toEqual([]);
 	});
 });
 
 describe('CRUD', () => {
-	it('add + get roundtrip with defaults (kind/fiat/active + null native pair)', () => {
+	it('add + get roundtrip with truth pair (SAT)', () => {
 		const doc = seeded();
 		const p = getProduct(doc, 'p1');
 		expect(p).not.toBeNull();
 		expect(p!.name).toBe('Thai Tea');
-		expect(p!.priceSat).toBe(500);
+		expect(p!.currency).toBe('SAT');
+		expect(p!.amount).toBe(500);
 		expect(p!.fiatPriced).toBe(true);
 		expect(p!.active).toBe(true);
-		// v2: SAT-only rows default to a null native pair
-		expect(p!.currency).toBeNull();
-		expect(p!.amount).toBeNull();
 		expect(hasNativePrice(p!)).toBe(false);
 	});
 
-	it('rejects empty id / empty name / bad price', () => {
+	it('add accepts a fiat truth pair', () => {
+		const r = addProduct(emptyCatalog(NOW), {
+			id: 'latte',
+			name: 'Latte',
+			currency: 'THB',
+			amount: 100
+		});
+		expect(r.ok).toBe(true);
+		if (!r.ok) return;
+		expect(getProduct(r.value, 'latte')).toMatchObject({ currency: 'THB', amount: 100 });
+		expect(hasNativePrice(getProduct(r.value, 'latte')!)).toBe(true);
+	});
+
+	it('rejects empty id / empty name / bad truth', () => {
 		const doc = emptyCatalog(NOW);
-		expect(addProduct(doc, { id: '', name: 'x', priceSat: 1 }).ok).toBe(false);
-		expect(addProduct(doc, { id: 'a', name: '  ', priceSat: 1 }).ok).toBe(false);
+		expect(addProduct(doc, { id: '', name: 'x', currency: 'SAT', amount: 1 }).ok).toBe(false);
+		expect(addProduct(doc, { id: 'a', name: '  ', currency: 'SAT', amount: 1 }).ok).toBe(false);
 		for (const bad of [0, -5, 1.5, NaN]) {
-			const r = addProduct(doc, { id: 'a', name: 'x', priceSat: bad });
+			const r = addProduct(doc, { id: 'a', name: 'x', currency: 'SAT', amount: bad });
 			expect(r.ok).toBe(false);
-			if (!r.ok) expect(r.code).toBe('BAD_PRICE');
 		}
+		// unknown currency / bad-decimal fiat amount
+		expect(
+			addProduct(doc, { id: 'b', name: 'B', currency: 'XXX' as never, amount: 5 }).ok
+		).toBe(false);
+		expect(addProduct(doc, { id: 'c', name: 'C', currency: 'JPY', amount: 1.5 }).ok).toBe(
+			false
+		);
 	});
 
 	it('rejects duplicate id', () => {
 		const doc = seeded();
-		const r = addProduct(doc, { id: 'p1', name: 'Other', priceSat: 9 });
+		const r = addProduct(doc, { id: 'p1', name: 'Other', currency: 'SAT', amount: 9 });
 		expect(r.ok).toBe(false);
 		if (!r.ok) expect(r.code).toBe('DUPLICATE_ID');
 	});
 
-	it('update mutates allowed fields, id immutable, validates', () => {
+	it('update mutates allowed fields, id immutable, validates truth', () => {
 		let doc = seeded();
-		const r = updateProduct(doc, 'p1', { name: 'Thai Tea XL', priceSat: 700 });
+		const r = updateProduct(doc, 'p1', { name: 'Thai Tea XL', currency: 'THB', amount: 100 });
 		expect(r.ok).toBe(true);
 		if (!r.ok) return;
 		doc = r.value;
-		expect(getProduct(doc, 'p1')!.priceSat).toBe(700);
+		expect(getProduct(doc, 'p1')).toMatchObject({ currency: 'THB', amount: 100 });
 		expect(updateProduct(doc, 'nope', { name: 'z' }).ok).toBe(false);
-		const bad = updateProduct(doc, 'p1', { priceSat: 0 });
+		const bad = updateProduct(doc, 'p1', { amount: 0 });
 		expect(bad.ok).toBe(false);
+		// SAT fraction rejected (must stay integer sats)
+		expect(updateProduct(doc, 'p1', { currency: 'SAT', amount: 1.5 }).ok).toBe(false);
+	});
+
+	it('update merges one side of the pair', () => {
+		let doc = seeded();
+		const set = updateProduct(doc, 'p1', { currency: 'THB', amount: 100 });
+		expect(set.ok).toBe(true);
+		if (!set.ok) return;
+		doc = set.value;
+		// one-sided amount patch merges with the stored currency
+		const merge = updateProduct(doc, 'p1', { amount: 200 });
+		expect(merge.ok).toBe(true);
+		if (!merge.ok) return;
+		expect(getProduct(merge.value, 'p1')).toMatchObject({ currency: 'THB', amount: 200 });
 	});
 
 	it('remove drops the row, unknown id fails', () => {
@@ -120,40 +159,39 @@ describe('on/off sale', () => {
 });
 
 describe('normalize (old-install migrate)', () => {
-	it('garbage / null → empty v2 catalog, never throws', () => {
+	it('garbage / null → empty v3 catalog, never throws', () => {
 		for (const bad of [null, undefined, 42, 'x', []]) {
 			const doc = normalizeCatalogDoc(bad, NOW);
-			expect(doc.schema).toBe(2);
+			expect(doc.schema).toBe(3);
 			expect(doc.items).toEqual([]);
 		}
 	});
 
-	it('pre-5401 doc without schema keeps valid rows, stamps v2', () => {
+	it('v3 rows survive untouched', () => {
 		const doc = normalizeCatalogDoc(
 			{
+				schema: 3,
+				updatedAt: NOW,
 				items: [
-					{ id: 'old1', name: 'Old', priceSat: 100, kind: 'misc' },
-					{ id: 'bad', name: '', priceSat: 100 },
-					{ id: 'bad2', name: 'x', priceSat: 0 }
+					{ id: 'latte', name: 'Latte', currency: 'THB', amount: 100, kind: 'drink', active: true, updatedAt: NOW },
+					{ id: 'coin', name: 'Coin', currency: 'SAT', amount: 900, active: true, updatedAt: NOW }
 				]
 			},
 			NOW
 		);
-		expect(doc.schema).toBe(2);
-		expect(doc.items).toHaveLength(1);
-		expect(doc.items[0].id).toBe('old1');
-		// missing flags default: on-sale, not fiat-priced
-		expect(doc.items[0].active).toBe(true);
-		expect(doc.items[0].fiatPriced).toBe(false);
+		expect(doc.schema).toBe(3);
+		expect(doc.items).toHaveLength(2);
+		expect(doc.items[0]).toMatchObject({ currency: 'THB', amount: 100 });
+		expect(doc.items[1]).toMatchObject({ currency: 'SAT', amount: 900 });
 	});
 
 	it('drops duplicate ids, keeps first', () => {
 		const doc = normalizeCatalogDoc(
 			{
-				schema: 1,
+				schema: 3,
 				items: [
-					{ id: 'd', name: 'A', priceSat: 10 },
-					{ id: 'd', name: 'B', priceSat: 20 }
+					{ id: 'd', name: 'A', currency: 'SAT', amount: 10 },
+					{ id: 'd', name: 'B', currency: 'SAT', amount: 20 }
 				]
 			},
 			NOW
@@ -161,10 +199,24 @@ describe('normalize (old-install migrate)', () => {
 		expect(doc.items).toHaveLength(1);
 		expect(doc.items[0].name).toBe('A');
 	});
+
+	it('drops rows with no truth and no sellable legacy price', () => {
+		const doc = normalizeCatalogDoc(
+			{
+				schema: 3,
+				items: [
+					{ id: 'bad', name: 'Bad', currency: 'XXX', amount: 5 },
+					{ id: 'zero', name: 'Zero', currency: 'SAT', amount: 0 }
+				]
+			},
+			NOW
+		);
+		expect(doc.items).toEqual([]);
+	});
 });
 
-describe('v1 → v2 migrate (HEAVY — priceSat intact)', () => {
-	it('v1 rows migrate with count parity + priceSat byte-identical + null pair', () => {
+describe('MIGRATE v1/v2 → v3 (stored sats become truth, then dropped)', () => {
+	it('v1 stored-sats-only rows → SAT truth with identical amounts', () => {
 		const v1 = {
 			schema: 1,
 			updatedAt: NOW,
@@ -175,19 +227,23 @@ describe('v1 → v2 migrate (HEAVY — priceSat intact)', () => {
 			]
 		};
 		const doc = normalizeCatalogDoc(v1, NOW);
-		expect(doc.schema).toBe(2);
+		expect(doc.schema).toBe(3);
 		expect(doc.items).toHaveLength(3);
-		expect(doc.items.map((p) => p.priceSat)).toEqual([500, 1200, 1]);
+		expect(doc.items.map((p) => [p.currency, p.amount])).toEqual([
+			['SAT', 500],
+			['SAT', 1200],
+			['SAT', 1]
+		]);
+		// the retired field is GONE from the live shape
 		for (const p of doc.items) {
-			expect(p.currency).toBeNull();
-			expect(p.amount).toBeNull();
+			expect(p).not.toHaveProperty('priceSat');
 		}
 		console.log(
-			`[migrate-proof] v1→v2 before=3 after=${doc.items.length} priceSat=[${doc.items.map((p) => p.priceSat).join(',')}] intact`
+			`[migrate-proof] v1→v3 before=3 after=${doc.items.length} truth=[${doc.items.map((p) => `${p.currency}:${p.amount}`).join(',')}] intact`
 		);
 	});
 
-	it('v2 rows with a valid native pair survive normalize untouched', () => {
+	it('v2 rows with a valid fiat pair keep the pair, stored sats dropped', () => {
 		const doc = normalizeCatalogDoc(
 			{
 				schema: 2,
@@ -200,15 +256,17 @@ describe('v1 → v2 migrate (HEAVY — priceSat intact)', () => {
 			NOW
 		);
 		expect(doc.items).toHaveLength(2);
-		expect(doc.items[0]).toMatchObject({ currency: 'THB', amount: 100, priceSat: 5882 });
-		expect(doc.items[1]).toMatchObject({ currency: 'JPY', amount: 150, priceSat: 900 });
+		expect(doc.items[0]).toMatchObject({ currency: 'THB', amount: 100 });
+		expect(doc.items[1]).toMatchObject({ currency: 'JPY', amount: 150 });
+		for (const p of doc.items) {
+			expect(p).not.toHaveProperty('priceSat');
+		}
 	});
 
-	it('broken pair never loses the product — pair nulled, priceSat kept', () => {
+	it('v2 broken pair + stored sats → SAT fallback (row stays sellable)', () => {
 		const doc = normalizeCatalogDoc(
 			{
 				schema: 2,
-				updatedAt: NOW,
 				items: [
 					{ id: 'half', name: 'Half', priceSat: 42, currency: 'THB', updatedAt: NOW },
 					{ id: 'weird', name: 'Weird', priceSat: 43, currency: 'XXX', amount: 5, updatedAt: NOW },
@@ -218,75 +276,21 @@ describe('v1 → v2 migrate (HEAVY — priceSat intact)', () => {
 			NOW
 		);
 		expect(doc.items).toHaveLength(3);
-		expect(doc.items.map((p) => p.priceSat)).toEqual([42, 43, 44]);
-		for (const p of doc.items) {
-			expect(p.currency).toBeNull();
-			expect(p.amount).toBeNull();
-		}
+		expect(doc.items.map((p) => [p.currency, p.amount])).toEqual([
+			['SAT', 42],
+			['SAT', 43],
+			['SAT', 44]
+		]);
 	});
 });
 
-describe('HEAVY native pair CRUD', () => {
-	it('add accepts a paired currency+amount', () => {
-		const r = addProduct(emptyCatalog(NOW), {
-			id: 'latte',
-			name: 'Latte',
-			priceSat: 5882,
-			currency: 'THB',
-			amount: 100
-		});
-		expect(r.ok).toBe(true);
-		if (!r.ok) return;
-		expect(getProduct(r.value, 'latte')).toMatchObject({ currency: 'THB', amount: 100, priceSat: 5882 });
-	});
-
-	it('add rejects unpaired / unknown currency / bad-decimal amounts', () => {
-		const doc = emptyCatalog(NOW);
-		const half = addProduct(doc, { id: 'a', name: 'A', priceSat: 10, currency: 'THB' });
-		expect(half.ok).toBe(false);
-		if (!half.ok) expect(half.code).toBe('BAD_CURRENCY');
-		const weird = addProduct(doc, { id: 'b', name: 'B', priceSat: 10, currency: 'XXX' as never, amount: 5 });
-		expect(weird.ok).toBe(false);
-		if (!weird.ok) expect(weird.code).toBe('BAD_CURRENCY');
-		const fraq = addProduct(doc, { id: 'c', name: 'C', priceSat: 10, currency: 'JPY', amount: 1.5 });
-		expect(fraq.ok).toBe(false);
-		if (!fraq.ok) expect(fraq.code).toBe('BAD_CURRENCY');
-	});
-
-	it('update merges one side, rejects half-clear, clears with null/null', () => {
-		let doc = seeded();
-		const set = updateProduct(doc, 'p1', { currency: 'THB', amount: 100 });
-		expect(set.ok).toBe(true);
-		if (!set.ok) return;
-		doc = set.value;
-		expect(getProduct(doc, 'p1')).toMatchObject({ currency: 'THB', amount: 100, priceSat: 500 });
-		// one-sided amount patch merges with the stored currency
-		const merge = updateProduct(doc, 'p1', { amount: 200 });
-		expect(merge.ok).toBe(true);
-		if (!merge.ok) return;
-		expect(getProduct(merge.value, 'p1')).toMatchObject({ currency: 'THB', amount: 200 });
-		// half-clear (currency null, amount left set) is rejected — never half a price
-		const halfClear = updateProduct(merge.value, 'p1', { currency: null });
-		expect(halfClear.ok).toBe(false);
-		const clear = updateProduct(merge.value, 'p1', { currency: null, amount: null });
-		expect(clear.ok).toBe(true);
-		if (!clear.ok) return;
-		expect(getProduct(clear.value, 'p1')).toMatchObject({ currency: null, amount: null });
-	});
-});
-
-describe('convert-at-entry (rev48 intact — delegates to fiatToSats)', () => {
-	it('resolveNativeSats agrees with convert.ts floor math', () => {
-		const got = resolveNativeSats('100', 'THB', liveEntry());
-		const want = fiatToSats('100', 'THB', PRICE_THB);
-		expect(got.ok).toBe(true);
-		expect(want.ok).toBe(true);
-		if (got.ok && want.ok) expect(got.sats).toBe(want.sats); // 5882
-	});
-
-	it('dead rate → UNAVAILABLE (never invents)', () => {
-		const dead: RateEntry = { price: null, asOf: null, where: 'cache', stale: true, expired: true };
-		const got = resolveNativeSats('100', 'THB', dead);
-		expect(got.ok).toBe(false);
+describe('resolveTruthPair (rate-free entry validation)', () => {
+	it('SAT integer ok, fiat decimals follow the fiat stack', () => {
+		expect(resolveTruthPair('SAT', 200)).toMatchObject({ ok: true, currency: 'SAT', amount: 200 });
+		expect(resolveTruthPair('THB', 100)).toMatchObject({ ok: true, currency: 'THB', amount: 100 });
+		expect(resolveTruthPair('JPY', 1.5).ok).toBe(false);
+		expect(resolveTruthPair('XXX', 5).ok).toBe(false);
+		// agrees with convert.ts decimals policy exactly
+		expect(resolveTruthPair('THB', 100.005).ok).toBe(parseFiatAmount('100.005', 'THB').ok);
 	});
 });

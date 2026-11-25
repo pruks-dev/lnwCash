@@ -3,7 +3,7 @@
   Supersedes the rev28 single-column + per-card stepper truth:
   - grid: <640px 2 cols / ≥640px 3 cols / ≥1024px 4 cols (no 1fr single-col
     anywhere; portrait/landscape identical — media queries only, no JS).
-  - card = photo (pos-images IndexedDB via ProductPhoto, solar Box fallback)
+  - card = kind-icon tile (solar per kind via ProductKindIcon, no photo/DB)
     + name + price. NO stepper on the card — tap the card → modifier+note
     popup (parent owns it); qty is adjusted on the bill stepper.
   - price: SAT-priced `200 SAT (≈ 63.00 THB)` (SAT first, converted leg in
@@ -21,7 +21,8 @@
 	import Heading from '$lib/components/ui/Heading.svelte';
 	import { countItemsText, billCtaText, subscribePosLocale } from '$lib/pos-ui';
 	import type { PosProduct } from '$lib/pos/catalog';
-	import ProductPhoto from './ProductPhoto.svelte';
+	import { productNativeText } from '$lib/pos/price-display';
+	import ProductKindIcon from './ProductKindIcon.svelte';
 
 	interface Props {
 		products: PosProduct[];
@@ -39,7 +40,7 @@
 		 * Legacy SAT-leg fallback (pre-5603 callers/tests): used only when
 		 * priceFor is absent. PosApp always passes priceFor.
 		 */
-		fiatFor?: (priceSat: number) => string;
+		fiatFor?: (sats: number) => string;
 	}
 
 	let {
@@ -61,8 +62,13 @@
 
 	function subtitle(p: PosProduct): string {
 		if (priceFor) return priceFor(p);
-		const fiat = fiatFor ? fiatFor(p.priceSat) : '';
-		return `${p.priceSat.toLocaleString('en-US')} SAT (${fiat})`;
+		// Legacy no-priceFor path (old callers only — PosApp always passes
+		// priceFor): native truth, no rate involved. SAT truth appends the
+		// converted leg (amount IS sats, no rate needed); fiat truth shows
+		// the native set price only (no rate in this branch — never faked).
+		const native = productNativeText(p) ?? `${p.amount} ${p.currency}`;
+		if (p.currency === 'SAT' && fiatFor) return `${native} (${fiatFor(p.amount)})`;
+		return native;
 	}
 </script>
 
@@ -111,7 +117,7 @@
 				aria-label={$_('pos.catalog.tap_to_customize', { values: { name: p.name } })}
 				onclick={() => onSelect(p.id)}
 			>
-				<ProductPhoto productId={p.id} alt={p.name} />
+				<ProductKindIcon kind={p.kind} />
 				<span class="card-body">
 					<span class="list-item-title">{p.name}</span>
 					<span class="list-item-subtitle" data-testid="catalog-fiat" data-fiat-for={p.id}>
@@ -205,7 +211,7 @@
 		-webkit-tap-highlight-color: transparent;
 		flex-shrink: 0;
 	}
-	/* 5603 card: tappable (whole card = one 44px+ target), photo 4:3 +
+	/* 5603 card: tappable (whole card = one 44px+ target), kind tile 4:3 +
 	   name + price. Card chrome (surface/border/radius-16/shadow-sm/
 	   padding-16) pixel-identical to the approved mockup. */
 	.card {

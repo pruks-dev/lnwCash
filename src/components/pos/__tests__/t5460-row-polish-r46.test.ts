@@ -19,7 +19,7 @@ import { dirname, resolve } from 'node:path';
 import { register, init, waitLocale } from 'svelte-i18n';
 import enDict from '../../../locales/en.json';
 import PosBill from '../PosBill.svelte';
-import type { CartLine } from '$lib/pos/cart';
+import type { BillLine } from '$lib/pos/cart';
 
 register('en', () => Promise.resolve(enDict));
 
@@ -33,9 +33,10 @@ afterEach(() => {
 });
 
 // Mixed digit widths: 1-digit line total vs 6-digit line total.
-const lines: CartLine[] = [
-	{ productId: 'tea', name: 'Thai Tea', unitPriceSat: 9, qty: 1, lineTotalSat: 9 },
-	{ productId: 'cake', name: 'Cake', unitPriceSat: 35000, qty: 3, lineTotalSat: 105000 }
+// TASK-5711 v3 rows: frozen BillLine snapshots (truth + live unitSats).
+const lines: BillLine[] = [
+	{ productId: 'tea', name: 'Thai Tea', currency: 'SAT', amount: 9, unitSats: 9, qty: 1, lineTotalSat: 9, rate: null },
+	{ productId: 'cake', name: 'Cake', currency: 'SAT', amount: 35000, unitSats: 35000, qty: 3, lineTotalSat: 105000, rate: null }
 ];
 
 const leftFor = (sats: number) => {

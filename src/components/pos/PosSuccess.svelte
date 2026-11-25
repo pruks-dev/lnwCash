@@ -65,6 +65,11 @@
 			<span class="amount-value" data-testid="success-amount">{sale.totalSat.toLocaleString('en-US')}</span>
 			<span class="amount-unit">SAT</span>
 		</div>
+		<!-- TASK-5711: frozen bill fiat — the snapshot stored at pay time,
+		     rendered verbatim (old bills never recompute). -->
+		{#if sale.fiat.text}
+			<div class="amount-secondary" data-testid="success-fiat">{sale.fiat.text}</div>
+		{/if}
 		<div class="amount-secondary" data-testid="success-ref">txRef {sale.refId} (sale persisted FIRST)</div>
 	</div>
 
@@ -126,6 +131,11 @@
 						<div class="list-item-title">
 							{s.totalSat.toLocaleString('en-US')} SAT
 						</div>
+						<!-- TASK-5711: frozen bill fiat per row (snapshot at
+						     pay time, never recomputed). -->
+						{#if s.fiat.text}
+							<div class="list-item-subtitle" data-testid="success-row-fiat" data-row-fiat-for={s.id}>{s.fiat.text}</div>
+						{/if}
 						<div class="list-item-subtitle" data-testid="success-lines" data-lines-for={s.id}>{linesText(s)}</div>
 						<div class="list-item-subtitle">{s.refId}</div>
 					</div>

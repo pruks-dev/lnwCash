@@ -28,7 +28,7 @@ function src(name: string): string {
 const now = 1_790_000_000_000;
 const products: PosProduct[] = [
 	{ id: 'latte', name: 'Latte', priceSat: 200, kind: 'drink', fiatPriced: true, active: true, updatedAt: now },
-	{ id: 'tea', name: 'Tea', priceSat: 2100, kind: 'drink', fiatPriced: true, active: true, updatedAt: now }
+	{ id: 'tea', name: 'Tea', priceSat: 2100, kind: 'snack', fiatPriced: true, active: true, updatedAt: now }
 ];
 
 function props(over: Record<string, unknown> = {}) {
@@ -100,12 +100,16 @@ describe('5603 cards — photo + name + price, no stepper, tap opens popup', () 
 		expect(screen.queryByTestId('catalog-qty')).toBeNull();
 	});
 
-	it('no photo stored → solar fallback tile (no <img>); tap fires onSelect(productId)', async () => {
+	it('R6 strip: no photo — solar kind-icon tile per card (drink/donut…); tap fires onSelect(productId)', async () => {
 		const p = props();
 		render(PosCatalog, { props: p });
-		// products have no pos-images photo in this env → fallback per card
-		expect(screen.getAllByTestId('product-fallback')).toHaveLength(2);
+		// no IndexedDB photo: every card shows its kind icon, never an <img>
+		const tiles = screen.getAllByTestId('product-kind-icon');
+		expect(tiles).toHaveLength(2);
+		expect(tiles.map((t) => t.getAttribute('data-kind'))).toEqual(['drink', 'snack']);
 		expect(screen.queryByTestId('product-photo')).toBeNull();
+		expect(screen.queryByTestId('product-fallback')).toBeNull();
+		expect(document.querySelector('img')).toBeNull();
 		await fireEvent.click(screen.getAllByTestId('catalog-row')[0]);
 		expect(p.onSelect).toHaveBeenCalledTimes(1);
 		expect(p.onSelect).toHaveBeenCalledWith('latte');

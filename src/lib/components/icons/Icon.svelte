@@ -29,6 +29,15 @@
 	import Shop from './Shop.svelte';
 	import Box from './Box.svelte';
 	import AddCircle from './AddCircle.svelte';
+	import CupHot from './CupHot.svelte';
+	import Donut from './Donut.svelte';
+	import Burger from './Burger.svelte';
+	import Mug from './Mug.svelte';
+	import Cake from './Cake.svelte';
+	import IceCream from './IceCream.svelte';
+	import Apple from './Apple.svelte';
+	import Bag from './Bag.svelte';
+	import Pill from './Pill.svelte';
 
 	export type IconName =
 		| 'Wallet'
@@ -52,7 +61,16 @@
 		| 'Warning'
 		| 'Shop'
 		| 'Box'
-		| 'AddCircle';
+		| 'AddCircle'
+		| 'CupHot'
+		| 'Donut'
+		| 'Burger'
+		| 'Mug'
+		| 'Cake'
+		| 'IceCream'
+		| 'Apple'
+		| 'Bag'
+		| 'Pill';
 
 	interface Props {
 		/** Icon name — one of the available icon set */
@@ -89,7 +107,16 @@
 		Warning,
 		Shop,
 		Box,
-		AddCircle
+		AddCircle,
+		CupHot,
+		Donut,
+		Burger,
+		Mug,
+		Cake,
+		IceCream,
+		Apple,
+		Bag,
+		Pill
 	};
 
 	const iconComponent = $derived(iconMap[name] ?? Wallet);

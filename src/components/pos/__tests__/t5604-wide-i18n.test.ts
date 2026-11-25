@@ -40,7 +40,8 @@ const NEW_KEYS = [
 	'pos.popup.add_to_bill'
 ] as const;
 
-/** EN copy owned by 5604 (agent may write EN — L-T015 allows; TH is reed-only). */
+/** EN copy owned by 5604 (agent may write EN — L-T015 allows; TH is reed-only).
+ * R10 rev23: note_label is pure Note/โน้ต (same key, Commander ORDER -- no reed round). */
 const EN_COPY: Record<string, string> = {
 	'pos.catalog.tap_to_customize': '{name} — tap to pick options and note',
 	'pos.popup.mod_regular': 'Regular',
@@ -49,7 +50,7 @@ const EN_COPY: Record<string, string> = {
 	'pos.popup.mod_shot': '+ Shot',
 	'pos.popup.options_for': 'Options for {name}',
 	'pos.popup.sweetness': 'Sweetness',
-	'pos.popup.note_label': 'Note (per row — not per bill)',
+	'pos.popup.note_label': 'Note',
 	'pos.popup.note_aria': 'Per-item note',
 	'pos.popup.note_placeholder': 'e.g. no ice',
 	'pos.popup.add_to_bill': 'Add to bill'
@@ -67,7 +68,7 @@ const TH_COPY: Record<string, string> = {
 	'pos.popup.mod_shot': '+ ช็อต',
 	'pos.popup.options_for': 'ตัวเลือกสำหรับ {name}',
 	'pos.popup.sweetness': 'ความหวาน',
-	'pos.popup.note_label': 'โน้ต (แยกแถว — ไม่ใช่ทั้งคำสั่งซื้อ)',
+	'pos.popup.note_label': 'โน้ต',
 	'pos.popup.note_aria': 'โน้ตแยกแถว',
 	'pos.popup.note_placeholder': 'เช่น ไม่ใส่น้ำแข็ง',
 	'pos.popup.add_to_bill': 'เพิ่มลงคำสั่งซื้อ'
@@ -144,7 +145,11 @@ describe('TASK-5604 i18n parity (p-1..p-4)', () => {
 	it('p-3: no hardcoded TH copy in PosModifierPopup (raw file — comments included)', () => {
 		const src = read('src/components/pos/PosModifierPopup.svelte');
 		expect(src).not.toMatch(/[\u0E00-\u0E7F]/);
-		expect(src).toMatch(/pos\.popup\.mod_regular/);
+		// R10 presets-only: central sweet fallback retired — heading is the
+		// generic reed key pos.popup.options (TASK-5708), no mod_* refs remain.
+		expect(src).not.toMatch(/pos\.popup\.mod_regular/);
+		expect(src).not.toMatch(/pos\.popup\.sweetness/);
+		expect(src).toMatch(/pos\.popup\.options/);
 		expect(src).toMatch(/\$_\('/);
 	});
 

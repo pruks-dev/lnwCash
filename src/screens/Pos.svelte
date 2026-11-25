@@ -10,7 +10,12 @@
 	 * Custom amount via reused Numpad (SAT integer or fiat→sats convert).
 	 * No SaleRecord is written here (owned by 5403/5404); confirm only
 	 * freezes the cart into a bill snapshot for display.
-	 * Theme tokens only (L-P012) — no hardcoded colors.
+	 * TASK-5704-FIX (INTENT-057 BLUEPRINT v3 rev12, F-5704-01 HIGH):
+ * migrated to cart v3 truth-pair domain API (cartTotalLive truth-pair
+ * + Result addToCart/decrement/removeLine + buildBill truth entry).
+ * Catalog rows are normalized via normalizeCatalogDoc (sanctioned v1/v2
+ * stored-sats MIGRATE path) so legacy persisted docs stay sellable.
+ * Theme tokens only (L-P012) — no hardcoded colors.
 	 * TASK-5412 (BILL-LAYOUT soft): layout-only — buttons + 5403/5404 wiring
 	 * untouched, total SOFT-right (receipt anchor — see total-placement-proof.txt).
 	 */
@@ -21,6 +26,7 @@
 	import {
 		emptyCatalog,
 		listActive,
+		normalizeCatalogDoc,
 		type PosCatalogDoc,
 		type PosProduct
 	} from '$lib/pos/catalog';
@@ -29,10 +35,11 @@
 		addToCart,
 		decrementFromCart,
 		removeLine,
-		cartTotalSats,
+		cartTotalLive,
 		buildBill,
 		fiatPriceToSats,
 		type Cart,
+		type CartLine,
 		type Bill
 	} from '$lib/pos/cart';
 	import { getFiatCurrency, formatFiat, FIAT_CURRENCY_EVENT } from '$lib/fiat/currency';
@@ -65,7 +72,13 @@
 	let manualSeq: number = $state(0);
 
 	let sellable: PosProduct[] = $derived(listActive(doc));
-	let totalSat: number = $derived(cartTotalSats(cart));
+	// TASK-5704-FIX: cartTotalSats (v1 stored-sats) is dead — v3 LIVE total
+	// resolves truth per line (SAT needs no rate; fiat needs a live rate).
+	// Dead rate + fiat lines → 0 here; buildBill still fails loud at pay time.
+	let totalSat: number = $derived.by(() => {
+		const r = cartTotalLive(cart, effectiveEntry());
+		return r.ok ? r.totalSat : 0;
+	});
 	let fiatDecimals: number = $derived(CURRENCY_META[fiatCurrency].decimals);
 	let fiatBlocked: boolean = $derived(fiatEntry !== null && fiatEntry.price === null);
 
@@ -103,9 +116,25 @@
 		customSecondaryFor(customValue, customMode, fiatEntry, fiatCurrency, $_('screen.balance.sats'))
 	);
 
+	// TASK-5704-FIX: v3 truth display — SAT truth renders sats verbatim
+	// (no rate); fiat truth renders native (never converted here — the
+	// live sats total below comes from cartTotalLive, never invented).
+	function tilePriceText(p: PosProduct): string {
+		if (p.currency === 'SAT') return `${p.amount} ${$_('screen.balance.sats')}`;
+		return `${p.amount} ${p.currency}`;
+	}
+
+	function billLineText(l: CartLine): string {
+		const sats = $_('screen.balance.sats');
+		if (l.currency === 'SAT') return `${l.amount} ${sats} × ${l.qty} = ${l.amount * l.qty} ${sats}`;
+		return `${l.amount} ${l.currency} × ${l.qty}`;
+	}
+
 	function reloadCatalog(): void {
 		try {
-			doc = getPosCatalog();
+			// Normalize: storage already returns v3, but mocked/legacy docs
+			// (v1 priceSat rows) migrate here via the sanctioned domain path.
+			doc = normalizeCatalogDoc(getPosCatalog());
 		} catch {
 			doc = emptyCatalog();
 		}
@@ -209,7 +238,7 @@
 			manualSeq += 1;
 			const result = addToCart(
 				cart,
-				{ id: `manual_${Date.now().toString(36)}_${manualSeq}`, name: $_('pos.custom_item_name'), priceSat: n, active: true },
+				{ id: `manual_${Date.now().toString(36)}_${manualSeq}`, name: $_('pos.custom_item_name'), currency: 'SAT', amount: n, active: true },
 				1
 			);
 			if (!result.ok) return;
@@ -238,7 +267,8 @@
 			{
 				id: `manual_${Date.now().toString(36)}_${manualSeq}`,
 				name: $_('pos.custom_item_name'),
-				priceSat: converted.sats,
+				currency: 'SAT',
+				amount: converted.sats,
 				active: true
 			},
 			1
@@ -288,13 +318,13 @@
 								type="button"
 								class="product-tile"
 								onclick={() => tapProduct(product)}
-								aria-label={`${product.name} — ${product.priceSat} ${$_('screen.balance.sats')}`}
+								aria-label={`${product.name} — ${tilePriceText(product)}`}
 							>
 								<span class="product-name">{product.name}</span>
-								<span class="product-price">{product.priceSat} {$_('screen.balance.sats')}</span>
-								{#if product.fiatPriced && fiatEntry?.price != null}
+								<span class="product-price">{tilePriceText(product)}</span>
+								{#if product.fiatPriced && product.currency === 'SAT' && fiatEntry?.price != null}
 									<span class="product-fiat">
-										≈ {formatFiat(product.priceSat, fiatEntry.price, fiatCurrency)}
+										≈ {formatFiat(product.amount, fiatEntry.price, fiatCurrency)}
 									</span>
 								{/if}
 							</button>
@@ -318,8 +348,7 @@
 							<div class="line-info">
 								<Body size="sm" weight="semibold">{line.name}</Body>
 								<Body size="sm" color="secondary">
-									{line.unitPriceSat} {$_('screen.balance.sats')} × {line.qty} =
-									{line.lineTotalSat} {$_('screen.balance.sats')}
+									{billLineText(line)}
 								</Body>
 							</div>
 							<div class="qty-stepper" role="group" aria-label={line.name}>

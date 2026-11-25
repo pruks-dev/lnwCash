@@ -67,7 +67,7 @@
 # เฉพาะ 5 host ที่ commander ล็อก, ไม่มี wss: กว้าง) + img-src เติม https:
 # (logo picture ของ mint มาจาก https URL ภายนอก).
 /
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https: https://mint.lnw.cash wss://relay.cashumints.space wss://nos.lol wss://relay.azzamo.net wss://relay.snort.social wss://relay.primal.net; frame-ancestors 'none'; base-uri 'self'; form-action 'none'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: https: blob:; font-src 'self'; connect-src 'self' https: https://mint.lnw.cash wss://relay.cashumints.space wss://nos.lol wss://relay.azzamo.net wss://relay.snort.social wss://relay.primal.net; frame-ancestors 'none'; base-uri 'self'; form-action 'none'; upgrade-insecure-requests
 
 /index.html
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https: https://mint.lnw.cash wss://relay.cashumints.space wss://nos.lol wss://relay.azzamo.net wss://relay.snort.social wss://relay.primal.net; frame-ancestors 'none'; base-uri 'self'; form-action 'none'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: https: blob:; font-src 'self'; connect-src 'self' https: https://mint.lnw.cash wss://relay.cashumints.space wss://nos.lol wss://relay.azzamo.net wss://relay.snort.social wss://relay.primal.net; frame-ancestors 'none'; base-uri 'self'; form-action 'none'; upgrade-insecure-requests

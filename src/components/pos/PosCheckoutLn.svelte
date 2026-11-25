@@ -25,6 +25,12 @@
 
 	interface Props {
 		totalSat: number;
+		/**
+		 * TASK-5711 frozen bill fiat (INTENT-057 BLUEPRINT v3): the bill
+		 * fiat snapshot text at pay time — rendered verbatim, NEVER
+		 * recomputed (old bills freeze). Empty = pre-freeze/legacy path.
+		 */
+		fiatText?: string;
 		invoice: string;
 		state: LnState;
 		error?: string;
@@ -34,7 +40,7 @@
 		onBack: () => void;
 	}
 
-	let { totalSat, invoice, state, error = '', onCopy, onCancel, onBackToBill, onBack }: Props =
+	let { totalSat, fiatText = '', invoice, state, error = '', onCopy, onCancel, onBackToBill, onBack }: Props =
 		$props();
 
 	// rev31: same QR payload shape as Receive.svelte (lightningQrData =
@@ -79,6 +85,9 @@
 			<span class="amount-value" data-testid="ln-amount">{totalSat.toLocaleString('en-US')}</span>
 			<span class="amount-unit">SAT</span>
 		</div>
+		{#if fiatText}
+			<div class="amount-secondary" data-testid="ln-fiat">{fiatText}</div>
+		{/if}
 		{#if state === 'polling' || state === 'ready'}
 			<div class="amount-secondary">{$_('pos.ln.waiting')}</div>
 		{/if}

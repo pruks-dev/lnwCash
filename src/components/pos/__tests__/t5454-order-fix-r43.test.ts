@@ -26,7 +26,7 @@ import enDict from '../../../locales/en.json';
 import thDict from '../../../locales/th.json';
 import PosBill from '../PosBill.svelte';
 import PosApp from '../PosApp.svelte';
-import type { CartLine } from '$lib/pos/cart';
+import type { BillLine } from '$lib/pos/cart';
 
 const en = enDict as Record<string, string>;
 const th = thDict as Record<string, string>;
@@ -51,6 +51,8 @@ afterEach(async () => {
 });
 
 // Live-rate fixtures: price 3,000,000 THB/BTC → 1 sat = 0.03 THB.
+// TASK-5711 v3 rows (INTENT-057 BLUEPRINT v3): frozen BillLine snapshots
+// (truth + live unitSats from one bill entry) — no stored-sats fields.
 const PRICE = 3_000_000;
 const leftFor = (sats: number) => {
 	const v = ((sats * PRICE) / 100_000_000).toFixed(2);
@@ -59,9 +61,9 @@ const leftFor = (sats: number) => {
 const rightFor = (sats: number) => `≈ ${leftFor(sats)}`;
 
 // Mixed digit widths: 1-digit qty/price vs 5-digit line total.
-const lines: CartLine[] = [
-	{ productId: 'tea', name: 'Thai Tea', unitPriceSat: 9, qty: 1, lineTotalSat: 9 },
-	{ productId: 'cake', name: 'Cake', unitPriceSat: 35000, qty: 3, lineTotalSat: 105000 }
+const lines: BillLine[] = [
+	{ productId: 'tea', name: 'Thai Tea', currency: 'SAT', amount: 9, unitSats: 9, qty: 1, lineTotalSat: 9, rate: null },
+	{ productId: 'cake', name: 'Cake', currency: 'SAT', amount: 35000, unitSats: 35000, qty: 3, lineTotalSat: 105000, rate: null }
 ];
 
 function billProps(over: Record<string, unknown> = {}) {

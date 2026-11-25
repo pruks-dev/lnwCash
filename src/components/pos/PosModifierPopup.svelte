@@ -6,38 +6,65 @@
   PosBill button/overlay tokens (no new palette, no custom icons).
   TASK-5604: all merchant-facing labels via locale keys (EN owned here;
   TH values are EN placeholders — reed fills TH, reed-pending GAP).
+  TASK-5702-R10 (INTENT-057 BLUEPRINT v3 rev23 Commander ORDER):
+  presets-only offers, note-always. The popup opens for EVERY tap;
+  chips = seller strings verbatim when presets exist, NO chips section
+  at all when presets are empty (note-only — rev22 skip superseded).
+  Section heading is the generic pos.popup.options (Options, reed
+  TASK-5708). onAdd shape unchanged (bounded scope).
+  TASK-5702-R11 (INTENT-057 BLUEPRINT v3 rev24 Commander ORDER):
+  Add button drops the middle dot and the SAT-only leg -- it renders
+  the existing pos.popup.add_to_bill key + ONE space + priceText
+  verbatim (catalogPriceText pair, e.g. THB65 (≈ ... SAT)).
+  No new i18n key.
   The note renders via Svelte text interpolation (escaped — XSS proof @5605).
 -->
 <script lang="ts">
 	import { _ } from 'svelte-i18n';
 	interface Props {
 		productName: string;
-		priceSat: number;
+		// TASK-5702 shared migration (5711 owns formulas): v3 truth products
+		// resolve display sats live in PosApp — null = dead-rate fiat leg
+		// ('– SAT', never fabricated).
+		// TASK-5702-R11 rev24: retained for API compat (PosApp still passes
+		// it) — NO LONGER RENDERED. The button shows priceText verbatim.
+		priceSat?: number | null;
 		priceText: string;
+		/**
+		 * TASK-5702-R10 note-only (INTENT-057 BLUEPRINT v3 rev23,
+		 * Commander ORDER "no presets shows note-only, no skip").
+		 * Empty presets is VALID: chips section hides, note stays -- Add
+		 * yields modifier '' + typed note (same bare identity as cart).
+		 * No central fallback -- chips are seller strings verbatim.
+		 * onAdd shape untouched so cart identity (product+modifier+note)
+		 * and bill/checkout are unaffected -- bounded to popup offer list.
+		 */
+		presets?: string[];
 		onAdd: (detail: { modifier: string; modifierLabel: string; note: string }) => void;
 		onCancel: () => void;
 	}
 
-	// Approved mockup 2/3 chip set (single-select, first = default).
-	// Display labels come from locale keys (EN owned here, TH reed-pending).
-	const MODIFIERS = [
-		{ value: 'regular', labelKey: 'pos.popup.mod_regular' },
-		{ value: 'less', labelKey: 'pos.popup.mod_less' },
-		{ value: 'none', labelKey: 'pos.popup.mod_none' },
-		{ value: 'shot', labelKey: 'pos.popup.mod_shot' }
-	];
+	// R10 rev23 note-only: no central set — chips come from the presets
+	// prop (seller strings). Empty presets => chips section hides,
+	// note-only popup stays open (rev22 skip superseded).
 
-	let { productName, priceSat, priceText, onAdd, onCancel }: Props = $props();
+	let { productName, priceText, presets = [], onAdd, onCancel }: Props = $props();
 
-	let selected = $state(MODIFIERS.length > 0 ? MODIFIERS[0].value : '');
+	// R10 rev23: offer list IS the presets (verbatim seller copy, no fallback).
+	const chips = $derived<string[]>([...presets]);
+
+	let selected = $state('');
+	// Effective pick — first offered chip by default (fresh per product
+	// since the popup remounts on every open); keeps the tap only if offered.
+	const current = $derived(selected && chips.includes(selected) ? selected : (chips[0] ?? ''));
 	let note = $state('');
 
 	function labelFor(value: string): string {
-		return $_(MODIFIERS.find((c) => c.value === value)?.labelKey ?? 'pos.popup.mod_regular');
+		return value;
 	}
 
 	function add(): void {
-		onAdd({ modifier: selected, modifierLabel: labelFor(selected), note: note.trim() });
+		onAdd({ modifier: current, modifierLabel: labelFor(current), note: note.trim() });
 	}
 </script>
 
@@ -54,23 +81,25 @@
 			<h3>{productName}</h3>
 			<div class="sub" data-testid="popup-price">{priceText}</div>
 		</div>
-		<div>
-			<div class="sub">{$_('pos.popup.sweetness')}</div>
-			<div class="chips" data-testid="modifier-chips">
-				{#each MODIFIERS as c (c.value)}
-					<button
-						type="button"
-						class="chip"
-						aria-pressed={selected === c.value}
-						data-testid="modifier-chip"
-						data-modifier={c.value}
-						onclick={() => (selected = c.value)}
-					>
-						{$_(c.labelKey)}
-					</button>
-				{/each}
+		{#if chips.length > 0}
+			<div>
+				<div class="sub">{$_('pos.popup.options')}</div>
+				<div class="chips" data-testid="modifier-chips">
+					{#each chips as v (v)}
+						<button
+							type="button"
+							class="chip"
+							aria-pressed={current === v}
+							data-testid="modifier-chip"
+							data-modifier={v}
+							onclick={() => (selected = v)}
+						>
+							{labelFor(v)}
+						</button>
+					{/each}
+				</div>
 			</div>
-		</div>
+		{/if}
 		<div>
 			<div class="sub">{$_('pos.popup.note_label')}</div>
 			<input
@@ -87,7 +116,7 @@
 			/>
 		</div>
 		<button type="button" class="btn btn-primary" data-testid="popup-add" onclick={add}>
-			{$_('pos.popup.add_to_bill')} · {priceSat.toLocaleString('en-US')} SAT
+			{$_('pos.popup.add_to_bill')} {priceText}
 		</button>
 		<button type="button" class="btn btn-secondary" data-testid="popup-cancel" onclick={onCancel}>
 			{$_('common.cancel')}

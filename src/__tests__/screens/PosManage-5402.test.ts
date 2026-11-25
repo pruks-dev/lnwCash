@@ -62,7 +62,9 @@ describe('TASK-5402 manage screen (#/pos-manage)', () => {
 		const saved = vi.mocked(setPosCatalog).mock.calls[0][0];
 		expect(saved.items).toHaveLength(1);
 		expect(saved.items[0].name).toBe('Thai tea');
-		expect(saved.items[0].priceSat).toBe(50);
+		// TASK-5704-FIX (F-5704-01): v3 truth-pair — no stored-sats field.
+		expect(saved.items[0].currency).toBe('SAT');
+		expect(saved.items[0].amount).toBe(50);
 		expect(saved.items[0].active).toBe(true);
 		// Row appears in the list.
 		expect(screen.getByText('Thai tea')).toBeTruthy();

@@ -7,7 +7,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte';
 import PosModifierPopup from '../PosModifierPopup.svelte';
 import PosBill from '../PosBill.svelte';
-import type { CartLine } from '$lib/pos/cart';
+import type { BillLine } from '$lib/pos/cart';
 
 vi.mock('svelte-i18n', () => ({
 	_: {
@@ -20,24 +20,29 @@ vi.mock('svelte-i18n', () => ({
 
 afterEach(() => cleanup());
 
+// R10 presets-only: every popup render carries presets (fallback retired —
+// preset-less taps skip the popup in PosApp, so bare renders would show 0 chips).
+const PRESETS = ['หวานปกติ', 'หวานน้อย', 'ไม่หวาน'];
 function popupProps(over: Record<string, unknown> = {}) {
 	return {
 		productName: 'Latte',
 		priceSat: 200,
 		priceText: '200 SAT (≈ MOCK)',
+		presets: [...PRESETS],
 		onAdd: vi.fn(),
 		onCancel: vi.fn(),
 		...over
 	};
 }
 
-describe('5603 popup — chips + note + add', () => {
-	it('overlay + sheet + price + 4 chips (first pressed) + note input + add/cancel', () => {
+describe('5603 popup — chips + note + add (R10: presets-only, verbatim seller copy)', () => {
+	it('overlay + sheet + price + preset chips (first pressed) + note input + add/cancel', () => {
 		render(PosModifierPopup, { props: popupProps() });
 		expect(screen.getByTestId('modifier-popup')).toBeTruthy();
 		expect(screen.getByTestId('popup-price').textContent).toContain('200 SAT');
 		const chips = screen.getAllByTestId('modifier-chip');
-		expect(chips).toHaveLength(4);
+		expect(chips).toHaveLength(3);
+		expect(chips.map((c) => c.textContent?.trim())).toEqual(PRESETS);
 		expect(chips[0].getAttribute('aria-pressed')).toBe('true');
 		expect(chips[1].getAttribute('aria-pressed')).toBe('false');
 		expect(screen.getByTestId('line-note-input')).toBeTruthy();
@@ -45,18 +50,18 @@ describe('5603 popup — chips + note + add', () => {
 		expect(screen.getByTestId('popup-cancel')).toBeTruthy();
 	});
 
-	it('chip switch + note typing → onAdd carries { modifier, modifierLabel, note }', async () => {
+	it('chip switch + note typing → onAdd carries { modifier, modifierLabel, note } (verbatim)', async () => {
 		const p = popupProps();
 		render(PosModifierPopup, { props: p });
-		await fireEvent.click(screen.getAllByTestId('modifier-chip')[1]); // less (locale key pos.popup.mod_less)
+		await fireEvent.click(screen.getAllByTestId('modifier-chip')[1]); // หวานน้อย (verbatim preset)
 		expect(screen.getAllByTestId('modifier-chip')[1].getAttribute('aria-pressed')).toBe('true');
-		await fireEvent.input(screen.getByTestId('line-note-input'), { target: { value: 'หวานน้อย' } });
+		await fireEvent.input(screen.getByTestId('line-note-input'), { target: { value: 'ไม่ใส่น้ำแข็ง' } });
 		await fireEvent.click(screen.getByTestId('popup-add'));
 		expect(p.onAdd).toHaveBeenCalledTimes(1);
 		expect(p.onAdd).toHaveBeenCalledWith({
-			modifier: 'less',
-			modifierLabel: 'pos.popup.mod_less',
-			note: 'หวานน้อย'
+			modifier: 'หวานน้อย',
+			modifierLabel: 'หวานน้อย',
+			note: 'ไม่ใส่น้ำแข็ง'
 		});
 	});
 
@@ -66,8 +71,8 @@ describe('5603 popup — chips + note + add', () => {
 		await fireEvent.input(screen.getByTestId('line-note-input'), { target: { value: '  ไม่ใส่น้ำแข็ง  ' } });
 		await fireEvent.click(screen.getByTestId('popup-add'));
 		expect(p.onAdd).toHaveBeenCalledWith({
-			modifier: 'regular',
-			modifierLabel: 'pos.popup.mod_regular',
+			modifier: 'หวานปกติ',
+			modifierLabel: 'หวานปกติ',
 			note: 'ไม่ใส่น้ำแข็ง'
 		});
 		await fireEvent.click(screen.getByTestId('popup-cancel'));
@@ -90,13 +95,17 @@ const leftFor = (sats: number) => `${((sats * 3_000_000) / 100_000_000).toFixed(
 const rightFor = (sats: number) => `≈ ${leftFor(sats)}`;
 
 // Mockup STATE B: latte 2 rows (less+note ×1 / regular ×2).
-const lines: CartLine[] = [
+// TASK-5711 v3 rows: frozen BillLine snapshots (truth + live unitSats).
+const lines: BillLine[] = [
 	{
 		productId: 'latte',
 		name: 'Latte',
-		unitPriceSat: 200,
+		currency: 'SAT',
+		amount: 200,
+		unitSats: 200,
 		qty: 1,
 		lineTotalSat: 200,
+		rate: null,
 		lineId: 'latte:less:หวานน้อย',
 		modifier: 'less',
 		modifierLabel: 'หวานน้อย',
@@ -105,9 +114,12 @@ const lines: CartLine[] = [
 	{
 		productId: 'latte',
 		name: 'Latte',
-		unitPriceSat: 200,
+		currency: 'SAT',
+		amount: 200,
+		unitSats: 200,
 		qty: 2,
 		lineTotalSat: 400,
+		rate: null,
 		lineId: 'latte:regular:',
 		modifier: 'regular',
 		modifierLabel: 'หวานปกติ',
@@ -151,12 +163,15 @@ describe('5603 bill — separate rows per product+modifier+note', () => {
 	});
 
 	it('note renders as text (escaped) — markup in the note never becomes HTML', () => {
-		const evil: CartLine = {
+		const evil: BillLine = {
 			productId: 'latte',
 			name: 'Latte',
-			unitPriceSat: 200,
+			currency: 'SAT',
+			amount: 200,
+			unitSats: 200,
 			qty: 1,
 			lineTotalSat: 200,
+			rate: null,
 			modifier: 'less',
 			modifierLabel: 'หวานน้อย',
 			note: '<img src=x onerror=alert(1)>'

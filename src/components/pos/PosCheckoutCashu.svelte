@@ -27,6 +27,12 @@
 
 	interface Props {
 		totalSat: number;
+		/**
+		 * TASK-5711 frozen bill fiat (INTENT-057 BLUEPRINT v3): the bill
+		 * fiat snapshot text at pay time — rendered verbatim, NEVER
+		 * recomputed (old bills freeze). Empty = pre-freeze/legacy path.
+		 */
+		fiatText?: string;
 		receivedSat: number;
 		state: CashuState;
 		// Rev34: retained for the PosApp contract (parent owns the clipboard
@@ -45,6 +51,7 @@
 
 	let {
 		totalSat,
+		fiatText = '',
 		receivedSat,
 		state,
 		scanning = false,
@@ -104,6 +111,9 @@
 			</span>
 			<span class="amount-unit">SAT{state === 'idle' ? '' : ' received'}</span>
 		</div>
+		{#if fiatText}
+			<div class="amount-secondary" data-testid="cashu-fiat">{fiatText}</div>
+		{/if}
 		{#if state === 'idle'}
 			<div class="amount-secondary">{$_('pos.cashu.prompt')}</div>
 		{:else if state === 'under'}
